@@ -72,8 +72,22 @@ def load_frame(source, frame_idx):
         # single file, possibly multi-frame
         img = tifffile.imread(source)
         if img.ndim == 3:
-            frame_idx = min(frame_idx, img.shape[0] - 1)
-            return img[frame_idx].astype(np.float64), img.shape[0]
+            # determine axis order: (T, H, W) vs (H, W, T)
+            if img.shape[0] < img.shape[1] and img.shape[0] < img.shape[2]:
+                # (T, H, W)
+                n_frames = img.shape[0]
+                frame_idx = min(frame_idx, n_frames - 1)
+                return img[frame_idx].astype(np.float64), n_frames
+            elif img.shape[2] < img.shape[0] and img.shape[2] < img.shape[1]:
+                # (H, W, T)
+                n_frames = img.shape[2]
+                frame_idx = min(frame_idx, n_frames - 1)
+                return img[:, :, frame_idx].astype(np.float64), n_frames
+            else:
+                # ambiguous, assume (T, H, W)
+                n_frames = img.shape[0]
+                frame_idx = min(frame_idx, n_frames - 1)
+                return img[frame_idx].astype(np.float64), n_frames
         return img.astype(np.float64), 1
     elif isinstance(source, list):
         frame_idx = min(frame_idx, len(source) - 1)
@@ -125,9 +139,6 @@ class PreviewTab(QWidget):
         self.ax_raw = self.figure.add_subplot(1, 3, 1)
         self.ax_proc = self.figure.add_subplot(1, 3, 2)
         self.ax_mask = self.figure.add_subplot(1, 3, 3)
-        self.ax_raw.set_title('Raw')
-        self.ax_proc.set_title('Preprocessed')
-        self.ax_mask.set_title('Mask Overlay')
         for ax in (self.ax_raw, self.ax_proc, self.ax_mask):
             ax.set_xticks([])
             ax.set_yticks([])
@@ -140,7 +151,7 @@ class PreviewTab(QWidget):
 
     def _connect_signals(self):
         self.plate_combo.currentIndexChanged.connect(self._on_plate_changed)
-        self.well_combo.currentIndexChanged.connect(self._schedule_render)
+        self.well_combo.currentIndexChanged.connect(self._on_well_changed)
         self.frame_slider.valueChanged.connect(self._on_frame_changed)
         self.refresh_btn.clicked.connect(self._refresh_all)
         self.state.changed.connect(self._on_state_changed)
@@ -154,25 +165,43 @@ class PreviewTab(QWidget):
         if plates != current_plates:
             self._populate_plates()
         else:
+            # parameter change only — re-render without resetting selectors
             self._schedule_render()
 
     def _populate_plates(self):
+        prev_plate = self.plate_combo.currentData()
         self.plate_combo.blockSignals(True)
         self.plate_combo.clear()
-        for p in self.state.get('plates', []):
+        restore_idx = 0
+        for i, p in enumerate(self.state.get('plates', [])):
             self.plate_combo.addItem(os.path.basename(p), p)
+            if p == prev_plate:
+                restore_idx = i
         self.plate_combo.blockSignals(False)
         if self.plate_combo.count() > 0:
-            self._on_plate_changed(0)
+            self.plate_combo.setCurrentIndex(restore_idx)
+            self._on_plate_changed(restore_idx)
 
     def _on_plate_changed(self, idx):
         plate_path = self.plate_combo.currentData()
         wells = discover_wells(plate_path) if plate_path else []
+
+        prev_well = self.well_combo.currentText()
         self.well_combo.blockSignals(True)
         self.well_combo.clear()
-        for w in wells:
+        restore_idx = 0
+        for i, w in enumerate(wells):
             self.well_combo.addItem(w)
+            if w == prev_well:
+                restore_idx = i
         self.well_combo.blockSignals(False)
+
+        if self.well_combo.count() > 0:
+            self.well_combo.setCurrentIndex(restore_idx)
+        self._load_source()
+        self._schedule_render()
+
+    def _on_well_changed(self, idx):
         self._load_source()
         self._schedule_render()
 
@@ -186,8 +215,18 @@ class PreviewTab(QWidget):
         self._current_source = find_well_images(plate_path, well_id)
         if self._current_source is not None:
             _, self._n_frames = load_frame(self._current_source, 0)
+            old_val = self.frame_slider.value()
+            self.frame_slider.blockSignals(True)
             self.frame_slider.setRange(0, max(0, self._n_frames - 1))
-            self.frame_slider.setValue(0)
+            # keep current frame if within range, otherwise reset to 0
+            if old_val <= self._n_frames - 1:
+                self.frame_slider.setValue(old_val)
+            else:
+                self.frame_slider.setValue(0)
+            self.frame_slider.blockSignals(False)
+            self.frame_label.setText(
+                f'{self.frame_slider.value()} / {max(0, self._n_frames - 1)}'
+            )
         else:
             self._n_frames = 0
             self.frame_slider.setRange(0, 0)
@@ -222,31 +261,39 @@ class PreviewTab(QWidget):
 
         block_diam = self.state.get('blockDiam', 101)
         fixed_thresh = self.state.get('fixedThresh', 0.04)
+        dust_correction = self.state.get('dustCorrection', True)
 
         # preprocess
         processed = normalize_local_contrast(raw, block_diam)
         sigma = 2.0 * (block_diam / 31.0)
         blurred = gaussian_filter(processed, sigma=sigma)
 
-        # mask
+        # mask (computed from preprocessed image)
         mask = blurred > fixed_thresh
 
-        # display
+        # display raw
         self.ax_raw.imshow(raw, cmap='gray')
         self.ax_raw.set_title('Raw')
 
+        # display preprocessed with parameters
         self.ax_proc.imshow(processed, cmap='gray')
-        self.ax_proc.set_title('Preprocessed')
+        self.ax_proc.set_title(
+            f'Preprocessed\nblockDiam={block_diam}',
+            fontsize=9,
+        )
 
-        # overlay: raw with mask in cyan
-        if raw.max() > 0:
-            display = raw / raw.max()
+        # overlay: mask on PREPROCESSED image (not raw) to avoid vignetting
+        if processed.max() > 0:
+            display = processed / processed.max()
         else:
-            display = raw
+            display = processed
         overlay = np.stack([display, display, display], axis=-1)
         overlay[mask] = [0, 1, 1]  # cyan
         self.ax_mask.imshow(overlay)
-        self.ax_mask.set_title('Mask Overlay')
+        self.ax_mask.set_title(
+            f'Mask Overlay\nthresh={fixed_thresh}  dust={dust_correction}',
+            fontsize=9,
+        )
 
         self.figure.tight_layout()
         self.canvas.draw()
