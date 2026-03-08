@@ -143,10 +143,13 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('saveOverlays', v))
 
         # features
-        self.whole_image.toggled.connect(
-            lambda v: self.state.set('wholeImageFeats', v))
+        self.whole_image.toggled.connect(self._on_whole_image)
         self.colony_tracking.toggled.connect(self._on_colony_tracking)
         self.colony_feats.toggled.connect(self._on_colony_feats)
+
+        # outputs — re-check dependencies when user unchecks
+        self.save_processed.toggled.connect(self._enforce_output_deps)
+        self.save_registered.toggled.connect(self._enforce_output_deps)
 
         # colony params
         self.min_colony_area.valueChanged.connect(
@@ -160,17 +163,39 @@ class ParametersTab(QWidget):
             return
         self.state.set('blockDiam', val)
 
+    def _on_whole_image(self, checked):
+        self.state.set('wholeImageFeats', checked)
+        # whole-image features need the processed stack
+        if checked and not self.save_processed.isChecked():
+            self.save_processed.setChecked(True)
+
     def _on_colony_tracking(self, checked):
         self.state.set('colonyTracking', checked)
+        # tracking needs registered raw + masks
+        if checked:
+            if not self.save_registered.isChecked():
+                self.save_registered.setChecked(True)
+            if not self.save_masks.isChecked():
+                self.save_masks.setChecked(True)
         self.colony_params_group.setVisible(
             checked or self.colony_feats.isChecked()
         )
 
     def _on_colony_feats(self, checked):
         self.state.set('colonyFeats', checked)
-        # colony feats requires tracking
+        # colony feats requires tracking (which requires registered raw + masks)
         if checked and not self.colony_tracking.isChecked():
             self.colony_tracking.setChecked(True)
         self.colony_params_group.setVisible(
             checked or self.colony_tracking.isChecked()
         )
+
+    def _enforce_output_deps(self):
+        """Prevent unchecking outputs that active features depend on."""
+        if self.whole_image.isChecked() and not self.save_processed.isChecked():
+            self.save_processed.setChecked(True)
+        if (self.colony_tracking.isChecked() or self.colony_feats.isChecked()):
+            if not self.save_registered.isChecked():
+                self.save_registered.setChecked(True)
+            if not self.save_masks.isChecked():
+                self.save_masks.setChecked(True)
