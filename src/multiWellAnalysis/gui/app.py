@@ -1,10 +1,11 @@
 import sys
+import os
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QMessageBox,
+    QMessageBox, QFileDialog,
 )
 
 from .state import AppState
@@ -12,10 +13,10 @@ from .tabs.setup import SetupTab
 from .tabs.parameters import ParametersTab
 from .tabs.preview import PreviewTab
 from .tabs.conditions import ConditionsTab
-from .tabs.run import RunTab
+from .tabs.runGUI import RunTab
 
 
-CONFIG_PATH = Path('experiment_config.json')
+CONFIG_FILENAME = 'experiment_config.json'
 
 
 class PhenotyprApp(QMainWindow):
@@ -26,13 +27,6 @@ class PhenotyprApp(QMainWindow):
         self.resize(1000, 750)
 
         self.state = AppState()
-
-        # load existing config if present
-        if CONFIG_PATH.exists():
-            try:
-                self.state.load(str(CONFIG_PATH))
-            except Exception:
-                pass
 
         # tabs
         self.tabs = QTabWidget()
@@ -62,17 +56,34 @@ class PhenotyprApp(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+    def _config_path(self):
+        """Config saves to rootDir if set, otherwise CWD."""
+        root = self.state.get('rootDir', '')
+        if root and os.path.isdir(root):
+            return os.path.join(root, CONFIG_FILENAME)
+        return CONFIG_FILENAME
+
     def _save_config(self):
+        path = self._config_path()
         try:
-            self.state.save(str(CONFIG_PATH))
-            QMessageBox.information(self, 'Saved', f'Configuration saved to {CONFIG_PATH}')
+            self.state.save(path)
+            QMessageBox.information(self, 'Saved', f'Configuration saved to {path}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', str(e))
 
     def _load_config(self):
+        # try rootDir first, then let user browse
+        path = self._config_path()
+        if not os.path.exists(path):
+            path, _ = QFileDialog.getOpenFileName(
+                self, 'Load Configuration', '',
+                'JSON files (*.json);;All files (*)'
+            )
+            if not path:
+                return
         try:
-            self.state.load(str(CONFIG_PATH))
-            QMessageBox.information(self, 'Loaded', f'Configuration loaded from {CONFIG_PATH}')
+            self.state.load(path)
+            QMessageBox.information(self, 'Loaded', f'Configuration loaded from {path}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', str(e))
 

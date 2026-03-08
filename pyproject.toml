@@ -18,6 +18,8 @@ dependencies = [
     "pandas",
     "matplotlib",
     "tifffile",
+    "imageio",
+    "imageio-ffmpeg",
     "PySide6",
 ]
 

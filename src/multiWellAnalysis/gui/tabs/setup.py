@@ -86,6 +86,16 @@ class SetupTab(QWidget):
         if path:
             self.root_edit.setText(path)
             self.state.set('rootDir', path)
+
+            # auto-load config from root dir if it exists
+            config_path = os.path.join(path, 'experiment_config.json')
+            if os.path.exists(config_path):
+                try:
+                    self.state.load(config_path)
+                    self.root_edit.setText(self.state.get('rootDir', path))
+                except Exception:
+                    pass
+
             self._refresh_plates()
 
     def _refresh_plates(self):
