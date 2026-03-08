@@ -1,20 +1,21 @@
 import sys
-import json
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QTabWidget, QPushButton,
-    QMessageBox
+    QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
+    QMessageBox,
 )
 
-from .tabs.config import ConfigTab
-from .tabs.threshPrev import PreviewTab
+from .state import AppState
+from .tabs.setup import SetupTab
+from .tabs.parameters import ParametersTab
+from .tabs.preview import PreviewTab
 from .tabs.conditions import ConditionsTab
 from .tabs.run import RunTab
 
 
-configPath = Path('experiment_config.json')
+CONFIG_PATH = Path('experiment_config.json')
 
 
 class PhenotyprApp(QMainWindow):
@@ -22,38 +23,56 @@ class PhenotyprApp(QMainWindow):
         super().__init__()
 
         self.setWindowTitle('Phenotypr')
-        self.resize(900, 700)
+        self.resize(1000, 750)
 
-        self.state = {}
+        self.state = AppState()
 
+        # load existing config if present
+        if CONFIG_PATH.exists():
+            try:
+                self.state.load(str(CONFIG_PATH))
+            except Exception:
+                pass
+
+        # tabs
         self.tabs = QTabWidget()
+        self.tabs.addTab(SetupTab(self.state), 'Setup')
+        self.tabs.addTab(ParametersTab(self.state), 'Parameters')
+        self.tabs.addTab(PreviewTab(self.state), 'Preview')
+        self.tabs.addTab(ConditionsTab(self.state), 'Conditions')
+        self.tabs.addTab(RunTab(self.state), 'Run')
 
-        self.configTab = ConfigTab(self.state)
-        self.previewTab = PreviewTab(self.state)
-        self.conditionsTab = ConditionsTab(self.state)
-        self.runTab = RunTab(self.state)
-
-        self.tabs.addTab(self.configTab, 'Configuration')
-        self.tabs.addTab(self.previewTab, 'Threshold preview')
-        self.tabs.addTab(self.conditionsTab, 'Conditions')
-        self.tabs.addTab(self.runTab, 'Run')
-
+        # layout
         container = QWidget()
         layout = QVBoxLayout()
         layout.addWidget(self.tabs)
 
-        saveBtn = QPushButton('Save configuration')
-        saveBtn.clicked.connect(self.saveConfig)
-        layout.addWidget(saveBtn)
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton('Save configuration')
+        save_btn.clicked.connect(self._save_config)
+        btn_row.addWidget(save_btn)
+
+        load_btn = QPushButton('Load configuration')
+        load_btn.clicked.connect(self._load_config)
+        btn_row.addWidget(load_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-    def saveConfig(self):
+    def _save_config(self):
         try:
-            with open(configPath, 'w') as f:
-                json.dump(self.state, f, indent=4)
-            QMessageBox.information(self, 'Saved', 'Configuration saved.')
+            self.state.save(str(CONFIG_PATH))
+            QMessageBox.information(self, 'Saved', f'Configuration saved to {CONFIG_PATH}')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', str(e))
+
+    def _load_config(self):
+        try:
+            self.state.load(str(CONFIG_PATH))
+            QMessageBox.information(self, 'Loaded', f'Configuration loaded from {CONFIG_PATH}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', str(e))
 
