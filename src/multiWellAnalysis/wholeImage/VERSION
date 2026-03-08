@@ -1,0 +1,10 @@
+wholeImage-feature-extraction v1.0.0
+Date: 2026-01-01
+
+- Fast whole-image feature extraction using Mahotas
+- Frame filtering: t > 6
+- One vector per well replicate
+- Robust to missing frames
+- UMAP visualization for morphology-only and combined phenotypes
+
+Frozen after successful full-plate run.
