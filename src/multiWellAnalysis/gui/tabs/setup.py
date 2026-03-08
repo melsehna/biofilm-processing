@@ -43,7 +43,7 @@ class SetupTab(QWidget):
         layout = QVBoxLayout(self)
 
         # root directory row
-        dir_label = QLabel('Root Directory:')
+        dir_label = QLabel('Root Directory (input data):')
         layout.addWidget(dir_label)
 
         dir_row = QHBoxLayout()
@@ -57,6 +57,20 @@ class SetupTab(QWidget):
         self.refresh_btn = QPushButton('Refresh')
         dir_row.addWidget(self.refresh_btn)
         layout.addLayout(dir_row)
+
+        # output directory row
+        outdir_label = QLabel('Output Directory:')
+        layout.addWidget(outdir_label)
+
+        outdir_row = QHBoxLayout()
+        self.outdir_edit = QLineEdit()
+        self.outdir_edit.setPlaceholderText('Select directory for processed outputs...')
+        self.outdir_edit.setText(self.state.get('outputDir', ''))
+        outdir_row.addWidget(self.outdir_edit)
+
+        self.outdir_browse_btn = QPushButton('Browse...')
+        outdir_row.addWidget(self.outdir_browse_btn)
+        layout.addLayout(outdir_row)
 
         # plate list
         plates_label = QLabel('Discovered Plates:')
@@ -76,6 +90,10 @@ class SetupTab(QWidget):
     def _connect_signals(self):
         self.browse_btn.clicked.connect(self._browse)
         self.refresh_btn.clicked.connect(self._refresh_plates)
+        self.outdir_browse_btn.clicked.connect(self._browse_outdir)
+        self.outdir_edit.editingFinished.connect(
+            lambda: self.state.set('outputDir', self.outdir_edit.text().strip())
+        )
         self.plate_list.itemChanged.connect(self._update_selected_plates)
         self.notes_edit.textChanged.connect(
             lambda: self.state.set('notes', self.notes_edit.toPlainText())
@@ -87,16 +105,23 @@ class SetupTab(QWidget):
             self.root_edit.setText(path)
             self.state.set('rootDir', path)
 
-            # auto-load config from root dir if it exists
+            # auto-load config if it exists in root or output dir
             config_path = os.path.join(path, 'experiment_config.json')
             if os.path.exists(config_path):
                 try:
                     self.state.load(config_path)
                     self.root_edit.setText(self.state.get('rootDir', path))
+                    self.outdir_edit.setText(self.state.get('outputDir', ''))
                 except Exception:
                     pass
 
             self._refresh_plates()
+
+    def _browse_outdir(self):
+        path = QFileDialog.getExistingDirectory(self, 'Select Output Directory')
+        if path:
+            self.outdir_edit.setText(path)
+            self.state.set('outputDir', path)
 
     def _refresh_plates(self):
         root = self.root_edit.text().strip()

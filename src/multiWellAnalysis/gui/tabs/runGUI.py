@@ -69,6 +69,13 @@ class ProcessingWorker(QObject):
 
         plates = self._state['plates']
         total_plates = len(plates)
+        output_root = self._state.get('outputDir', '')
+
+        if not output_root:
+            self.log.emit('ERROR: No output directory set. Go to Setup tab.')
+            return
+        if not os.path.isdir(output_root):
+            os.makedirs(output_root, exist_ok=True)
 
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
@@ -85,7 +92,8 @@ class ProcessingWorker(QObject):
                 self.log.emit(f'  No wells found in {plate_name}, skipping.')
                 continue
 
-            outdir = os.path.join(plate_path, 'processedImages')
+            # mirror plate structure in output directory
+            outdir = os.path.join(output_root, plate_name, 'processedImages')
             os.makedirs(outdir, exist_ok=True)
 
             well_items = list(wells.items())
@@ -103,8 +111,10 @@ class ProcessingWorker(QObject):
                 t0 = time.time()
 
                 try:
+                    # outdir_parent = plate output root (parent of processedImages/)
+                    outdir_parent = os.path.join(output_root, plate_name)
                     self._process_well(
-                        plate_path, plate_name, outdir,
+                        plate_path, plate_name, outdir, outdir_parent,
                         well_id, well_files
                     )
                     elapsed = time.time() - t0
@@ -141,13 +151,14 @@ class ProcessingWorker(QObject):
 
         return stack
 
-    def _process_well(self, plate_path, plate_name, outdir, well_id, well_files):
+    def _process_well(self, plate_path, plate_name, outdir, outdir_parent, well_id, well_files):
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         stack = self._load_well_stack(well_files)
         s = self._state
 
         # Step 1: image processing (always runs — saves all outputs by default)
+        # timelapse_processing creates processedImages/ under outdir_parent
         self.log.emit(f'  {well_id}: preprocessing + registration...')
         masks, biomass, od_mean = timelapse_processing(
             images=stack,
@@ -156,7 +167,7 @@ class ProcessingWorker(QObject):
             shift_thresh=s['shiftThresh'],
             fixed_thresh=s['fixedThresh'],
             dust_correction=s['dustCorrection'],
-            outdir=plate_path,
+            outdir=outdir_parent,
             filename=well_id,
             image_records=None,
             fftStride=s['fftStride'],
@@ -345,6 +356,11 @@ class RunTab(QWidget):
         root = self.state.get('rootDir', '')
         if root and not os.path.isdir(root):
             self.log_text.append(f'ERROR: Root directory does not exist: {root}')
+            return
+
+        output_dir = self.state.get('outputDir', '')
+        if not output_dir:
+            self.log_text.append('ERROR: No output directory set. Go to Setup tab.')
             return
 
         # check at least one output or feature is enabled

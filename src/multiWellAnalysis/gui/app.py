@@ -17,6 +17,7 @@ from .tabs.runGUI import RunTab
 
 
 CONFIG_FILENAME = 'experiment_config.json'
+CONFIG_FILTER = 'JSON files (*.json);;All files (*)'
 
 
 class PhenotyprApp(QMainWindow):
@@ -56,15 +57,23 @@ class PhenotyprApp(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-    def _config_path(self):
-        """Config saves to rootDir if set, otherwise CWD."""
+    def _default_config_dir(self):
+        """Suggest output dir, then root dir, then CWD for config dialogs."""
+        out = self.state.get('outputDir', '')
+        if out and os.path.isdir(out):
+            return out
         root = self.state.get('rootDir', '')
         if root and os.path.isdir(root):
-            return os.path.join(root, CONFIG_FILENAME)
-        return CONFIG_FILENAME
+            return root
+        return ''
 
     def _save_config(self):
-        path = self._config_path()
+        start = os.path.join(self._default_config_dir(), CONFIG_FILENAME)
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Save Configuration', start, CONFIG_FILTER
+        )
+        if not path:
+            return
         try:
             self.state.save(path)
             QMessageBox.information(self, 'Saved', f'Configuration saved to {path}')
@@ -72,15 +81,11 @@ class PhenotyprApp(QMainWindow):
             QMessageBox.critical(self, 'Error', str(e))
 
     def _load_config(self):
-        # try rootDir first, then let user browse
-        path = self._config_path()
-        if not os.path.exists(path):
-            path, _ = QFileDialog.getOpenFileName(
-                self, 'Load Configuration', '',
-                'JSON files (*.json);;All files (*)'
-            )
-            if not path:
-                return
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Load Configuration', self._default_config_dir(), CONFIG_FILTER
+        )
+        if not path:
+            return
         try:
             self.state.load(path)
             QMessageBox.information(self, 'Loaded', f'Configuration loaded from {path}')
