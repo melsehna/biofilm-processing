@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biofilm-processing"
+version = "0.1.0"
+description = "High-throughput biofilm phenotyping: image processing, segmentation, tracking, and feature extraction"
+authors = [
+  { name="Seh Na S. Mellick" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-image",
+    "mahotas",
+    "pandas",
+    "matplotlib",
+    "tifffile",
+    "PySide6",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["src/multiWellAnalysis/tests"]
+pythonpath = ["src"]
+
+[project.scripts]
+phenotypr-gui = "multiWellAnalysis.gui.app:run"
