@@ -38,20 +38,9 @@ def _apply_shift(image, shift):
     )
 
 
-def registerStackNormblur(
-    normBlurStack,
-    rawStack,
-    shiftThresh,
-    fftStride=3,
-    downsample=2
-):
-    h, w, t = normBlurStack.shape
-
-    registeredNorm = np.empty_like(normBlurStack)
-    registeredRaw = np.empty_like(rawStack, dtype=np.float64)
-
-    registeredNorm[..., 0] = normBlurStack[..., 0]
-    registeredRaw[..., 0] = rawStack[..., 0]
+def _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample):
+    """Pass 1: compute per-frame shifts (read-only on normBlurStack)."""
+    t = normBlurStack.shape[2]
 
     cumShift = np.array([0.0, 0.0], dtype=np.float64)
     shifts = [cumShift.copy()]
@@ -71,18 +60,36 @@ def registerStackNormblur(
 
             lastKeyframe = i
             lastKeyShift = cumShift.copy()
-            shiftToApply = cumShift
+            shifts.append(cumShift.copy())
         else:
-            shiftToApply = lastKeyShift
+            shifts.append(lastKeyShift.copy())
 
-        shifts.append(shiftToApply.copy())
+    return shifts
 
-        registeredNorm[..., i] = _apply_shift(
-            normBlurStack[..., i], shiftToApply
-        )
 
-        registeredRaw[..., i] = _apply_shift(
-            rawStack[..., i], shiftToApply
-        )
+def _apply_shifts_inplace(stack, shifts):
+    """Pass 2: apply precomputed shifts in-place."""
+    t = stack.shape[2]
+    for i in range(1, t):
+        s = shifts[i]
+        if s[0] == 0.0 and s[1] == 0.0:
+            continue  # frame already correct
+        stack[..., i] = _apply_shift(stack[..., i], s)
 
-    return registeredNorm, registeredRaw, shifts
+
+def registerStackNormblur(
+    normBlurStack,
+    rawStack,
+    shiftThresh,
+    fftStride=3,
+    downsample=2
+):
+    """Two-pass registration: compute shifts, then apply in-place.
+
+    Both normBlurStack and rawStack are modified in-place to avoid
+    allocating two additional full-size copies (~940 MB for 1992x1992x31).
+    """
+    shifts = _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample)
+    _apply_shifts_inplace(normBlurStack, shifts)
+    _apply_shifts_inplace(rawStack, shifts)
+    return normBlurStack, rawStack, shifts
