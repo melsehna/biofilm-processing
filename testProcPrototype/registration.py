@@ -6,6 +6,7 @@
 
 import numpy as np
 import cv2
+from concurrent.futures import ThreadPoolExecutor
 
 
 def phaseOffset(fixed, moving):
@@ -68,13 +69,15 @@ def _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample):
 
 
 def _apply_shifts_inplace(stack, shifts):
-    """Pass 2: apply precomputed shifts in-place."""
-    t = stack.shape[2]
-    for i in range(1, t):
+    """Pass 2: apply precomputed shifts in-place (threaded)."""
+    def _do(i):
         s = shifts[i]
         if s[0] == 0.0 and s[1] == 0.0:
-            continue  # frame already correct
+            return
         stack[..., i] = _apply_shift(stack[..., i], s)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pool.map(_do, range(1, stack.shape[2]))
 
 
 def registerStackNormblur(
