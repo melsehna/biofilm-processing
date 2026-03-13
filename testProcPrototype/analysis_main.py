@@ -34,6 +34,14 @@ from typing import Optional
 
 # Helper functions
 def crop_stack(img_stack):
+    h, w = img_stack.shape[:2]
+    # Fast path: check a small sample for NaN before scanning the full stack
+    if not (np.isnan(img_stack[0, 0, :]).any() or
+            np.isnan(img_stack[-1, -1, :]).any() or
+            np.isnan(img_stack[0, -1, :]).any() or
+            np.isnan(img_stack[-1, 0, :]).any()):
+        return img_stack, (0, h, 0, w)
+
     mask = ~np.any(np.isnan(img_stack), axis=2)
     mask_i = np.any(mask, axis=1)
     mask_j = np.any(mask, axis=0)
@@ -64,6 +72,7 @@ def timelapse_processing(
     Imax: Optional[np.ndarray] = None,
     fftStride=3,
     downsample=2,
+    skip_overlay=False,
 ):
 
     processed_dir = os.path.join(outdir, 'processedImages')
@@ -84,28 +93,30 @@ def timelapse_processing(
 
 
     # scale raw to [0,1]
-    images = images.astype(np.float64, copy=False)
+    images = images.astype(np.float32, copy=False)
     imax = images.max()
     if imax > 0:
         images /= imax
 
 
-    # scale sigma to block diam
+    # G_sigma(G_bd(img) - img) = G_sigma_c(img) - G_sigma(img)
+    # where sigma_c = sqrt(bd^2 + sigma^2)
     sigma = 2.0 * (block_diameter / 31.0)
+    sigma_combined = np.sqrt(block_diameter ** 2 + sigma ** 2)
 
     norm_blur = np.empty(images.shape, dtype=np.float32)
 
     for t in range(ntimepoints):
-        r = normalize_local_contrast(images[..., t], block_diameter)
-
-        # Full-resolution Gaussian blur — cv2.GaussianBlur is fast enough
-        # that the old downsample+blur+upsample hack is no longer needed
-        norm_blur[..., t] = cv2.GaussianBlur(
-            r.astype(np.float32),
-            ksize=(0, 0),
-            sigmaX=sigma,
+        img_t = images[..., t]
+        big = cv2.GaussianBlur(
+            img_t, ksize=(0, 0), sigmaX=sigma_combined,
             borderType=cv2.BORDER_REFLECT
         )
+        small = cv2.GaussianBlur(
+            img_t, ksize=(0, 0), sigmaX=sigma,
+            borderType=cv2.BORDER_REFLECT
+        )
+        norm_blur[..., t] = big - small
 
 
     # 2) register normalized for masking; register raw for OD/biomass
@@ -128,14 +139,6 @@ def timelapse_processing(
     if Imax is not None:
         Imax = Imax[row_min:row_max, col_min:col_max]
 
-
-    fpMax = np.nanmax(raw_cropped)
-    fpMin = np.nanmin(raw_cropped)
-    fpMean = 0.5 * (fpMax + fpMin)
-
-    display_stack = normalize_local_contrast_output(
-        raw_cropped, block_diameter, fpMean
-    )
 
     # 4) mask computation - binary mask on processed (normalized) stack
     masks = np.zeros(processed_stack.shape, dtype=bool)
@@ -180,46 +183,51 @@ def timelapse_processing(
     np.savez_compressed(npz_path, masks=masks)
     register_image('masks', npz_path)
 
-    # 8) save overlay stack (RGB)
-    procVis = np.clip(display_stack, 0.0, 1.0)  # (H, W, T)
+    # 8) overlay video (optional)
+    if not skip_overlay:
+        fpMax = np.nanmax(raw_cropped)
+        fpMin = np.nanmin(raw_cropped)
+        fpMean = 0.5 * (fpMax + fpMin)
 
-    # Build all overlays at once: expand gray to RGB, blend cyan where masked
-    alpha = 0.6
-    # (H, W, T) -> (H, W, T, 3)
-    rgb_all = np.stack([procVis, procVis, procVis], axis=-1)
-    cyan = np.array([0.0, 1.0, 1.0], dtype=np.float32)
-    # masks is (H, W, T) -> expand to (H, W, T, 3) for broadcasting
-    mask_expanded = masks[..., np.newaxis]
-    rgb_all = np.where(
-        mask_expanded,
-        (1.0 - alpha) * rgb_all + alpha * cyan,
-        rgb_all
-    )
-    # Convert to uint8 list of frames
-    rgb_all = (rgb_all * 255).astype(np.uint8)
-    overlays = [rgb_all[..., t, :] for t in range(ntimepoints)]
+        display_stack = normalize_local_contrast_output(
+            raw_cropped, block_diameter, fpMean
+        )
 
-    # Save overlay as MP4
-    overlay_mp4_path = os.path.join(processed_dir, f'{filename}_overlay.mp4')
+        procVis = np.clip(display_stack, 0.0, 1.0)  # (H, W, T) float32
 
-    try:
-        with imageio.get_writer(
-            overlay_mp4_path,
-            fps=2,
-            codec='libx264',
-            quality=8,
-            pixelformat='yuv420p'
-        ) as writer:
-            for frame in overlays:
-                writer.append_data(frame)
+        h_out, w_out = procVis.shape[:2]
+        # Ensure even dimensions for H.264 yuv420p
+        h_out_even = h_out & ~1
+        w_out_even = w_out & ~1
 
+        overlay_mp4_path = os.path.join(
+            processed_dir, f'{filename}_overlay.mp4'
+        )
+
+        alpha = np.float32(0.6)
+        cyan = np.array([1.0, 1.0, 0.0], dtype=np.float32)  # BGR cyan
+
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        writer = cv2.VideoWriter(
+            overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
+        )
+
+        if not writer.isOpened():
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(
+                overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
+            )
+
+        for t in range(ntimepoints):
+            gray = procVis[:h_out_even, :w_out_even, t]
+            frame = cv2.merge([gray, gray, gray])  # (H, W, 3) float32 BGR
+            mask_t = masks[:h_out_even, :w_out_even, t]
+            frame[mask_t] = (1.0 - alpha) * frame[mask_t] + alpha * cyan
+            frame_u8 = np.clip(frame * 255, 0, 255).astype(np.uint8)
+            writer.write(frame_u8)
+
+        writer.release()
         register_image('overlay_mp4', overlay_mp4_path)
-
-    except Exception as e:
-        overlay_gif_path = os.path.join(processed_dir, f'{filename}_overlay.gif')
-        iio.imwrite(overlay_gif_path, overlays, duration=0.5)
-        register_image('overlay_gif', overlay_gif_path)
-
 
     return masks, biomass, odMean
 
