@@ -98,23 +98,13 @@ def timelapse_processing(
     for t in range(ntimepoints):
         r = normalize_local_contrast(images[..., t], block_diameter)
 
-        # Downsample with cv2.pyrDown (anti-aliased Gaussian pyramid)
-        r_small = cv2.pyrDown(r.astype(np.float32))
-
-        # Gaussian blur on downsampled image
-        # ksize=0 lets OpenCV auto-compute kernel size from sigma
-        blur_small = cv2.GaussianBlur(
-            r_small,
+        # Full-resolution Gaussian blur — cv2.GaussianBlur is fast enough
+        # that the old downsample+blur+upsample hack is no longer needed
+        norm_blur[..., t] = cv2.GaussianBlur(
+            r.astype(np.float32),
             ksize=(0, 0),
-            sigmaX=sigma / 2.0,
+            sigmaX=sigma,
             borderType=cv2.BORDER_REFLECT
-        )
-
-        # Upsample back to full resolution with cv2.resize
-        norm_blur[..., t] = cv2.resize(
-            blur_small,
-            (images.shape[1], images.shape[0]),
-            interpolation=cv2.INTER_LINEAR
         )
 
 
