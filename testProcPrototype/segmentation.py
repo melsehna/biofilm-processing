@@ -44,12 +44,10 @@ def _remove_small_objects(mask, min_size):
         mask_u8, connectivity=8
     )
 
-    out = np.zeros_like(mask, dtype=bool)
-    for lbl in range(1, num_labels):  # skip background (0)
-        if stats[lbl, cv2.CC_STAT_AREA] >= min_size:
-            out[labels == lbl] = True
-
-    return out
+    # Vectorized: build a lookup table of which labels to keep
+    keep = np.zeros(num_labels, dtype=bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_size
+    return keep[labels]
 
 
 def segmentColonies(
