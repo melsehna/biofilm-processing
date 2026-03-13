@@ -93,7 +93,7 @@ def timelapse_processing(
     # scale sigma to block diam
     sigma = 2.0 * (block_diameter / 31.0)
 
-    norm_blur = np.empty_like(images)
+    norm_blur = np.empty(images.shape, dtype=np.float32)
 
     for t in range(ntimepoints):
         r = normalize_local_contrast(images[..., t], block_diameter)
@@ -150,22 +150,23 @@ def timelapse_processing(
     odMean = None
 
     if Imin is not None:
-        OD = np.empty_like(raw_cropped, dtype=np.float64)
-        for t in range(masks.shape[2]):
-            if Imax is not None:
-                OD[..., t] = -np.log10((raw_cropped[..., t] - Imin) / (Imax - Imin + 1e-12) + 1e-12)
-            else:
-                OD[..., t] = -np.log10((raw_cropped[..., t] - Imin) / (raw_cropped[..., 0] - Imin + 1e-12) + 1e-12)
-            biomass[t] = np.nanmean(OD[..., t] * masks[..., t])
+        # Vectorized OD computation across all frames at once
+        if Imax is not None:
+            denom = Imax[..., np.newaxis] - Imin[..., np.newaxis] + 1e-12
+        else:
+            denom = raw_cropped[..., 0:1] - Imin[..., np.newaxis] + 1e-12
 
-        odMean = np.array([
-            np.nanmean(OD[..., t] * masks[..., t])
-            for t in range(masks.shape[2])
-        ])
+        OD = -np.log10((raw_cropped - Imin[..., np.newaxis]) / denom + 1e-12)
+
+        # Masked mean per frame — vectorized
+        masked_OD = np.where(masks, OD, np.nan)
+        biomass = np.nanmean(masked_OD, axis=(0, 1))
+        odMean = biomass.copy()
 
     else:
-        for t in range(masks.shape[2]):
-            biomass[t] = np.nanmean((1.0 - raw_cropped[..., t]) * masks[..., t])
+        # Vectorized: masked mean of (1 - raw) per frame
+        masked_inv = np.where(masks, 1.0 - raw_cropped, np.nan)
+        biomass = np.nanmean(masked_inv, axis=(0, 1))
 
     # 6) save stacks
     save_stack(processed_stack, processed_dir, f"{filename}_processed")
