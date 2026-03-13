@@ -182,25 +182,24 @@ def timelapse_processing(
     np.savez_compressed(npz_path, masks=masks)
     register_image('masks', npz_path)
 
-    # 8) save overlay stack (RGB TIFF)
-    procVis = np.clip(display_stack, 0.0, 1.0)
+    # 8) save overlay stack (RGB)
+    procVis = np.clip(display_stack, 0.0, 1.0)  # (H, W, T)
 
-    overlays = []
-    for t in range(ntimepoints):
-        gray = procVis[..., t]
-        rgb = np.stack([gray, gray, gray], axis=-1)
-
-        alpha = 0.6
-
-        mask_t = masks[..., t]
-        cyan = np.array([0.0, 1.0, 1.0])
-
-        rgb[mask_t] = (
-            (1.0 - alpha) * rgb[mask_t]
-            + alpha * cyan
-        )
-
-        overlays.append((rgb * 255).astype(np.uint8))
+    # Build all overlays at once: expand gray to RGB, blend cyan where masked
+    alpha = 0.6
+    # (H, W, T) -> (H, W, T, 3)
+    rgb_all = np.stack([procVis, procVis, procVis], axis=-1)
+    cyan = np.array([0.0, 1.0, 1.0], dtype=np.float32)
+    # masks is (H, W, T) -> expand to (H, W, T, 3) for broadcasting
+    mask_expanded = masks[..., np.newaxis]
+    rgb_all = np.where(
+        mask_expanded,
+        (1.0 - alpha) * rgb_all + alpha * cyan,
+        rgb_all
+    )
+    # Convert to uint8 list of frames
+    rgb_all = (rgb_all * 255).astype(np.uint8)
+    overlays = [rgb_all[..., t, :] for t in range(ntimepoints)]
 
     # Save overlay as MP4
     overlay_mp4_path = os.path.join(processed_dir, f'{filename}_overlay.mp4')
