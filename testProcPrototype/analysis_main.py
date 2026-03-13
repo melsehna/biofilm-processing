@@ -158,15 +158,13 @@ def timelapse_processing(
 
         OD = -np.log10((raw_cropped - Imin[..., np.newaxis]) / denom + 1e-12)
 
-        # Masked mean per frame — vectorized
-        masked_OD = np.where(masks, OD, np.nan)
-        biomass = np.nanmean(masked_OD, axis=(0, 1))
+        # Mean over all pixels (masked pixels contribute OD, unmasked contribute 0)
+        biomass = np.nanmean(OD * masks, axis=(0, 1))
         odMean = biomass.copy()
 
     else:
-        # Vectorized: masked mean of (1 - raw) per frame
-        masked_inv = np.where(masks, 1.0 - raw_cropped, np.nan)
-        biomass = np.nanmean(masked_inv, axis=(0, 1))
+        # Mean over all pixels (masked pixels contribute 1-raw, unmasked contribute 0)
+        biomass = np.nanmean((1.0 - raw_cropped) * masks, axis=(0, 1))
 
     # 6) save stacks
     save_stack(processed_stack, processed_dir, f"{filename}_processed")
