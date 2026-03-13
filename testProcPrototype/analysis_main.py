@@ -13,6 +13,7 @@ import imageio.v3 as iio
 import imageio
 import cv2
 from glob import glob
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 from helpers import round_odd
@@ -106,7 +107,7 @@ def timelapse_processing(
 
     norm_blur = np.empty(images.shape, dtype=np.float32)
 
-    for t in range(ntimepoints):
+    def _blur_frame(t):
         img_t = images[..., t]
         big = cv2.GaussianBlur(
             img_t, ksize=(0, 0), sigmaX=sigma_combined,
@@ -117,6 +118,9 @@ def timelapse_processing(
             borderType=cv2.BORDER_REFLECT
         )
         norm_blur[..., t] = big - small
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(_blur_frame, range(ntimepoints)))
 
 
     # 2) register normalized for masking; register raw for OD/biomass
