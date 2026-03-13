@@ -177,7 +177,7 @@ def timelapse_processing(
     save_stack(processed_stack, processed_dir, f"{filename}_processed")
 
     save_stack(
-        raw_cropped,
+        (raw_cropped * imax).astype(np.uint16) if imax > 0 else raw_cropped,
         processed_dir,
         f"{filename}_registered_raw"
     )
