@@ -16,18 +16,15 @@ def round_odd(n):
 def normalize_local_contrast(img, block_diameter):
     img = img.astype(np.float32, copy=False)
 
-    img_inv = 1.0 - img
-
-    # cv2.GaussianBlur requires odd kernel size; use 0 to auto-compute from sigma
+    # blur(1 - img) = 1 - blur(img), so (1-img) - blur(1-img) = blur(img) - img
+    # This avoids allocating the inverted image
     blurred = cv2.GaussianBlur(
-        img_inv,
+        img,
         ksize=(0, 0),
         sigmaX=block_diameter,
         borderType=cv2.BORDER_REFLECT
     )
-    out = img_inv - blurred
-
-    return out
+    return blurred - img
 
 
 def preprocess_stack(stack, block_diameter, sigma, gaussian_func):
