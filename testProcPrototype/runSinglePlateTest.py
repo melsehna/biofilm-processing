@@ -19,7 +19,7 @@ import re
 import time
 import numpy as np
 import pandas as pd
-import imageio.v3 as iio
+import cv2
 from glob import glob
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -43,7 +43,8 @@ def processWell(
     Imax,
     magSuffix='_02',
     fftStride=6,
-    downsample=4
+    downsample=4,
+    skipOverlay=False
 ):
     timings = {}
 
@@ -99,11 +100,14 @@ def processWell(
     files = sorted(files, key=am.frame_index_from_filename)
     ntimepoints = len(files)
 
-    img0 = iio.imread(files[0])
+    img0 = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
+    if img0 is None:
+        buf = np.fromfile(files[0], dtype=np.uint8)
+        img0 = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
     h, w = img0.shape
 
     tic('load_images')
-    stack = np.empty((h, w, ntimepoints), dtype=np.float64)
+    stack = np.empty((h, w, ntimepoints), dtype=np.float32)
     am.read_images_inplace(ntimepoints, stack, files)
     toc('load_images')
 
@@ -131,7 +135,8 @@ def processWell(
             Imin=None,
             Imax=None,
             fftStride=fftStride,
-            downsample=downsample
+            downsample=downsample,
+            skip_overlay=skipOverlay
         )
         toc('timelapse_processing')
 
@@ -185,7 +190,7 @@ def processWell(
         return well, 'error'
 
 
-def runPlateSingleMag(plateDir, outdir, replicateMap, magSuffix='_02', maxWorkers=24):
+def runPlateSingleMag(plateDir, outdir, replicateMap, magSuffix='_02', maxWorkers=24, skipOverlay=False):
     plateName = os.path.basename(plateDir)
     plateOutdir = os.path.join(outdir, plateName)
     os.makedirs(plateOutdir, exist_ok=True)
@@ -240,7 +245,8 @@ def runPlateSingleMag(plateDir, outdir, replicateMap, magSuffix='_02', maxWorker
                 dustCorrection,
                 Imin,
                 Imax,
-                magSuffix
+                magSuffix,
+                skipOverlay=skipOverlay
             )
             for well, files in byWell.items()
         ]
@@ -269,6 +275,8 @@ if __name__ == '__main__':
                         help='Magnification suffix: _01=4x, _02=4x, _03=10x, _04=20x (default: _02)')
     parser.add_argument('-w', '--workers', type=int, default=8,
                         help='Number of parallel workers (default: 8)')
+    parser.add_argument('--skip-overlay', action='store_true',
+                        help='Skip overlay video generation (saves ~30-40%% runtime)')
     args = parser.parse_args()
 
     plateDir = args.plateDir
@@ -299,7 +307,8 @@ if __name__ == '__main__':
         outdir=outdir,
         replicateMap=replicateMap,
         magSuffix=magSuffix,
-        maxWorkers=args.workers
+        maxWorkers=args.workers,
+        skipOverlay=args.skip_overlay
     )
 
     elapsed = time.perf_counter() - t0
