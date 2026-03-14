@@ -1,5 +1,6 @@
 # multiWellAnalysis/segmentation.py
 import numpy as np
+import cv2
 
 def compute_mask_inplace(stack, masks, fixedThresh):
     masks[:] = stack > float(fixedThresh)
