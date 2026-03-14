@@ -15,16 +15,20 @@ def _safe_uniform_mean(img, size):
     mean_local = uniform_filter(img, size=size, mode="reflect")
     return mean_local
 
-from skimage.filters import gaussian
+import cv2
 
-def normalize_local_contrast(img, block_diameter):
-    img = img.astype(np.float64, copy=False)
-
-    img_inv = 1.0 - img
-    blurred = gaussian(img_inv, sigma=block_diameter, preserve_range=True)
-    out = img_inv - blurred
-
-    return out
+def normalize_local_contrast(img, block_diameter, ds=8):
+    img = img.astype(np.float32, copy=False)
+    small = img[::ds, ::ds]
+    blurred_small = cv2.GaussianBlur(
+        small, (0, 0), sigmaX=block_diameter / ds,
+        borderType=cv2.BORDER_REFLECT
+    )
+    blurred = cv2.resize(
+        blurred_small, (img.shape[1], img.shape[0]),
+        interpolation=cv2.INTER_LINEAR
+    )
+    return blurred - img
 
 
 def preprocess_stack(stack, block_diameter, sigma, gaussian_func):
