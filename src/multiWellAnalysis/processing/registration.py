@@ -1,43 +1,42 @@
-# multiWellAnalysis/registration.py
+# multiWellAnalysis/registration.py — two-pass in-place registration
 import numpy as np
-from scipy.ndimage import shift as apply_shift
-from scipy.fft import fftn, ifftn
+import cv2
+from concurrent.futures import ThreadPoolExecutor
 
 
 def phaseOffset(fixed, moving):
+    """Compute sub-pixel translational shift via OpenCV phase correlation."""
     fixed = fixed.astype(np.float64, copy=False)
     moving = moving.astype(np.float64, copy=False)
 
-    F = fftn(fixed, workers=-1)
-    M = fftn(moving, workers=-1)
+    # cv2.phaseCorrelate returns (dx, dy), response
+    # Our convention: shifts are (row_shift, col_shift) = (dy, dx)
+    (dx, dy), _response = cv2.phaseCorrelate(fixed, moving)
 
-    R = F * np.conj(M)
-    r = np.abs(ifftn(R, workers=-1))
-
-    maxIdx = np.unravel_index(np.argmax(r), r.shape)
-    shifts = np.array(maxIdx, dtype=np.float64)
-
-    for d in range(len(shifts)):
-        if shifts[d] > r.shape[d] // 2:
-            shifts[d] -= r.shape[d]
-
-    return shifts
+    return np.array([dy, dx], dtype=np.float64)
 
 
-def registerStackNormblur(
-    normBlurStack,
-    rawStack,
-    shiftThresh,
-    fftStride=3,
-    downsample=2
-):
-    h, w, t = normBlurStack.shape
+def _apply_shift(image, shift):
+    """Translate image by (row_shift, col_shift) using cv2.warpAffine."""
+    dy, dx = shift
+    h, w = image.shape[:2]
 
-    registeredNorm = np.empty_like(normBlurStack)
-    registeredRaw = np.empty_like(rawStack, dtype=np.float64)
+    # 2x3 affine translation matrix
+    M = np.array([
+        [1.0, 0.0, dx],
+        [0.0, 1.0, dy]
+    ], dtype=np.float64)
 
-    registeredNorm[..., 0] = normBlurStack[..., 0]
-    registeredRaw[..., 0] = rawStack[..., 0]
+    return cv2.warpAffine(
+        image, M, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT
+    )
+
+
+def _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample):
+    """Pass 1: compute per-frame shifts (read-only on normBlurStack)."""
+    t = normBlurStack.shape[2]
 
     cumShift = np.array([0.0, 0.0], dtype=np.float64)
     shifts = [cumShift.copy()]
@@ -57,25 +56,38 @@ def registerStackNormblur(
 
             lastKeyframe = i
             lastKeyShift = cumShift.copy()
-            shiftToApply = cumShift
+            shifts.append(cumShift.copy())
         else:
-            shiftToApply = lastKeyShift
+            shifts.append(lastKeyShift.copy())
 
-        shifts.append(shiftToApply.copy())
+    return shifts
 
-        registeredNorm[..., i] = apply_shift(
-            normBlurStack[..., i],
-            shift=shiftToApply,
-            order=1,
-            mode='reflect'
-        )
 
-        registeredRaw[..., i] = apply_shift(
-            rawStack[..., i],
-            shift=shiftToApply,
-            order=1,
-            mode='reflect'
-        )
+def _apply_shifts_inplace(stack, shifts):
+    """Pass 2: apply precomputed shifts in-place (threaded)."""
+    def _do(i):
+        s = shifts[i]
+        if s[0] == 0.0 and s[1] == 0.0:
+            return
+        stack[..., i] = _apply_shift(stack[..., i], s)
 
-    return registeredNorm, registeredRaw, shifts
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pool.map(_do, range(1, stack.shape[2]))
 
+
+def registerStackNormblur(
+    normBlurStack,
+    rawStack,
+    shiftThresh,
+    fftStride=3,
+    downsample=2
+):
+    """Two-pass registration: compute shifts, then apply in-place.
+
+    Both normBlurStack and rawStack are modified in-place to avoid
+    allocating two additional full-size copies (~940 MB for 1992x1992x31).
+    """
+    shifts = _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample)
+    _apply_shifts_inplace(normBlurStack, shifts)
+    _apply_shifts_inplace(rawStack, shifts)
+    return normBlurStack, rawStack, shifts
