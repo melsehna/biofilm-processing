@@ -203,16 +203,15 @@ def timelapse_processing(
         alpha = np.float32(0.6)
         cyan = np.array([1.0, 1.0, 0.0], dtype=np.float32)  # BGR cyan
 
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        writer = cv2.VideoWriter(
-            overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
-        )
-
-        if not writer.isOpened():
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = None
+        for codec in ['mp4v', 'avc1', 'XVID']:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
             writer = cv2.VideoWriter(
                 overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
             )
+            if writer.isOpened():
+                break
+            writer.release()
 
         for t in range(ntimepoints):
             gray = procVis[:h_out_even, :w_out_even, t]
