@@ -208,29 +208,20 @@ def timelapse_processing(
             processed_dir, f'{filename}_overlay.mp4'
         )
 
-        alpha = np.float32(0.6)
-        cyan = np.array([1.0, 1.0, 0.0], dtype=np.float32)  # BGR cyan
+        alpha = np.float32(0.35)
+        cyan = np.array([0.0, 1.0, 1.0], dtype=np.float32)  # RGB cyan
 
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        writer = cv2.VideoWriter(
-            overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
-        )
-
-        if not writer.isOpened():
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(
-                overlay_mp4_path, fourcc, 2, (w_out_even, h_out_even)
-            )
-
-        for t in range(ntimepoints):
-            gray = procVis[:h_out_even, :w_out_even, t]
-            frame = cv2.merge([gray, gray, gray])  # (H, W, 3) float32 BGR
-            mask_t = masks[:h_out_even, :w_out_even, t]
-            frame[mask_t] = (1.0 - alpha) * frame[mask_t] + alpha * cyan
-            frame_u8 = np.clip(frame * 255, 0, 255).astype(np.uint8)
-            writer.write(frame_u8)
-
-        writer.release()
+        with imageio.get_writer(
+            overlay_mp4_path, fps=2, codec='libx264',
+            quality=8, pixelformat='yuv420p',
+            macro_block_size=1
+        ) as writer:
+            for t in range(ntimepoints):
+                gray = procVis[:h_out_even, :w_out_even, t]
+                frame = np.stack([gray, gray, gray], axis=-1)  # (H, W, 3) float32 RGB
+                mask_t = masks[:h_out_even, :w_out_even, t]
+                frame[mask_t] = (1.0 - alpha) * frame[mask_t] + alpha * cyan
+                writer.append_data(np.clip(frame * 255, 0, 255).astype(np.uint8))
 
     return masks, biomass, odMean
 
