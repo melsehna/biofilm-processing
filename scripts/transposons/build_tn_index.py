@@ -6,6 +6,7 @@ from glob import glob
 
 BASEDIR = '/mnt/bridgeslab/Good imaging data/TN-Library_imaging'
 OUTDIR = '/mnt/data/transposonSet'
+POSITIONS_CSV = '/mnt/data/transposonSet/Transposon positions.csv'
 
 PLATES = [
     'TN-Plate01_4x_10x_20x_40x_Discontinuous_Drawer1 06-Nov-2024 14-57-44',
@@ -44,64 +45,89 @@ PLATES = [
 
 records = []
 
-for plate_outer_name in PLATES:
-    plate_label = re.match(r'(TN-Plate\d+)', plate_outer_name).group(1)
-    outer_dir = os.path.join(BASEDIR, plate_outer_name)
+for plateOuterName in PLATES:
+    plateLabel = re.match(r'(TN-Plate\d+)', plateOuterName).group(1)
+    outerDir = os.path.join(BASEDIR, plateOuterName)
 
     # Find inner plate dir (e.g. "241106_150118_Plate 1")
-    inner_dirs = [
-        d for d in os.listdir(outer_dir)
-        if os.path.isdir(os.path.join(outer_dir, d)) and 'Plate' in d
+    innerDirs = [
+        d for d in os.listdir(outerDir)
+        if os.path.isdir(os.path.join(outerDir, d)) and 'Plate' in d
     ]
-    if not inner_dirs:
-        print(f'WARNING: no Plate subdir in {outer_dir}')
+    if not innerDirs:
+        print(f'WARNING: no Plate subdir in {outerDir}')
         continue
 
-    inner_name = inner_dirs[0]
-    original_plate_dir = os.path.join(outer_dir, inner_name)
+    innerName = innerDirs[0]
+    originalPlateDir = os.path.join(outerDir, innerName)
 
     # Find matching output dir
-    output_plate_dir = os.path.join(OUTDIR, inner_name)
-    proc_dir = os.path.join(output_plate_dir, 'processedImages')
+    outputPlateDir = os.path.join(OUTDIR, innerName)
+    procDir = os.path.join(outputPlateDir, 'processedImages')
 
-    if not os.path.isdir(output_plate_dir):
-        print(f'WARNING: no output dir for {plate_label}: {output_plate_dir}')
+    if not os.path.isdir(outputPlateDir):
+        print(f'WARNING: no output dir for {plateLabel}: {outputPlateDir}')
         continue
 
     # Find all wells from timeseries CSVs
-    timeseries_files = sorted(glob(os.path.join(output_plate_dir, '*_timeseries.csv')))
+    timeseriesFiles = sorted(glob(os.path.join(outputPlateDir, '*_timeseries.csv')))
 
-    for ts_path in timeseries_files:
-        ts_name = os.path.basename(ts_path)
-        # e.g. A1_03_timeseries.csv -> well_mag = A1_03
-        well_mag = ts_name.replace('_timeseries.csv', '')
+    for tsPath in timeseriesFiles:
+        tsName = os.path.basename(tsPath)
+        # e.g. A1_03_timeseries.csv -> wellMag = A1_03
+        wellMag = tsName.replace('_timeseries.csv', '')
+        # Strip mag suffix for wellId: A1_03 -> A1
+        wellId = re.sub(r'_\d+$', '', wellMag)
 
-        processed_path = os.path.join(proc_dir, f'{well_mag}_processed.tif')
-        raw_reg_path = os.path.join(proc_dir, f'{well_mag}_registered_raw.tif')
-        mask_path = os.path.join(proc_dir, f'{well_mag}_masks.npz')
-        overlay_path = os.path.join(proc_dir, f'{well_mag}_overlay.mp4')
+        processedPath = os.path.join(procDir, f'{wellMag}_processed.tif')
+        rawRegPath = os.path.join(procDir, f'{wellMag}_registered_raw.tif')
+        maskPath = os.path.join(procDir, f'{wellMag}_masks.npz')
+        overlayPath = os.path.join(procDir, f'{wellMag}_overlay.mp4')
+
+        plateId = f'{plateOuterName}/{innerName}'
 
         records.append({
-            'plate_label': plate_label,
-            'plate_outer_dir': outer_dir,
-            'plate_inner_dir': inner_name,
-            'original_images_dir': original_plate_dir,
-            'well_mag': well_mag,
-            'timeseries_csv': ts_path if os.path.exists(ts_path) else '',
-            'processed_tif': processed_path if os.path.exists(processed_path) else '',
-            'registered_raw_tif': raw_reg_path if os.path.exists(raw_reg_path) else '',
-            'masks_npz': mask_path if os.path.exists(mask_path) else '',
-            'overlay_mp4': overlay_path if os.path.exists(overlay_path) else '',
+            'plateId': plateId,
+            'plateLabel': plateLabel,
+            'wellId': wellId,
+            'wellMag': wellMag,
+            'originalImagesDir': originalPlateDir,
+            'timeseriesCsv': tsPath if os.path.exists(tsPath) else '',
+            'processedTif': processedPath if os.path.exists(processedPath) else '',
+            'registeredRawTif': rawRegPath if os.path.exists(rawRegPath) else '',
+            'masksNpz': maskPath if os.path.exists(maskPath) else '',
+            'overlayMp4': overlayPath if os.path.exists(overlayPath) else '',
         })
 
 df = pd.DataFrame(records)
-out_path = os.path.join(OUTDIR, 'transposon_set_index.csv')
-df.to_csv(out_path, index=False)
 
-print(f'Index written to: {out_path}')
-print(f'  {len(df)} wells across {df["plate_label"].nunique()} plates')
-print(f'  Timeseries: {(df["timeseries_csv"] != "").sum()}')
-print(f'  Processed:  {(df["processed_tif"] != "").sum()}')
-print(f'  Raw reg:    {(df["registered_raw_tif"] != "").sum()}')
-print(f'  Masks:      {(df["masks_npz"] != "").sum()}')
-print(f'  Overlays:   {(df["overlay_mp4"] != "").sum()}')
+# Merge with transposon positions
+pos = pd.read_csv(POSITIONS_CSV)
+pos.columns = ['plateWell', 'geneLocus']
+
+# Collapse duplicate gene loci per well (e.g. 8-E2 -> VC_0005/VC_0006)
+pos = pos.groupby('plateWell')['geneLocus'].agg(lambda x: '/'.join(x)).reset_index()
+
+# Build join key: TN-Plate01 -> 1, wellId A10 -> "1-A10"
+df['plateNum'] = df['plateLabel'].str.extract(r'TN-Plate(\d+)').astype(int)
+df['plateWell'] = df['plateNum'].astype(str) + '-' + df['wellId']
+df = df.merge(pos, on='plateWell', how='left')
+df.drop(columns=['plateNum', 'plateWell'], inplace=True)
+
+# Reorder: geneLocus first, then plateId, wellId, ...
+cols = ['geneLocus', 'plateId', 'plateLabel', 'wellId'] + [
+    c for c in df.columns if c not in ('geneLocus', 'plateId', 'plateLabel', 'wellId')
+]
+df = df[cols]
+
+outPath = os.path.join(OUTDIR, 'transposon_set_index.csv')
+df.to_csv(outPath, index=False)
+
+print(f'Index written to: {outPath}')
+print(f'  {len(df)} wells across {df["plateId"].nunique()} plates')
+print(f'  Gene locus matched: {df["geneLocus"].notna().sum()}/{len(df)}')
+print(f'  Timeseries: {(df["timeseriesCsv"] != "").sum()}')
+print(f'  Processed:  {(df["processedTif"] != "").sum()}')
+print(f'  Raw reg:    {(df["registeredRawTif"] != "").sum()}')
+print(f'  Masks:      {(df["masksNpz"] != "").sum()}')
+print(f'  Overlays:   {(df["overlayMp4"] != "").sum()}')
