@@ -214,7 +214,7 @@ def timelapse_processing(
         with imageio.get_writer(
             overlay_mp4_path, fps=2, codec='libx264',
             quality=8, pixelformat='yuv420p',
-            macro_block_size=1
+            macro_block_size=16
         ) as writer:
             for t in range(ntimepoints):
                 gray = procVis[:h_out_even, :w_out_even, t]
