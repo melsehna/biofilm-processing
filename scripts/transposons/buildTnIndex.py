@@ -1,4 +1,3 @@
-"""Build index CSV for the transposon set linking original paths to processed outputs."""
 import os
 import re
 import pandas as pd
@@ -49,7 +48,6 @@ for plateOuterName in PLATES:
     plateLabel = re.match(r'(TN-Plate\d+)', plateOuterName).group(1)
     outerDir = os.path.join(BASEDIR, plateOuterName)
 
-    # Find inner plate dir (e.g. "241106_150118_Plate 1")
     innerDirs = [
         d for d in os.listdir(outerDir)
         if os.path.isdir(os.path.join(outerDir, d)) and 'Plate' in d
@@ -60,8 +58,6 @@ for plateOuterName in PLATES:
 
     innerName = innerDirs[0]
     originalPlateDir = os.path.join(outerDir, innerName)
-
-    # Find matching output dir
     outputPlateDir = os.path.join(OUTDIR, innerName)
     procDir = os.path.join(outputPlateDir, 'processedImages')
 
@@ -69,21 +65,11 @@ for plateOuterName in PLATES:
         print(f'WARNING: no output dir for {plateLabel}: {outputPlateDir}')
         continue
 
-    # Find all wells from timeseries CSVs
     timeseriesFiles = sorted(glob(os.path.join(outputPlateDir, '*_timeseries.csv')))
 
     for tsPath in timeseriesFiles:
-        tsName = os.path.basename(tsPath)
-        # e.g. A1_03_timeseries.csv -> wellMag = A1_03
-        wellMag = tsName.replace('_timeseries.csv', '')
-        # Strip mag suffix for wellId: A1_03 -> A1
+        wellMag = os.path.basename(tsPath).replace('_timeseries.csv', '')
         wellId = re.sub(r'_\d+$', '', wellMag)
-
-        processedPath = os.path.join(procDir, f'{wellMag}_processed.tif')
-        rawRegPath = os.path.join(procDir, f'{wellMag}_registered_raw.tif')
-        maskPath = os.path.join(procDir, f'{wellMag}_masks.npz')
-        overlayPath = os.path.join(procDir, f'{wellMag}_overlay.mp4')
-
         plateId = f'{plateOuterName}/{innerName}'
 
         records.append({
@@ -93,28 +79,23 @@ for plateOuterName in PLATES:
             'wellMag': wellMag,
             'originalImagesDir': originalPlateDir,
             'timeseriesCsv': tsPath if os.path.exists(tsPath) else '',
-            'processedTif': processedPath if os.path.exists(processedPath) else '',
-            'registeredRawTif': rawRegPath if os.path.exists(rawRegPath) else '',
-            'masksNpz': maskPath if os.path.exists(maskPath) else '',
-            'overlayMp4': overlayPath if os.path.exists(overlayPath) else '',
+            'processedTif': os.path.join(procDir, f'{wellMag}_processed.tif') if os.path.exists(os.path.join(procDir, f'{wellMag}_processed.tif')) else '',
+            'registeredRawTif': os.path.join(procDir, f'{wellMag}_registered_raw.tif') if os.path.exists(os.path.join(procDir, f'{wellMag}_registered_raw.tif')) else '',
+            'masksNpz': os.path.join(procDir, f'{wellMag}_masks.npz') if os.path.exists(os.path.join(procDir, f'{wellMag}_masks.npz')) else '',
+            'overlayMp4': os.path.join(procDir, f'{wellMag}_overlay.mp4') if os.path.exists(os.path.join(procDir, f'{wellMag}_overlay.mp4')) else '',
         })
 
 df = pd.DataFrame(records)
 
-# Merge with transposon positions
 pos = pd.read_csv(POSITIONS_CSV)
 pos.columns = ['plateWell', 'geneLocus']
-
-# Collapse duplicate gene loci per well (e.g. 8-E2 -> VC_0005/VC_0006)
 pos = pos.groupby('plateWell')['geneLocus'].agg(lambda x: '/'.join(x)).reset_index()
 
-# Build join key: TN-Plate01 -> 1, wellId A10 -> "1-A10"
 df['plateNum'] = df['plateLabel'].str.extract(r'TN-Plate(\d+)').astype(int)
 df['plateWell'] = df['plateNum'].astype(str) + '-' + df['wellId']
 df = df.merge(pos, on='plateWell', how='left')
 df.drop(columns=['plateNum', 'plateWell'], inplace=True)
 
-# Reorder: geneLocus first, then plateId, wellId, ...
 cols = ['geneLocus', 'plateId', 'plateLabel', 'wellId'] + [
     c for c in df.columns if c not in ('geneLocus', 'plateId', 'plateLabel', 'wellId')
 ]

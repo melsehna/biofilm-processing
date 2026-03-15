@@ -1,7 +1,4 @@
 #!/bin/bash
-# Batch run all TN plates at 10x (_03 magnification)
-# Each outer dir contains a single "Plate N" subdir with the actual TIFs.
-
 set -e
 
 BASEDIR="/mnt/bridgeslab/Good imaging data/TN-Library_imaging"
@@ -51,8 +48,6 @@ cd ~/biofilm-processing/testProcPrototype
 TOTAL=${#PLATES[@]}
 for i in "${!PLATES[@]}"; do
   OUTER="${BASEDIR}/${PLATES[$i]}"
-
-  # Find the actual plate subdir (e.g. "241106_150118_Plate 1"), excluding the outer dir itself
   PLATEDIR=$(find "$OUTER" -mindepth 1 -maxdepth 1 -type d -name '*Plate*' | head -1)
 
   if [ -z "$PLATEDIR" ]; then
@@ -62,11 +57,9 @@ for i in "${!PLATES[@]}"; do
 
   PLATE_NAME=$(echo "${PLATES[$i]}" | grep -oP 'TN-Plate\d+')
   echo ""
-  echo "========================================"
   echo "[$((i+1))/$TOTAL] $PLATE_NAME"
   echo "  Source: $PLATEDIR"
   echo "  Output: $OUTDIR"
-  echo "========================================"
 
   python runSinglePlateTest.py "$PLATEDIR" -o "$OUTDIR" -m "$MAG" -w "$WORKERS"
 done
