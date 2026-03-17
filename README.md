@@ -53,13 +53,32 @@ The GUI has five tabs:
 
 | Tab | Purpose |
 |---|---|
-| **Setup** | Select root directory (input data), output directory, and which plates to process |
-| **Parameters** | Configure preprocessing, choose outputs to save, enable feature extraction |
+| **Setup** | Select root directory, output directory, plates, and magnifications |
+| **Parameters** | Choose analyses to run, configure preprocessing, set worker count |
 | **Preview** | Live preview of raw, preprocessed, and mask overlay for any plate/well/frame |
 | **Conditions** | 96-well grid for labeling experimental conditions per well |
 | **Run** | Start/stop processing with per-plate and per-well progress bars and a live log |
 
-### Parameters
+### Setup tab
+
+1. **Browse** to the root directory containing plate folders. Plates are auto-discovered.
+2. Check/uncheck plates to include or exclude them.
+3. **Magnifications** are auto-detected from filenames. Check one or more magnifications to process (e.g., just 10x), or leave all checked to process everything. For plates without magnification suffixes, this section stays empty and all wells are processed.
+4. Set the **output directory** where results will be written.
+
+### Parameters tab
+
+**Analysis** -- choose what to compute. Dependencies are enforced automatically (e.g., enabling colony features auto-enables colony tracking).
+
+| Analysis | What it does |
+|---|---|
+| Biofilm biomass | Preprocessing + registration + masking + biomass curve (always on) |
+| Mask overlay videos | MP4 with cyan mask overlay on processed frames |
+| Whole-image texture features | Haralick moments, intensity stats, entropy per frame |
+| Colony tracking | Connected-component tracking across frames |
+| Colony-level feature extraction | Per-colony geometry, intensity, spatial features |
+
+**Preprocessing parameters:**
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -70,22 +89,21 @@ The GUI has five tabs:
 | Downsample | 4 | Downsample factor for FFT registration. Higher = faster but less precise. |
 | Dust correction | on | Remove pixels that appear at t=0 but disappear later (likely dust, not biofilm). |
 
-### Output toggles
+**Performance** -- set the number of workers for parallel operations (registration, I/O). Hard-capped at 75% of CPU cores.
 
-In the Parameters tab, choose which outputs to save:
+**Saved outputs (advanced)** -- toggle whether to keep intermediate files on disk (registered raw stacks, processed images, binary masks). Useful for saving disk space if you only need the final CSV results.
 
-- **Registered raw stacks** (.tif) -- drift-corrected raw images
-- **Processed images** (.tif) -- contrast-normalized images
-- **Binary masks** (.npz) -- segmentation masks
-- **Mask overlay videos** (.mp4) -- visualization of segmentation over time
+### Conditions tab
 
-### Feature extraction toggles
+A 96-well grid for labeling experimental conditions (e.g., mutant names, media types).
 
-- **Whole-image texture features** -- requires processed stacks (auto-enabled)
-- **Colony tracking** -- requires registered raw stacks and masks (auto-enabled)
-- **Colony-level feature extraction** -- requires colony tracking (auto-enabled)
-
-Dependencies between toggles are enforced automatically.
+- **Click** individual wells to select them
+- **Click-drag** across wells to paint a selection
+- **Click row headers** (A-H) to select/deselect an entire row
+- **Click column headers** (1-12) to select/deselect an entire column
+- **Select All / Clear** buttons for bulk operations
+- Type a condition name and click **Save condition** to assign selected wells
+- Click a saved condition in the list to highlight its wells on the grid
 
 ### Configuration
 
