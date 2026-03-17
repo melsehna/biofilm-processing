@@ -99,9 +99,14 @@ class ProcessingWorker(QObject):
             os.makedirs(outdir, exist_ok=True)
             outdir_parent = os.path.join(output_root, plate_name)
 
+            mag_params = self._state.get('magParams', {})
+
             for mag_label, wells_dict in mag_groups:
                 if mag_label:
                     self.log.emit(f'  Magnification: {mag_label}')
+
+                # Apply per-mag parameter overrides
+                mag_overrides = mag_params.get(mag_label, {})
 
                 well_items = list(wells_dict.items())
                 total_wells = len(well_items)
@@ -120,7 +125,7 @@ class ProcessingWorker(QObject):
                     try:
                         self._process_well(
                             plate_path, plate_name, outdir, outdir_parent,
-                            well_id, well_files
+                            well_id, well_files, mag_overrides
                         )
                         elapsed = time.time() - t0
                         self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
@@ -156,22 +161,23 @@ class ProcessingWorker(QObject):
 
         return stack
 
-    def _process_well(self, plate_path, plate_name, outdir, outdir_parent, well_id, well_files):
+    def _process_well(self, plate_path, plate_name, outdir, outdir_parent, well_id, well_files, mag_overrides=None):
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         stack = self._load_well_stack(well_files)
         s = self._state
+        mo = mag_overrides or {}
 
         # Step 1: image processing (always runs — saves all outputs by default)
         # timelapse_processing creates processedImages/ under outdir_parent
         self.log.emit(f'  {well_id}: preprocessing + registration...')
         masks, biomass, od_mean = timelapse_processing(
             images=stack,
-            block_diameter=s['blockDiam'],
+            block_diameter=mo.get('blockDiam', s['blockDiam']),
             ntimepoints=stack.shape[2],
             shift_thresh=s['shiftThresh'],
-            fixed_thresh=s['fixedThresh'],
-            dust_correction=s['dustCorrection'],
+            fixed_thresh=mo.get('fixedThresh', s['fixedThresh']),
+            dust_correction=mo.get('dustCorrection', s['dustCorrection']),
             outdir=outdir_parent,
             filename=well_id,
             image_records=None,
