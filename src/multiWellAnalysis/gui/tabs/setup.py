@@ -8,63 +8,55 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 
-def _has_well_tifs(path):
-    """Fast check: does this directory contain at least one well-like .tif?
-
-    Looks for files matching A1*.tif through P24*.tif (well ID prefix).
-    Returns on the first match instead of globbing all files.
-    """
-    try:
-        for f in os.scandir(path):
-            if not f.is_file() or not f.name.endswith('.tif'):
-                continue
-            if re.match(r'^[A-P]\d{1,2}[_.]', f.name):
-                return True
-    except PermissionError:
-        pass
-    return False
-
-
-def _is_plate_dir(path):
-    """Check if a directory looks like a plate with raw well images."""
-    return _has_well_tifs(path)
-
-
 def discover_plates(root_dir, max_depth=3):
-    """Find plate subdirectories under root_dir, searching up to max_depth levels.
+    """Find candidate plate directories under root_dir.
 
-    Handles structures like:
-        root/plate/images.tif              (depth 1)
-        root/experiment/plate/images.tif   (depth 2)
-        root/group/experiment/plate/...    (depth 3)
+    Optimized for network drives (SMB/NFS): only uses os.scandir for
+    directory listings, never scans file contents. Identifies leaf
+    directories (those with no subdirectories) as plate candidates,
+    since plate dirs contain image files, not more folders.
 
-    Also treats root_dir itself as a plate if it directly contains tifs.
+    If root_dir itself has no subdirectories, it is returned as-is.
     """
     if not root_dir or not os.path.isdir(root_dir):
         return []
 
-    if _is_plate_dir(root_dir):
-        return [root_dir]
-
-    plates = []
-    _discover_recursive(root_dir, plates, depth=0, max_depth=max_depth)
-    return sorted(plates)
+    candidates = []
+    _find_leaf_dirs(root_dir, candidates, depth=0, max_depth=max_depth)
+    return sorted(candidates)
 
 
-def _discover_recursive(path, plates, depth, max_depth):
+def _find_leaf_dirs(path, results, depth, max_depth):
+    """Collect leaf directories (dirs with no subdirs) via scandir.
+
+    On a typical imaging data layout:
+        root/                      <- has subdirs, recurse
+          experiment_A/            <- has subdirs, recurse
+            241106_Plate 1/        <- leaf (contains tifs, no subdirs) -> candidate
+            241106_Plate 2/        <- leaf -> candidate
+          experiment_B/            <- has subdirs, recurse
+            ...
+
+    Only directory metadata is read (is_dir), never file contents.
+    """
     if depth >= max_depth:
+        # At max depth, add this directory as a candidate
+        results.append(path)
         return
+
     try:
-        entries = sorted(os.scandir(path), key=lambda e: e.name)
+        subdirs = [e for e in os.scandir(path)
+                   if e.is_dir() and not e.name.startswith('.')]
     except PermissionError:
         return
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        if _is_plate_dir(entry.path):
-            plates.append(entry.path)
-        else:
-            _discover_recursive(entry.path, plates, depth + 1, max_depth)
+
+    if not subdirs:
+        # Leaf directory — no subdirectories, likely a plate
+        results.append(path)
+    else:
+        subdirs.sort(key=lambda e: e.name)
+        for entry in subdirs:
+            _find_leaf_dirs(entry.path, results, depth + 1, max_depth)
 
 
 class SetupTab(QWidget):
