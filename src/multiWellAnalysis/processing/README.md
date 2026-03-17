@@ -1,125 +1,176 @@
-# phenotypr - BF processing pipeline
+# processing
 
-A modular Python pipeline for preprocessing, segmentation, and quantitative
-analysis of high-throughput brightfield time-lapse microscopy data, with a focus
-on bacterial biofilm growth and morphology in multi-well plate experiments.
+Core image analysis pipeline for brightfield timelapse biofilm data. Handles preprocessing, registration, segmentation, and overlay video generation.
 
-This repository provides the **core analysis library** used to:
-- preprocess raw brightfield images
-- perform registration and drift correction
-- compute biofilm masks
-- extract biomass and optical density (OD) time series
-- support downstream feature extraction and visualization
+## Modules
 
-The codebase is designed to be **reproducible, scriptable, and scalable** for
-large plate-based experiments.
+| Module | Purpose |
+|---|---|
+| `analysis_main.py` | `timelapse_processing()` — full single-well pipeline |
+| `preprocessing.py` | Local contrast normalization (8x downsample + Gaussian blur) |
+| `registration.py` | Two-pass in-place phase-correlation drift correction |
+| `segmentation.py` | Binary masking + dust correction |
+| `overlay.py` | `write_overlay_video()` — MP4 generation with mask overlay |
+| `batch_runner.py` | Multi-plate batch processing with magnification discovery |
+| `io_utils.py` | Threaded TIFF I/O |
+| `helpers.py` | Utility functions (round_odd, etc.) |
+| `plotting.py` | Plate-level summary plots |
+| `plotting_tools.py` | Diagnostic panels (peak frame, biomass curves) |
+| `pipeline.py` | High-level `Pipeline` entry point |
 
----
+## Pipeline stages
 
-## Scope and philosophy
-
-This repository intentionally contains **only reusable analysis code**.
-
-It does **not** contain:
-- raw microscopy data
-- processed images or outputs
-- experimental results
-- plate layouts or assay-specific metadata
-
-Experiment-specific scripts that *use* this library (e.g. plate runners,
-parameter sweeps) are maintained separately.
-
----
-
-## Core functionality
-
-The main analysis stages are:
-
-1. **Preprocessing**
-   - Local contrast normalization
-   - Optional downsampling
-   - Gaussian smoothing
-
-2. **Registration**
-   - Phase-correlation-based frame alignment
-   - Drift correction using normalized reference images
-
-3. **Segmentation**
-   - Binary biofilm mask computation
-   - Optional dust / artifact correction
-
-4. **Quantification**
-   - Biomass time series from masked images
-   - Optical density (OD) estimation when reference images are provided
-
-5. **Visualization**
-   - Overlay generation for quality control
-   - Biomass curves and peak-frame summaries
-
----
-
-## Repository structure
-
-```text
-multiWellAnalysis/ \
-├── multiWellAnalysis/ \
-│ ├── analysis_main.py # main timelapse processing logic \
-│ ├── preprocessing.py \
-│ ├── registration.py \
-│ ├── segmentation.py \
-│ ├── feature_extraction.py \
-│ ├── plotting_tools.py \
-│ ├── io_utils.py \
-│ └── helpers.py \
-├── notebooks/ # exploratory notebooks (ignored by default) \
-├── .gitignore \
-└── README.md
+```
+Raw .tif files
+    |
+[1] Scale to [0, 1] float32
+    |
+[2] Normalize local contrast (downsample 8x -> Gaussian blur -> upsample -> subtract)
+    |  + post-normalization Gaussian blur (sigma=2)
+    |
+[3] Register frames (two-pass phase correlation, in-place, threaded)
+    |
+[4] Crop NaN borders
+    |
+[5] Binary mask (threshold on normalized image)
+    |  + optional dust correction
+    |
+[6] Biomass curve (mean of masked region per frame)
+    |  with OD via -log10 if Imin/Imax reference images provided
+    |
+[7] Save stacks (.tif), masks (.npz)
+    |
+[8] Overlay video (.mp4) via cv2.VideoWriter
 ```
 
+## Usage
 
----
-
-## Typical usage
-
-This package is intended to be imported and driven by **external scripts**, for
-example:
-
-- plate-level batch runners
-- high-throughput screening pipelines
-- experiment-specific workflows
-
-A minimal usage pattern looks like:
+### Single well
 
 ```python
-from multiWellAnalysis.analysis_main import timelapse_processing
+import numpy as np
+import tifffile
+from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
-masks, biomass, od = timelapse_processing(
-    images=stack,
+stack = tifffile.imread('plate/A1_03_1_1_Bright Field_001.tif')
+
+# Ensure (H, W, T)
+if stack.shape[0] < stack.shape[1]:
+    stack = np.transpose(stack, (1, 2, 0))
+
+masks, biomass, od_mean = timelapse_processing(
+    images=stack.astype(np.float64),
     block_diameter=101,
-    ntimepoints=ntimepoints,
+    ntimepoints=stack.shape[2],
     shift_thresh=50,
-    fixed_thresh=0.012,
+    fixed_thresh=0.014,
     dust_correction=True,
-    outdir=outdir,
-    filename=well_id,
-    image_records=[]
+    outdir='/path/to/output',
+    filename='A1_03',
+    image_records=None,
+    fftStride=6,
+    downsample=4,
+    label='lipA  Plate1-A1',  # optional text on overlay
 )
 ```
 
----
+### Batch (multiple plates)
 
-## Versioning
+```python
+from multiWellAnalysis.processing.batch_runner import batch_run
 
-This repository uses semantic versioning.
-- v1.0: frozen, stable implementation of the biofilm masking and biomass extraction pipeline used in current analyses.
-Future versions may extend feature extraction or add alternative segmentation strategies, but v1.0 behavior is intended to remain reproducible.
+batch_run(
+    config_path='experiment_config.json',
+    replicate_csv='ReplicatePositions.csv',
+    skip_overlay=False,
+)
+```
 
-## Authors
-Seh Na Mellick, Jojo Prentice, Andrew Bridges
-CMU Ray and Stephanie Lane Computational Biology Department
-CMU Department of Biological Sciences
+### Single plate with magnification filtering
 
-## License 
-This repository is private and currently intended for academic use. A formal open-source license may be added in a future release.
+```python
+from multiWellAnalysis.processing.batch_runner import run_plate
+from multiWellAnalysis.processing.helpers import round_odd
 
+params = {
+    'blockDiam': round_odd(101),
+    'fixed_thresh': 0.014,
+    'shift_thresh': 50,
+    'dust_correction': True,
+    'Imin': None,
+    'Imax': None,
+}
 
+mutant_map = {'A1': 'lipA', 'B2': 'WT', ...}
+
+df = run_plate('/path/to/plate', mutant_map, params)
+```
+
+### Overlay video only
+
+```python
+from multiWellAnalysis.processing.overlay import write_overlay_video
+
+# display_stack: (H, W, T) float32 in [0, 1]
+# masks: (H, W, T) bool
+write_overlay_video(
+    display_stack, masks, 'output/A1_overlay.mp4',
+    fps=2,
+    label='lipA  Plate1-A1',
+    overlay_color=(255, 255, 0),  # BGR cyan
+)
+```
+
+### Preprocessing only
+
+```python
+from multiWellAnalysis.processing.preprocessing import (
+    normalize_local_contrast,
+    normalize_local_contrast_output,
+)
+
+# For segmentation input (background - image):
+norm = normalize_local_contrast(frame, block_diameter=101)
+
+# For visualization (image - background + midpoint, clipped to [0, 1]):
+vis = normalize_local_contrast_output(stack, block_diameter=101, fpMean=0.5)
+```
+
+## Parameters
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `block_diameter` | 101 | Local contrast kernel size (odd). Larger = smoother background estimate. |
+| `fixed_thresh` | 0.014 (CLI) / 0.04 (GUI) | Mask threshold on normalized image. |
+| `shift_thresh` | 50 | Max registration shift (px). Larger shifts are rejected. |
+| `fftStride` | 6 | Compute shifts every N frames. |
+| `downsample` | 4 | Downsample factor for FFT. |
+| `dust_correction` | True | Kill pixels present at t=0 that vanish later. |
+| `skip_overlay` | False | Skip MP4 generation (saves ~30% runtime). |
+
+## Magnification handling
+
+`batch_runner` automatically groups wells by magnification:
+
+1. **From `protocol.csv`** (preferred): maps imaging steps to magnification labels
+2. **From filenames**: parses suffix `WELL_MAGSUFFIX_...` (e.g., `_01`=4x, `_02`=4x, `_03`=10x, `_04`=20x)
+
+Each magnification group is processed independently, producing separate output CSVs (`{mag}_BF_biomass.csv`, `{mag}_BF_timeseries.csv`).
+
+## Output files
+
+Per well:
+
+| File | Description |
+|---|---|
+| `{well}_processed.tif` | Normalized + blurred + registered + cropped |
+| `{well}_registered_raw.tif` | Raw registered + cropped (for OD calculation) |
+| `{well}_masks.npz` | Binary masks (key: `masks`) |
+| `{well}_overlay.mp4` | Cyan mask overlay video |
+
+Per magnification group:
+
+| File | Description |
+|---|---|
+| `{mag}_BF_biomass.csv` | Wide format: columns = wells, rows = timepoints |
+| `{mag}_BF_timeseries.csv` | Long format: plate, well, mag, mutant, frame, biomass, od_mean |
