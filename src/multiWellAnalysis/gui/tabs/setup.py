@@ -4,7 +4,6 @@ import glob
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
-    QComboBox,
 )
 from PySide6.QtCore import Qt
 
@@ -82,16 +81,12 @@ class SetupTab(QWidget):
         layout.addWidget(self.plate_list, stretch=1)
 
         # magnification selector
-        mag_row = QHBoxLayout()
-        mag_label = QLabel('Magnification:')
-        mag_row.addWidget(mag_label)
+        mag_label = QLabel('Magnifications (auto-detected from plates):')
+        layout.addWidget(mag_label)
 
-        self.mag_combo = QComboBox()
-        self.mag_combo.addItem('All magnifications', 'all')
-        self.mag_combo.setMinimumWidth(200)
-        mag_row.addWidget(self.mag_combo)
-        mag_row.addStretch()
-        layout.addLayout(mag_row)
+        self.mag_list = QListWidget()
+        self.mag_list.setMaximumHeight(90)
+        layout.addWidget(self.mag_list)
 
         # notes
         notes_label = QLabel('Notes:')
@@ -109,7 +104,7 @@ class SetupTab(QWidget):
             lambda: self.state.set('outputDir', self.outdir_edit.text().strip())
         )
         self.plate_list.itemChanged.connect(self._update_selected_plates)
-        self.mag_combo.currentIndexChanged.connect(self._on_mag_changed)
+        self.mag_list.itemChanged.connect(self._on_mag_changed)
         self.notes_edit.textChanged.connect(
             lambda: self.state.set('notes', self.notes_edit.toPlainText())
         )
@@ -163,35 +158,54 @@ class SetupTab(QWidget):
         self.state.set('plates', selected)
         self._scan_magnifications(selected)
 
-    def _on_mag_changed(self, index):
-        mag = self.mag_combo.currentData()
-        if mag is not None:
-            self.state.set('magnification', mag)
+    def _on_mag_changed(self, item=None):
+        """Update state with currently checked magnifications."""
+        selected = []
+        for i in range(self.mag_list.count()):
+            it = self.mag_list.item(i)
+            if it.checkState() == Qt.Checked:
+                selected.append(it.data(Qt.UserRole))
+        # 'all' if nothing checked or all checked
+        total = self.mag_list.count()
+        if not selected or len(selected) == total:
+            self.state.set('magnification', 'all')
+        elif len(selected) == 1:
+            self.state.set('magnification', selected[0])
+        else:
+            self.state.set('magnification', selected)
 
     def _scan_magnifications(self, plates):
         """Scan selected plates for available magnifications."""
         all_mags = set()
-        for plate_path in plates[:3]:  # scan up to 3 plates for speed
+        for plate_path in plates[:3]:
             tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
             bf_files = [f for f in tif_files
                         if 'Bright Field' in f or 'Bright_Field' in f]
             if not bf_files:
-                # simple naming (A1_001.tif etc.) — no magnification
                 continue
             for f in bf_files:
                 m = re.match(r'^[A-H]\d+(_\d+)_', os.path.basename(f))
                 if m:
                     all_mags.add(m.group(1))
 
-        saved_mag = self.state.get('magnification', 'all')
-        self.mag_combo.blockSignals(True)
-        self.mag_combo.clear()
-        self.mag_combo.addItem('All magnifications', 'all')
-        for mag in sorted(all_mags):
-            self.mag_combo.addItem(f'Magnification {mag}', mag)
+        if not all_mags:
+            self.mag_list.clear()
+            self.state.set('magnification', 'all')
+            return
 
-        # restore previous selection if still valid
-        idx = self.mag_combo.findData(saved_mag)
-        self.mag_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.mag_combo.blockSignals(False)
-        self._on_mag_changed(self.mag_combo.currentIndex())
+        saved = self.state.get('magnification', 'all')
+        if isinstance(saved, str) and saved != 'all':
+            saved = [saved]
+        elif saved == 'all':
+            saved = list(all_mags)
+
+        self.mag_list.blockSignals(True)
+        self.mag_list.clear()
+        for mag in sorted(all_mags):
+            item = QListWidgetItem(f'Magnification {mag}')
+            item.setData(Qt.UserRole, mag)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if mag in saved else Qt.Unchecked)
+            self.mag_list.addItem(item)
+        self.mag_list.blockSignals(False)
+        self._on_mag_changed()
