@@ -9,60 +9,56 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 
-def discover_plates(root_dir):
+def discover_plates(root_dir, depth=0):
     """Find candidate plate directories under root_dir.
 
-    Strategy: list immediate subdirectories only (one scandir call).
-    If any child has no subdirectories of its own, it's likely a plate.
-    If all children have subdirectories, they're experiment folders —
-    list THEIR children as plate candidates instead (two scandir calls).
+    Lists only immediate subdirectories (single os.listdir call — no stat,
+    no is_dir check, no file scanning). Instant even over SMB.
 
-    Never scans file contents. Fast over SMB/NFS.
-    If root_dir itself has no subdirectories, treat it as a single plate.
+    Returns all direct children as candidates. The user unchecks non-plates.
+    Use the 'Search deeper' button to recurse one level if the root contains
+    experiment folders rather than plate folders.
     """
     if not root_dir or not os.path.isdir(root_dir):
         return []
 
-    children = _list_subdirs(root_dir)
-
-    # No subdirectories — root itself is likely a plate
-    if not children:
-        return [root_dir]
-
-    # Check if children are plates (no subdirs) or experiment folders (have subdirs)
-    # Only check the first child to decide — avoids scanning all of them
-    first_child_subdirs = _list_subdirs(children[0])
-
-    if not first_child_subdirs:
-        # Children are leaf dirs (plates). Example:
-        #   root/Plate1/  root/Plate2/
-        return sorted(children)
-
-    # Children are experiment folders. Go one level deeper. Example:
-    #   root/Experiment_A/Plate1/  root/Experiment_A/Plate2/
-    plates = []
-    for child in children:
-        plates.extend(_list_subdirs(child))
-    return sorted(plates)
-
-
-_SKIP_DIRS = {
-    'processedimages', 'processed_images_py', 'numerical_data_py',
-    'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
-}
-
-
-def _list_subdirs(path):
-    """List immediate subdirectories of path, skipping output/metadata dirs."""
     try:
-        return sorted(
-            e.path for e in os.scandir(path)
-            if e.is_dir()
-            and not e.name.startswith('.')
-            and e.name.lower() not in _SKIP_DIRS
-        )
+        entries = sorted(os.listdir(root_dir))
     except PermissionError:
         return []
+
+    # Filter out hidden dirs and known output dirs by name only (no stat calls)
+    skip = {
+        'processedimages', 'processed_images_py', 'numerical_data_py',
+        'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
+    }
+
+    candidates = []
+    for name in entries:
+        if name.startswith('.') or name.startswith('~$'):
+            continue
+        if name.lower() in skip:
+            continue
+        # Skip obvious non-directory files by extension
+        if '.' in name and name.rsplit('.', 1)[1].lower() in {
+            'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
+            'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
+        }:
+            continue
+        candidates.append(os.path.join(root_dir, name))
+
+    if not candidates:
+        # No subdirectories found — root itself is likely a plate
+        return [root_dir]
+
+    # If depth requested, recurse one level into each candidate
+    if depth > 0:
+        deeper = []
+        for c in candidates:
+            deeper.extend(discover_plates(c, depth=depth - 1))
+        return sorted(deeper)
+
+    return sorted(candidates)
 
 
 class SetupTab(QWidget):
@@ -95,6 +91,10 @@ class SetupTab(QWidget):
 
         self.refresh_btn = QPushButton('Refresh')
         dir_row.addWidget(self.refresh_btn)
+
+        self.deeper_btn = QPushButton('Search deeper')
+        self.deeper_btn.setToolTip('Look inside each folder for plate subdirectories')
+        dir_row.addWidget(self.deeper_btn)
         layout.addLayout(dir_row)
 
         # output directory row
@@ -137,6 +137,7 @@ class SetupTab(QWidget):
     def _connect_signals(self):
         self.browse_btn.clicked.connect(self._browse)
         self.refresh_btn.clicked.connect(self._refresh_plates)
+        self.deeper_btn.clicked.connect(self._refresh_plates_deeper)
         self.outdir_browse_btn.clicked.connect(self._browse_outdir)
         self.outdir_edit.editingFinished.connect(
             lambda: self.state.set('outputDir', self.outdir_edit.text().strip())
@@ -171,19 +172,21 @@ class SetupTab(QWidget):
             self.outdir_edit.setText(path)
             self.state.set('outputDir', path)
 
-    def _refresh_plates(self):
+    def _refresh_plates(self, search_depth=0):
         root = self.root_edit.text().strip()
         self.plate_list.blockSignals(True)
         self.plate_list.clear()
         self.plate_list.blockSignals(False)
         self.refresh_btn.setEnabled(False)
+        self.deeper_btn.setEnabled(False)
         self.refresh_btn.setText('Scanning...')
 
         def _scan():
-            return discover_plates(root), root
+            return discover_plates(root, depth=search_depth), root
 
         def _done(plates, root_used):
             self.refresh_btn.setEnabled(True)
+            self.deeper_btn.setEnabled(True)
             self.refresh_btn.setText('Refresh')
             self.plate_list.blockSignals(True)
             self.plate_list.clear()
@@ -201,6 +204,9 @@ class SetupTab(QWidget):
             self._update_selected_plates()
 
         self._run_in_background(_scan, _done)
+
+    def _refresh_plates_deeper(self):
+        self._refresh_plates(search_depth=1)
 
     def _update_selected_plates(self):
         selected = []
