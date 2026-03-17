@@ -23,6 +23,7 @@ DEFAULTS = {
     'conditions':       {},
     'notes':            '',
     'magnification':    'all',
+    'workers':          4,
 }
 
 
