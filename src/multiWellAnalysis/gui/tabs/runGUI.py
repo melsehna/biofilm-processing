@@ -77,6 +77,8 @@ class ProcessingWorker(QObject):
         if not os.path.isdir(output_root):
             os.makedirs(output_root, exist_ok=True)
 
+        mag_filter = self._state.get('magnification', 'all')
+
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
                 self.log.emit('Cancelled by user.')
@@ -87,42 +89,45 @@ class ProcessingWorker(QObject):
             self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {plate_name}')
             self.log.emit(f'{"="*60}')
 
-            wells = self._discover_wells(plate_path)
-            if not wells:
+            mag_groups = self._discover_wells(plate_path, mag_filter)
+            if not mag_groups:
                 self.log.emit(f'  No wells found in {plate_name}, skipping.')
                 continue
 
             # mirror plate structure in output directory
             outdir = os.path.join(output_root, plate_name, 'processedImages')
             os.makedirs(outdir, exist_ok=True)
+            outdir_parent = os.path.join(output_root, plate_name)
 
-            well_items = list(wells.items())
-            total_wells = len(well_items)
-            for well_idx, (well_id, well_files) in enumerate(well_items):
-                if self._stop.is_set():
-                    self.log.emit('Cancelled by user.')
-                    return
+            for mag_label, wells_dict in mag_groups:
+                if mag_label:
+                    self.log.emit(f'  Magnification: {mag_label}')
 
-                self.progress.emit(
-                    plate_name, plate_idx, total_plates,
-                    well_id, 'Processing'
-                )
-                self.well_progress.emit(well_idx, total_wells)
-                t0 = time.time()
+                well_items = list(wells_dict.items())
+                total_wells = len(well_items)
+                for well_idx, (well_id, well_files) in enumerate(well_items):
+                    if self._stop.is_set():
+                        self.log.emit('Cancelled by user.')
+                        return
 
-                try:
-                    # outdir_parent = plate output root (parent of processedImages/)
-                    outdir_parent = os.path.join(output_root, plate_name)
-                    self._process_well(
-                        plate_path, plate_name, outdir, outdir_parent,
-                        well_id, well_files
+                    self.progress.emit(
+                        plate_name, plate_idx, total_plates,
+                        well_id, 'Processing'
                     )
-                    elapsed = time.time() - t0
-                    self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
-                except Exception as e:
-                    self.log.emit(f'  {well_id} ERROR: {e}')
+                    self.well_progress.emit(well_idx, total_wells)
+                    t0 = time.time()
 
-            self.well_progress.emit(total_wells, total_wells)
+                    try:
+                        self._process_well(
+                            plate_path, plate_name, outdir, outdir_parent,
+                            well_id, well_files
+                        )
+                        elapsed = time.time() - t0
+                        self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
+                    except Exception as e:
+                        self.log.emit(f'  {well_id} ERROR: {e}')
+
+                self.well_progress.emit(total_wells, total_wells)
 
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
@@ -277,11 +282,41 @@ class ProcessingWorker(QObject):
         )
         self.log.emit(f'    Whole-image features: {status}')
 
-    def _discover_wells(self, plate_path):
-        """Find wells and their image files."""
-        wells = {}
+    def _discover_wells(self, plate_path, mag_filter='all'):
+        """Find wells and their image files, respecting magnification selection.
+
+        Returns list of (mag_label, wells_dict) tuples.
+        wells_dict maps well_id -> file_path or [file_paths].
+        """
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
 
+        # Try magnification-aware discovery first
+        from multiWellAnalysis.processing.batch_runner import discover_mag_groups
+        from multiWellAnalysis.processing.analysis_main import frame_index_from_filename
+
+        bf_files = [f for f in tif_files
+                    if 'Bright Field' in f or 'Bright_Field' in f]
+
+        mag_groups = discover_mag_groups(plate_path, bf_files) if bf_files else {}
+
+        if mag_groups:
+            # Filter to selected magnification
+            if mag_filter != 'all':
+                mag_groups = {k: v for k, v in mag_groups.items()
+                              if k == mag_filter or k == mag_filter.lstrip('_')}
+
+            result = []
+            for mag_label, wells_dict in sorted(mag_groups.items()):
+                # Sort files within each well by frame index
+                sorted_wells = {}
+                for well, files in wells_dict.items():
+                    well_label = f'{well}_{mag_label}'
+                    sorted_wells[well_label] = sorted(files, key=frame_index_from_filename)
+                result.append((mag_label, sorted_wells))
+            return result
+
+        # Fallback: simple well discovery (no magnification suffixes)
+        wells = {}
         for f in tif_files:
             name = os.path.basename(f)
             if re.match(r'^[A-H]\d{1,2}\.tif$', name):
@@ -295,7 +330,7 @@ class ProcessingWorker(QObject):
                 if isinstance(wells[well_id], list):
                     wells[well_id].append(f)
 
-        return wells
+        return [('', wells)] if wells else []
 
 
 class RunTab(QWidget):
