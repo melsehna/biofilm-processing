@@ -204,11 +204,14 @@ class SetupTab(QWidget):
         def _scan():
             return discover_plates(root, depth=search_depth), root
 
-        def _done(plates_or_none, root_used=root):
+        def _done(result):
             self.refresh_btn.setEnabled(True)
             self.deeper_btn.setEnabled(True)
             self.refresh_btn.setText('Refresh')
-            plates = plates_or_none if plates_or_none is not None else []
+            if isinstance(result, tuple):
+                plates, root_used = result
+            else:
+                plates, root_used = (result or []), root
             self.plate_list.blockSignals(True)
             self.plate_list.clear()
             for p in plates:
@@ -380,10 +383,7 @@ class SetupTab(QWidget):
         """Main-thread handler for background task results."""
         cb = self._bg_callbacks.pop(task_name, None)
         if cb:
-            if isinstance(result, tuple):
-                cb(*result)
-            else:
-                cb(result)
+            cb(result)
 
     def _run_in_background(self, task_name, work_fn, done_fn):
         """Run work_fn in a daemon thread, deliver result via Qt signal.
