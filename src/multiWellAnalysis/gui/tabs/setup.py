@@ -222,7 +222,7 @@ class SetupTab(QWidget):
                 item = QListWidgetItem(display)
                 item.setData(Qt.UserRole, p)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Checked)
+                item.setCheckState(Qt.Unchecked)
                 self.plate_list.addItem(item)
             self.plate_list.blockSignals(False)
             self._update_selected_plates()

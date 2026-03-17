@@ -19,36 +19,6 @@ import tifffile
 from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
 
 
-def _collect_tif_dirs(plate_dir):
-    """Return plate_dir plus its immediate subdirectories (one level deep).
-
-    Avoids stat calls (slow over SMB) — filters by name only, same as
-    discover_plates() in setup.py.
-    """
-    dirs = [plate_dir]
-    skip_names = {
-        'processedimages', 'processed_images_py', 'numerical_data_py',
-        'numericaldata', 'plots', '__pycache__', 'checkpoints',
-    }
-    file_exts = {
-        'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
-        'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
-    }
-    try:
-        for name in os.listdir(plate_dir):
-            if name.startswith('.') or name.startswith('~$'):
-                continue
-            if name.lower() in skip_names:
-                continue
-            # Skip obvious files by extension (no stat needed)
-            if '.' in name and name.rsplit('.', 1)[1].lower() in file_exts:
-                continue
-            dirs.append(os.path.join(plate_dir, name))
-    except (PermissionError, OSError):
-        pass
-    return dirs
-
-
 def discover_wells_with_mag(plate_dir):
     """Find well+mag combinations from TIF filenames.
 
@@ -58,10 +28,9 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    # Collect TIF files from plate dir and immediate subdirectories
-    tif_files = []
-    for d in _collect_tif_dirs(plate_dir):
-        tif_files.extend(sorted(glob.glob(os.path.join(d, '*.tif'))))
+    # Two glob calls: plate root + one level deep (no listdir/stat needed)
+    tif_files = sorted(glob.glob(os.path.join(plate_dir, '*.tif')))
+    tif_files += sorted(glob.glob(os.path.join(plate_dir, '*', '*.tif')))
 
     bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
 
