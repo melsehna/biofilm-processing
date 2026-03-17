@@ -19,6 +19,36 @@ import tifffile
 from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
 
 
+def _collect_tif_dirs(plate_dir):
+    """Return plate_dir plus its immediate subdirectories (one level deep).
+
+    Avoids stat calls (slow over SMB) — filters by name only, same as
+    discover_plates() in setup.py.
+    """
+    dirs = [plate_dir]
+    skip_names = {
+        'processedimages', 'processed_images_py', 'numerical_data_py',
+        'numericaldata', 'plots', '__pycache__', 'checkpoints',
+    }
+    file_exts = {
+        'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
+        'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
+    }
+    try:
+        for name in os.listdir(plate_dir):
+            if name.startswith('.') or name.startswith('~$'):
+                continue
+            if name.lower() in skip_names:
+                continue
+            # Skip obvious files by extension (no stat needed)
+            if '.' in name and name.rsplit('.', 1)[1].lower() in file_exts:
+                continue
+            dirs.append(os.path.join(plate_dir, name))
+    except (PermissionError, OSError):
+        pass
+    return dirs
+
+
 def discover_wells_with_mag(plate_dir):
     """Find well+mag combinations from TIF filenames.
 
@@ -28,15 +58,20 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    tif_files = sorted(glob.glob(os.path.join(plate_dir, '*.tif')))
+    # Collect TIF files from plate dir and immediate subdirectories
+    tif_files = []
+    for d in _collect_tif_dirs(plate_dir):
+        tif_files.extend(sorted(glob.glob(os.path.join(d, '*.tif'))))
+
     bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
 
     # Try magnification-aware grouping
-    if bf_files:
+    candidates = bf_files if bf_files else tif_files
+    if candidates:
         groups = defaultdict(lambda: defaultdict(list))
-        for f in bf_files:
+        for f in candidates:
             base = os.path.basename(f)
-            m = re.match(r'^([A-H]\d+)(_\d+)_', base)
+            m = re.match(r'^([A-P]\d+)(_\d+)_', base)
             if m:
                 well, mag = m.group(1), m.group(2)
                 groups[mag][well].append(f)
@@ -60,7 +95,7 @@ def discover_wells_with_mag(plate_dir):
             continue
         for f in glob.glob(os.path.join(d, '*.tif')):
             name = os.path.basename(f)
-            m = re.match(r'^([A-H]\d{1,2})', name)
+            m = re.match(r'^([A-P]\d{1,2})', name)
             if m:
                 wells.add(m.group(1))
 
