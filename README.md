@@ -2,41 +2,49 @@
 
 High-throughput biofilm phenotyping from automated brightfield timelapse microscopy. Processes 96-well plate image data through registration, segmentation, colony tracking, and feature extraction.
 
-## Quick start
+## Installation
 
 ```bash
-# Clone and install
 git clone <repo-url> biofilm-processing
 cd biofilm-processing
 conda create -n phenotypr python=3.11 -y
 conda activate phenotypr
 pip install -e .
-
-# Launch the GUI
-phenotypr-gui
 ```
+
+Dependencies (installed automatically): numpy, scipy, scikit-image, opencv-python, mahotas, pandas, matplotlib, tifffile, imageio, imageio-ffmpeg, PySide6
+
+### Desktop shortcut
+
+Create a clickable shortcut so you can launch the GUI without a terminal:
+
+```bash
+python scripts/install-desktop-shortcut.py
+```
+
+This works on Linux, macOS, and Windows. It detects your active conda or virtualenv and bakes the activation into the shortcut.
+
+| Platform | What it creates |
+|---|---|
+| Linux | `.desktop` file on Desktop + app menu |
+| macOS | `Phenotypr.app` bundle on Desktop |
+| Windows | `.bat` launcher + `.lnk` shortcut on Desktop |
 
 ## What it does
 
-Biofilms grown in multi-well plates are imaged over time using brightfield microscopy, producing per-well TIFF stacks. Phenotypr automates the analysis:
+Biofilms grown in multi-well plates are imaged over time using brightfield microscopy, producing per-well TIFF stacks. This pipeline automates:
 
 1. **Preprocessing** -- Local contrast normalization removes illumination artifacts (vignetting, uneven lighting) so that downstream thresholding reflects actual biomass, not optics.
-
 2. **Registration** -- Phase-correlation drift correction aligns frames across the timelapse, compensating for stage drift or plate movement between timepoints.
-
 3. **Segmentation** -- Thresholding on the preprocessed image produces binary masks of biomass. Optional dust correction removes persistent bright artifacts that are not biological.
-
 4. **Overlay generation** -- MP4 videos with cyan mask overlay on the processed frames, with optional text labels (mutant, plate, well).
-
-5. **Colony tracking** -- Connected-component labeling at a seed frame propagates labels forward in time using distance-based assignment. This links the same colony across frames, enabling growth-rate and morphology measurements at the single-colony level.
-
-6. **Colony feature extraction** -- Per-colony geometry (area, circularity, eccentricity), intensity statistics, spatial features (centroid offset, nearest-neighbor distances), and background intensity are computed for every tracked colony at every frame. Well-level aggregates summarize colony populations per well.
-
-7. **Whole-image feature extraction** -- Haralick texture moments (via Mahotas), intensity statistics, and entropy are extracted from each preprocessed frame as a global texture fingerprint of the well.
+5. **Colony tracking** -- Connected-component labeling at a seed frame propagates labels forward in time using distance-based assignment, linking the same colony across frames.
+6. **Colony feature extraction** -- Per-colony geometry (area, circularity, eccentricity), intensity statistics, spatial features, and background intensity for every tracked colony at every frame.
+7. **Whole-image feature extraction** -- Haralick texture moments, intensity statistics, and entropy extracted from each preprocessed frame as a global texture fingerprint.
 
 ## Input data
 
-- **Root directory** containing plate subdirectories, each with per-well TIFF files
+- A **root directory** containing plate subdirectories, each with per-well TIFF files
 - Multi-frame stacks: `A1.tif` (single file, shape `(T, H, W)` or `(H, W, T)`)
 - Single-frame series: `A1_001.tif`, `A1_002.tif`, ...
 - Well IDs are parsed from filenames via regex `^[A-H]\d{1,2}` (96-well layout: rows A-H, columns 1-12)
@@ -161,7 +169,7 @@ batch_run(
 
 ### Regenerate overlay videos
 
-If you need to regenerate overlays without rerunning the full pipeline (e.g., after fixing overlay settings or adding mutant labels):
+Regenerate overlays without rerunning the full pipeline (e.g., after adding mutant labels):
 
 ```bash
 # All wells in a plate
@@ -265,8 +273,8 @@ src/multiWellAnalysis/
         app.py                    # Main window, entry point
         state.py                  # Centralized state (AppState)
         tabs/
-            setup.py              # Tab 1: input/output directory selection
-            parameters.py         # Tab 2: processing parameters
+            setup.py              # Tab 1: directory + plate + magnification selection
+            parameters.py         # Tab 2: analysis, preprocessing, workers
             preview.py            # Tab 3: live image preview
             conditions.py         # Tab 4: 96-well condition assignment
             runGUI.py             # Tab 5: pipeline execution
@@ -295,46 +303,13 @@ src/multiWellAnalysis/
         extractWholeImageFeats.py # Mahotas feature extraction
     intensity/                    # Per-pixel intensity features
 scripts/
+    install-desktop-shortcut.py   # Create desktop shortcut (Linux/macOS/Windows)
     runSinglePlate.py             # CLI: process one plate with magnification filtering
     regenOverlays.py              # CLI: regenerate overlay videos from existing data
     reimaging/                    # Reimaging dataset scripts
     training/                     # Training dataset scripts
     transposons/                  # Transposon library scripts
 ```
-
-## Installation
-
-### Dependencies
-
-Installed automatically by `pip install -e .`:
-
-numpy, scipy, scikit-image, opencv-python, mahotas, pandas, matplotlib, tifffile, imageio, imageio-ffmpeg, PySide6
-
-### From source
-
-```bash
-git clone <repo-url> biofilm-processing
-cd biofilm-processing
-conda create -n phenotypr python=3.11 -y
-conda activate phenotypr
-pip install -e .
-```
-
-### Desktop shortcut
-
-After installing, create a clickable desktop shortcut:
-
-```bash
-python scripts/install-desktop-shortcut.py
-```
-
-Works on Linux, macOS, and Windows. Creates a shortcut on your Desktop (and application menu on Linux) that automatically activates the correct conda/virtualenv environment before launching the GUI.
-
-| Platform | What it creates |
-|---|---|
-| Linux | `.desktop` file on Desktop + app menu, with conda/venv activation |
-| macOS | `Phenotypr.app` bundle on Desktop (double-click to launch) |
-| Windows | `.bat` launcher + `.lnk` shortcut on Desktop |
 
 ## Authors
 
