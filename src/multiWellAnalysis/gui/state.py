@@ -22,6 +22,7 @@ DEFAULTS = {
     'propRadiusPx':     25,
     'conditions':       {},
     'notes':            '',
+    'magnification':    'all',
 }
 
 
