@@ -177,6 +177,8 @@ class ProcessingWorker(QObject):
             image_records=None,
             fftStride=s['fftStride'],
             downsample=s['downsample'],
+            skip_overlay=not s.get('saveOverlays', True),
+            workers=s.get('workers', 4),
         )
 
         # Remove outputs the user doesn't want to keep
