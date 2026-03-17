@@ -8,23 +8,51 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 
-def discover_plates(root_dir):
-    """Find plate subdirectories under root_dir."""
+def _is_plate_dir(path):
+    """Check if a directory looks like a plate (contains tifs or metadata)."""
+    has_tifs = len(glob.glob(os.path.join(path, '*.tif'))) > 0
+    has_meta = os.path.exists(os.path.join(path, 'protocol.csv'))
+    has_processed = os.path.isdir(os.path.join(path, 'processedImages'))
+    return has_tifs or has_meta or has_processed
+
+
+def discover_plates(root_dir, max_depth=3):
+    """Find plate subdirectories under root_dir, searching up to max_depth levels.
+
+    Handles structures like:
+        root/plate/images.tif              (depth 1)
+        root/experiment/plate/images.tif   (depth 2)
+        root/group/experiment/plate/...    (depth 3)
+
+    Also treats root_dir itself as a plate if it directly contains tifs.
+    """
     if not root_dir or not os.path.isdir(root_dir):
         return []
+
+    # Check if root itself is a plate directory
+    if _is_plate_dir(root_dir):
+        return [root_dir]
+
     plates = []
-    for entry in sorted(os.listdir(root_dir)):
-        plate_path = os.path.join(root_dir, entry)
-        if not os.path.isdir(plate_path):
+    _discover_recursive(root_dir, plates, depth=0, max_depth=max_depth)
+    return sorted(plates)
+
+
+def _discover_recursive(path, plates, depth, max_depth):
+    if depth >= max_depth:
+        return
+    try:
+        entries = sorted(os.listdir(path))
+    except PermissionError:
+        return
+    for entry in entries:
+        child = os.path.join(path, entry)
+        if not os.path.isdir(child):
             continue
-        # check for TIF files (Bright Field pattern) or metadata
-        has_tifs = len(glob.glob(os.path.join(plate_path, '*.tif'))) > 0
-        has_meta = os.path.exists(os.path.join(plate_path, 'protocol.csv'))
-        has_processed = os.path.isdir(os.path.join(plate_path, 'processedImages'))
-        has_nested_tifs = len(glob.glob(os.path.join(plate_path, '*', '*.tif'))) > 0
-        if has_tifs or has_meta or has_processed or has_nested_tifs:
-            plates.append(plate_path)
-    return plates
+        if _is_plate_dir(child):
+            plates.append(child)
+        else:
+            _discover_recursive(child, plates, depth + 1, max_depth)
 
 
 class SetupTab(QWidget):
