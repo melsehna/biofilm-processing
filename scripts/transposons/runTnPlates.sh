@@ -4,7 +4,6 @@ set -e
 BASEDIR="/mnt/bridgeslab/Good imaging data/TN-Library_imaging"
 OUTDIR="/mnt/data/transposonSet"
 MAG="_03"
-WORKERS=16
 
 PLATES=(
   'TN-Plate01_4x_10x_20x_40x_Discontinuous_Drawer1 06-Nov-2024 14-57-44'
@@ -43,7 +42,8 @@ PLATES=(
 
 mkdir -p "$OUTDIR"
 
-cd ~/biofilm-processing/testProcPrototype
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUN_PLATE="$SCRIPT_DIR/../runSinglePlate.py"
 
 TOTAL=${#PLATES[@]}
 for i in "${!PLATES[@]}"; do
@@ -61,7 +61,7 @@ for i in "${!PLATES[@]}"; do
   echo "  Source: $PLATEDIR"
   echo "  Output: $OUTDIR"
 
-  python runSinglePlateTest.py "$PLATEDIR" -o "$OUTDIR" -m "$MAG" -w "$WORKERS"
+  python "$RUN_PLATE" "$PLATEDIR" -o "$OUTDIR" -m "$MAG"
 done
 
 echo ""
