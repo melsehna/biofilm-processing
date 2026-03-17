@@ -45,12 +45,20 @@ def discover_plates(root_dir):
     return sorted(plates)
 
 
+_SKIP_DIRS = {
+    'processedimages', 'processed_images_py', 'numerical_data_py',
+    'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
+}
+
+
 def _list_subdirs(path):
-    """List immediate subdirectories of path. Single scandir call."""
+    """List immediate subdirectories of path, skipping output/metadata dirs."""
     try:
         return sorted(
             e.path for e in os.scandir(path)
-            if e.is_dir() and not e.name.startswith('.')
+            if e.is_dir()
+            and not e.name.startswith('.')
+            and e.name.lower() not in _SKIP_DIRS
         )
     except PermissionError:
         return []
