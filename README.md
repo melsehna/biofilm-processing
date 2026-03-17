@@ -5,7 +5,7 @@ High-throughput biofilm phenotyping from automated brightfield timelapse microsc
 ## Installation
 
 ```bash
-git clone <repo-url> biofilm-processing
+git clone https://github.com/melsehna/biofilm-processing.git biofilm-processing
 cd biofilm-processing
 conda create -n phenotypr python=3.11 -y
 conda activate phenotypr
