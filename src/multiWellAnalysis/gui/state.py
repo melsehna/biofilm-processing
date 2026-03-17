@@ -24,6 +24,7 @@ DEFAULTS = {
     'notes':            '',
     'magnification':    'all',
     'workers':          4,
+    'magParams':        {},   # per-mag overrides: {'_03': {'fixedThresh': 0.02}, ...}
 }
 
 
