@@ -1,4 +1,4 @@
-# Phenotypr
+# Biofilm processing for bulk Cytation5 brightfield experiments
 
 High-throughput biofilm phenotyping from automated brightfield timelapse microscopy. Processes 96-well plate image data through registration, segmentation, colony tracking, and feature extraction.
 
