@@ -8,12 +8,26 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 
+def _has_well_tifs(path):
+    """Fast check: does this directory contain at least one well-like .tif?
+
+    Looks for files matching A1*.tif through P24*.tif (well ID prefix).
+    Returns on the first match instead of globbing all files.
+    """
+    try:
+        for f in os.scandir(path):
+            if not f.is_file() or not f.name.endswith('.tif'):
+                continue
+            if re.match(r'^[A-P]\d{1,2}[_.]', f.name):
+                return True
+    except PermissionError:
+        pass
+    return False
+
+
 def _is_plate_dir(path):
-    """Check if a directory looks like a plate (contains tifs or metadata)."""
-    has_tifs = len(glob.glob(os.path.join(path, '*.tif'))) > 0
-    has_meta = os.path.exists(os.path.join(path, 'protocol.csv'))
-    has_processed = os.path.isdir(os.path.join(path, 'processedImages'))
-    return has_tifs or has_meta or has_processed
+    """Check if a directory looks like a plate with raw well images."""
+    return _has_well_tifs(path)
 
 
 def discover_plates(root_dir, max_depth=3):
@@ -29,7 +43,6 @@ def discover_plates(root_dir, max_depth=3):
     if not root_dir or not os.path.isdir(root_dir):
         return []
 
-    # Check if root itself is a plate directory
     if _is_plate_dir(root_dir):
         return [root_dir]
 
@@ -42,17 +55,16 @@ def _discover_recursive(path, plates, depth, max_depth):
     if depth >= max_depth:
         return
     try:
-        entries = sorted(os.listdir(path))
+        entries = sorted(os.scandir(path), key=lambda e: e.name)
     except PermissionError:
         return
     for entry in entries:
-        child = os.path.join(path, entry)
-        if not os.path.isdir(child):
+        if not entry.is_dir():
             continue
-        if _is_plate_dir(child):
-            plates.append(child)
+        if _is_plate_dir(entry.path):
+            plates.append(entry.path)
         else:
-            _discover_recursive(child, plates, depth + 1, max_depth)
+            _discover_recursive(entry.path, plates, depth + 1, max_depth)
 
 
 class SetupTab(QWidget):
