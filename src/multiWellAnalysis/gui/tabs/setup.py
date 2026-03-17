@@ -240,21 +240,21 @@ class SetupTab(QWidget):
             self.state.set('magnification', selected)
 
     def _scan_magnifications_async(self, plates):
-        """Detect magnifications from the first plate.
+        """Detect magnifications from the first plate (background thread).
 
-        Strategy (fast to slow, stops at first success):
-        1. Read protocol.csv if it exists (tiny file, explicit mag labels)
-        2. Sample a handful of filenames from scandir (parse mag suffix)
+        Only reads protocol.csv (tiny file, one SMB read). Never scans
+        the plate directory itself — that's thousands of tifs over SMB.
+        If no protocol.csv exists, magnifications stay empty and the user
+        can set them manually or they'll be auto-detected at processing time.
         """
         def _scan():
             all_mags = set()
             if not plates:
                 return all_mags
-            plate_path = plates[0]
 
-            # Method 1: protocol.csv (instant — small file)
-            protocol_path = os.path.join(plate_path, 'protocol.csv')
-            if os.path.exists(protocol_path):
+            # Try protocol.csv in each candidate until we find one
+            for plate_path in plates[:5]:
+                protocol_path = os.path.join(plate_path, 'protocol.csv')
                 try:
                     import csv
                     with open(protocol_path, 'r') as f:
@@ -267,26 +267,10 @@ class SetupTab(QWidget):
                                 step = row.get('step', '')
                                 label = str(mag) if mag else f'_{step}'
                                 all_mags.add(label)
-                except Exception:
-                    pass
-                if all_mags:
-                    return all_mags
-
-            # Method 2: sample filenames (stop after first 20 tifs found)
-            try:
-                tif_count = 0
-                for entry in os.scandir(plate_path):
-                    if tif_count >= 20:
-                        break
-                    if not entry.name.endswith('.tif'):
-                        continue
-                    tif_count += 1
-                    if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
-                        m = re.match(r'^[A-P]\d+(_\d+)_', entry.name)
-                        if m:
-                            all_mags.add(m.group(1))
-            except PermissionError:
-                pass
+                    if all_mags:
+                        return all_mags
+                except (FileNotFoundError, OSError):
+                    continue
 
             return all_mags
 
