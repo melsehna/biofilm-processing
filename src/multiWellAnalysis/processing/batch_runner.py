@@ -157,6 +157,8 @@ def run_plate(plate_dir, mutant_map, params, force=False, skip_overlay=False):
                 stack = np.empty((h, w, nframes), dtype=np.float64)
                 read_images_inplace(nframes, stack, well_files)
 
+            overlay_label = f"{mutant}  {plate_name}-{well}"
+
             masks, biomass, odMean = timelapse_processing(
                 images=stack,
                 block_diameter=block_diam,
@@ -170,6 +172,7 @@ def run_plate(plate_dir, mutant_map, params, force=False, skip_overlay=False):
                 Imin=Imin,
                 Imax=Imax,
                 skip_overlay=skip_overlay,
+                label=overlay_label,
             )
 
             biomass_records.append((well, biomass))
