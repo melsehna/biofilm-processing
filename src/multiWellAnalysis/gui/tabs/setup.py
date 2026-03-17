@@ -6,7 +6,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, Signal, QObject
+
+
+class _WorkerSignals(QObject):
+    """Signals for background thread → main thread communication."""
+    finished = Signal(object)  # emits the result
 
 
 def discover_plates(root_dir, depth=0):
@@ -191,10 +196,11 @@ class SetupTab(QWidget):
         def _scan():
             return discover_plates(root, depth=search_depth), root
 
-        def _done(plates, root_used):
+        def _done(plates_or_none, root_used=root):
             self.refresh_btn.setEnabled(True)
             self.deeper_btn.setEnabled(True)
             self.refresh_btn.setText('Refresh')
+            plates = plates_or_none if plates_or_none is not None else []
             self.plate_list.blockSignals(True)
             self.plate_list.clear()
             for p in plates:
@@ -275,6 +281,8 @@ class SetupTab(QWidget):
             return all_mags
 
         def _done(all_mags):
+            if all_mags is None:
+                all_mags = set()
             if not all_mags:
                 self.mag_list.clear()
                 self.state.set('magnification', 'all')
@@ -302,20 +310,27 @@ class SetupTab(QWidget):
     def _run_in_background(self, work_fn, done_fn):
         """Run work_fn in a thread, call done_fn(*result) on the main thread.
 
+        Uses Qt signals for thread-safe main-thread callbacks.
         work_fn returns a single value or tuple; done_fn receives it unpacked.
+        Always calls done_fn even on error (with None).
         """
+        signals = _WorkerSignals()
+
+        def _on_finished(result):
+            if isinstance(result, tuple):
+                done_fn(*result)
+            else:
+                done_fn(result)
+
+        signals.finished.connect(_on_finished)
+
         def _worker():
             try:
                 result = work_fn()
-            except Exception:
+            except Exception as e:
+                print(f'Background task error: {e}')
                 result = None
-            # Schedule callback on main thread via timer
-            if result is None:
-                return
-            if isinstance(result, tuple):
-                QTimer.singleShot(0, lambda r=result: done_fn(*r))
-            else:
-                QTimer.singleShot(0, lambda r=result: done_fn(r))
+            signals.finished.emit(result)
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
