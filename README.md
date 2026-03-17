@@ -320,15 +320,21 @@ conda activate phenotypr
 pip install -e .
 ```
 
-### Desktop shortcut (Linux)
+### Desktop shortcut
 
 After installing, create a clickable desktop shortcut:
 
 ```bash
-bash scripts/install-desktop-shortcut.sh
+python scripts/install-desktop-shortcut.py
 ```
 
-This creates a shortcut on your Desktop and in the application menu. It automatically handles conda/virtualenv activation so the GUI launches with the correct environment.
+Works on Linux, macOS, and Windows. Creates a shortcut on your Desktop (and application menu on Linux) that automatically activates the correct conda/virtualenv environment before launching the GUI.
+
+| Platform | What it creates |
+|---|---|
+| Linux | `.desktop` file on Desktop + app menu, with conda/venv activation |
+| macOS | `Phenotypr.app` bundle on Desktop (double-click to launch) |
+| Windows | `.bat` launcher + `.lnk` shortcut on Desktop |
 
 ## Authors
 
