@@ -1,11 +1,12 @@
 import os
 import re
 import glob
+import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 
 
 def discover_plates(root_dir):
@@ -174,22 +175,32 @@ class SetupTab(QWidget):
         root = self.root_edit.text().strip()
         self.plate_list.blockSignals(True)
         self.plate_list.clear()
-
-        plates = discover_plates(root)
-        for p in plates:
-            # Show relative path from root so nested plates are distinguishable
-            try:
-                display = os.path.relpath(p, root)
-            except ValueError:
-                display = os.path.basename(p)
-            item = QListWidgetItem(display)
-            item.setData(Qt.UserRole, p)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
-            self.plate_list.addItem(item)
-
         self.plate_list.blockSignals(False)
-        self._update_selected_plates()
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText('Scanning...')
+
+        def _scan():
+            return discover_plates(root), root
+
+        def _done(plates, root_used):
+            self.refresh_btn.setEnabled(True)
+            self.refresh_btn.setText('Refresh')
+            self.plate_list.blockSignals(True)
+            self.plate_list.clear()
+            for p in plates:
+                try:
+                    display = os.path.relpath(p, root_used)
+                except ValueError:
+                    display = os.path.basename(p)
+                item = QListWidgetItem(display)
+                item.setData(Qt.UserRole, p)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+                self.plate_list.addItem(item)
+            self.plate_list.blockSignals(False)
+            self._update_selected_plates()
+
+        self._run_in_background(_scan, _done)
 
     def _update_selected_plates(self):
         selected = []
@@ -198,7 +209,7 @@ class SetupTab(QWidget):
             if item.checkState() == Qt.Checked:
                 selected.append(item.data(Qt.UserRole))
         self.state.set('plates', selected)
-        self._scan_magnifications(selected)
+        self._scan_magnifications_async(selected)
 
     def _on_mag_changed(self, item=None):
         """Update state with currently checked magnifications."""
@@ -207,7 +218,6 @@ class SetupTab(QWidget):
             it = self.mag_list.item(i)
             if it.checkState() == Qt.Checked:
                 selected.append(it.data(Qt.UserRole))
-        # 'all' if nothing checked or all checked
         total = self.mag_list.count()
         if not selected or len(selected) == total:
             self.state.set('magnification', 'all')
@@ -216,48 +226,70 @@ class SetupTab(QWidget):
         else:
             self.state.set('magnification', selected)
 
-    def _scan_magnifications(self, plates):
-        """Scan selected plates for available magnifications.
-
-        Uses os.scandir and stops after finding enough samples — avoids
-        listing thousands of files over SMB.
-        """
-        all_mags = set()
-        for plate_path in plates[:1]:  # only scan first plate
-            try:
-                count = 0
-                for entry in os.scandir(plate_path):
-                    if count > 200:  # sample first 200 entries max
-                        break
-                    if not entry.is_file() or not entry.name.endswith('.tif'):
+    def _scan_magnifications_async(self, plates):
+        """Scan magnifications in background thread."""
+        def _scan():
+            all_mags = set()
+            for plate_path in plates[:1]:
+                try:
+                    count = 0
+                    for entry in os.scandir(plate_path):
+                        if count > 200:
+                            break
+                        if not entry.is_file() or not entry.name.endswith('.tif'):
+                            count += 1
+                            continue
+                        if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
+                            m = re.match(r'^[A-H]\d+(_\d+)_', entry.name)
+                            if m:
+                                all_mags.add(m.group(1))
                         count += 1
-                        continue
-                    if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
-                        m = re.match(r'^[A-H]\d+(_\d+)_', entry.name)
-                        if m:
-                            all_mags.add(m.group(1))
-                    count += 1
-            except PermissionError:
-                continue
+                except PermissionError:
+                    continue
+            return all_mags
 
-        if not all_mags:
+        def _done(all_mags):
+            if not all_mags:
+                self.mag_list.clear()
+                self.state.set('magnification', 'all')
+                return
+
+            saved = self.state.get('magnification', 'all')
+            if isinstance(saved, str) and saved != 'all':
+                saved = [saved]
+            elif saved == 'all':
+                saved = list(all_mags)
+
+            self.mag_list.blockSignals(True)
             self.mag_list.clear()
-            self.state.set('magnification', 'all')
-            return
+            for mag in sorted(all_mags):
+                item = QListWidgetItem(f'Magnification {mag}')
+                item.setData(Qt.UserRole, mag)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked if mag in saved else Qt.Unchecked)
+                self.mag_list.addItem(item)
+            self.mag_list.blockSignals(False)
+            self._on_mag_changed()
 
-        saved = self.state.get('magnification', 'all')
-        if isinstance(saved, str) and saved != 'all':
-            saved = [saved]
-        elif saved == 'all':
-            saved = list(all_mags)
+        self._run_in_background(_scan, _done)
 
-        self.mag_list.blockSignals(True)
-        self.mag_list.clear()
-        for mag in sorted(all_mags):
-            item = QListWidgetItem(f'Magnification {mag}')
-            item.setData(Qt.UserRole, mag)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if mag in saved else Qt.Unchecked)
-            self.mag_list.addItem(item)
-        self.mag_list.blockSignals(False)
-        self._on_mag_changed()
+    def _run_in_background(self, work_fn, done_fn):
+        """Run work_fn in a thread, call done_fn(*result) on the main thread.
+
+        work_fn returns a single value or tuple; done_fn receives it unpacked.
+        """
+        def _worker():
+            try:
+                result = work_fn()
+            except Exception:
+                result = None
+            # Schedule callback on main thread via timer
+            if result is None:
+                return
+            if isinstance(result, tuple):
+                QTimer.singleShot(0, lambda r=result: done_fn(*r))
+            else:
+                QTimer.singleShot(0, lambda r=result: done_fn(r))
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
