@@ -29,9 +29,7 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    # Two glob calls: plate root + one level deep (no listdir/stat needed)
     tif_files = sorted(glob.glob(os.path.join(plate_dir, '*.tif')))
-    tif_files += sorted(glob.glob(os.path.join(plate_dir, '*', '*.tif')))
 
     bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
 
