@@ -124,41 +124,91 @@ def install_linux(gui_bin):
             )
 
 
+def _find_conda_base():
+    """Try multiple methods to find the conda base directory."""
+    # Method 1: conda info --base
+    try:
+        return subprocess.check_output(
+            ['conda', 'info', '--base'], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        pass
+
+    # Method 2: walk up from CONDA_PREFIX
+    prefix = os.environ.get('CONDA_PREFIX', '')
+    if prefix:
+        # CONDA_PREFIX is e.g. ~/miniforge3/envs/phenotypr
+        # base is 2 levels up if envs/ is in the path
+        candidate = os.path.dirname(os.path.dirname(prefix))
+        conda_sh = os.path.join(candidate, 'etc', 'profile.d', 'conda.sh')
+        if os.path.isfile(conda_sh):
+            return candidate
+
+    # Method 3: check common install locations
+    home = str(Path.home())
+    for name in ['miniforge3', 'mambaforge', 'miniconda3', 'anaconda3',
+                 'opt/miniconda3', 'opt/anaconda3']:
+        candidate = os.path.join(home, name)
+        if os.path.isfile(os.path.join(candidate, 'etc', 'profile.d', 'conda.sh')):
+            return candidate
+
+    return None
+
+
 def install_macos(gui_bin):
-    """Create a .command launcher and optional .app bundle for macOS."""
+    """Create a .app bundle for macOS.
+
+    Key macOS issues this handles:
+    - Finder launches .app with a minimal PATH (no conda/brew/etc.)
+    - Default shell is zsh since Catalina, but conda.sh works in both
+    - Quarantine attribute blocks unsigned .app bundles
+    - Errors are logged to ~/Library/Logs/Phenotypr.log for debugging
+    """
     desktop_dir = get_desktop_dir()
+    log_path = os.path.join(Path.home(), 'Library', 'Logs', 'Phenotypr.log')
 
     # Build activation command
     conda_prefix = os.environ.get('CONDA_PREFIX')
     conda_env = os.environ.get('CONDA_DEFAULT_ENV')
     venv = os.environ.get('VIRTUAL_ENV')
 
-    if conda_prefix and conda_env:
-        try:
-            conda_base = subprocess.check_output(
-                ['conda', 'info', '--base'], text=True
-            ).strip()
-        except Exception:
-            conda_base = os.path.join(str(Path.home()), 'anaconda3')
-        activate = (
-            f'source "{conda_base}/etc/profile.d/conda.sh"\n'
-            f'conda activate {conda_env}\n'
-        )
-    elif venv:
-        activate = f'source "{venv}/bin/activate"\n'
-    else:
-        activate = ''
+    # Also record the full absolute path to phenotypr-gui as fallback
+    gui_bin_abs = os.path.realpath(gui_bin)
 
-    # Create a simple .app bundle
+    activate_lines = ''
+    if conda_prefix and conda_env:
+        conda_base = _find_conda_base()
+        if conda_base:
+            activate_lines = (
+                f'# Activate conda environment\n'
+                f'source "{conda_base}/etc/profile.d/conda.sh"\n'
+                f'conda activate {conda_env}\n'
+            )
+        else:
+            # Fallback: use the absolute path directly
+            activate_lines = f'# conda base not found, using absolute path\n'
+    elif venv:
+        activate_lines = f'source "{venv}/bin/activate"\n'
+
+    # Create .app bundle
     app_dir = os.path.join(desktop_dir, 'Phenotypr.app', 'Contents', 'MacOS')
     os.makedirs(app_dir, exist_ok=True)
 
     launcher = os.path.join(app_dir, 'phenotypr')
     with open(launcher, 'w') as f:
-        f.write('#!/bin/bash\n')
-        f.write(activate)
-        f.write('phenotypr-gui\n')
-    os.chmod(launcher, os.stat(launcher).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        f.write('#!/bin/zsh\n')
+        f.write(f'# Phenotypr GUI launcher — errors logged to {log_path}\n')
+        f.write(f'exec >> "{log_path}" 2>&1\n')
+        f.write(f'echo "--- $(date) ---"\n')
+        f.write(f'echo "PATH=$PATH"\n\n')
+        f.write(activate_lines)
+        f.write(f'\n# Try phenotypr-gui on PATH, then fall back to absolute path\n')
+        f.write(f'if command -v phenotypr-gui &>/dev/null; then\n')
+        f.write(f'    phenotypr-gui\n')
+        f.write(f'else\n')
+        f.write(f'    "{gui_bin_abs}"\n')
+        f.write(f'fi\n')
+    os.chmod(launcher, 0o755)
 
     # Write Info.plist
     plist_dir = os.path.join(desktop_dir, 'Phenotypr.app', 'Contents')
@@ -191,7 +241,18 @@ def install_macos(gui_bin):
         shutil.copy2(icon_src, os.path.join(res_dir, 'phenotypr-icon.png'))
 
     app_path = os.path.join(desktop_dir, 'Phenotypr.app')
+
+    # Remove quarantine attribute so macOS doesn't block it
+    subprocess.run(
+        ['xattr', '-dr', 'com.apple.quarantine', app_path],
+        capture_output=True
+    )
+
     print(f'Created: {app_path}')
+    print(f'Errors will be logged to: {log_path}')
+    print()
+    print('If double-clicking does nothing, check the log above.')
+    print('If macOS blocks it: right-click the app > Open > Open.')
 
 
 def install_windows(gui_bin):
