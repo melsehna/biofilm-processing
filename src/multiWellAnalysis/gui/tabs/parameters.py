@@ -247,6 +247,10 @@ class ParametersTab(QWidget):
 
     def _on_colony_tracking(self, checked):
         self.state.set('colonyTracking', checked)
+        # If unchecking tracking while colony feats is on, re-enable
+        if not checked and self.colony_feats.isChecked():
+            self.colony_tracking.setChecked(True)
+            return
         if checked:
             if not self.save_registered.isChecked():
                 self.save_registered.setChecked(True)
@@ -258,8 +262,14 @@ class ParametersTab(QWidget):
 
     def _on_colony_feats(self, checked):
         self.state.set('colonyFeats', checked)
-        if checked and not self.colony_tracking.isChecked():
-            self.colony_tracking.setChecked(True)
+        if checked:
+            # Colony feats requires tracking, which requires registered + masks
+            if not self.colony_tracking.isChecked():
+                self.colony_tracking.setChecked(True)
+            if not self.save_registered.isChecked():
+                self.save_registered.setChecked(True)
+            if not self.save_masks.isChecked():
+                self.save_masks.setChecked(True)
         self.colony_params_group.setVisible(
             checked or self.colony_tracking.isChecked()
         )
@@ -268,11 +278,13 @@ class ParametersTab(QWidget):
         """Prevent unchecking outputs that active features depend on."""
         if self.whole_image.isChecked() and not self.save_processed.isChecked():
             self.save_processed.setChecked(True)
-        if (self.colony_tracking.isChecked() or self.colony_feats.isChecked()):
+        if self.colony_feats.isChecked() or self.colony_tracking.isChecked():
             if not self.save_registered.isChecked():
                 self.save_registered.setChecked(True)
             if not self.save_masks.isChecked():
                 self.save_masks.setChecked(True)
+        if self.colony_feats.isChecked() and not self.colony_tracking.isChecked():
+            self.colony_tracking.setChecked(True)
 
     # ── Per-magnification override methods ───────────────────
     def _on_state_changed_mag(self):
