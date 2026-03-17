@@ -6,12 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal, QObject
-
-
-class _WorkerSignals(QObject):
-    """Signals for background thread → main thread communication."""
-    finished = Signal(object)  # emits the result
+from PySide6.QtCore import Qt, Signal
 
 
 def discover_plates(root_dir, depth=0):
@@ -67,8 +62,12 @@ def discover_plates(root_dir, depth=0):
 
 
 class SetupTab(QWidget):
+    _bg_result = Signal(str, object)  # (task_name, result)
+
     def __init__(self, state, parent=None):
         super().__init__(parent)
+        self._bg_callbacks = {}
+        self._bg_result.connect(self._on_bg_result)
         self.state = state
         self._build_ui()
         self._connect_signals()
@@ -175,7 +174,7 @@ class SetupTab(QWidget):
                     self.root_edit.setText(self.state.get('rootDir', path))
                     self.outdir_edit.setText(self.state.get('outputDir', ''))
 
-            self._run_in_background(_try_load_config, _config_loaded)
+            self._run_in_background('config', _try_load_config, _config_loaded)
             self._refresh_plates()
 
     def _browse_outdir(self):
@@ -216,7 +215,7 @@ class SetupTab(QWidget):
             self.plate_list.blockSignals(False)
             self._update_selected_plates()
 
-        self._run_in_background(_scan, _done)
+        self._run_in_background('plates', _scan, _done)
 
     def _refresh_plates_deeper(self):
         self._refresh_plates(search_depth=1)
@@ -305,32 +304,32 @@ class SetupTab(QWidget):
             self.mag_list.blockSignals(False)
             self._on_mag_changed()
 
-        self._run_in_background(_scan, _done)
+        self._run_in_background('magnifications', _scan, _done)
 
-    def _run_in_background(self, work_fn, done_fn):
-        """Run work_fn in a thread, call done_fn(*result) on the main thread.
-
-        Uses Qt signals for thread-safe main-thread callbacks.
-        work_fn returns a single value or tuple; done_fn receives it unpacked.
-        Always calls done_fn even on error (with None).
-        """
-        signals = _WorkerSignals()
-
-        def _on_finished(result):
+    def _on_bg_result(self, task_name, result):
+        """Main-thread handler for background task results."""
+        cb = self._bg_callbacks.pop(task_name, None)
+        if cb:
             if isinstance(result, tuple):
-                done_fn(*result)
+                cb(*result)
             else:
-                done_fn(result)
+                cb(result)
 
-        signals.finished.connect(_on_finished)
+    def _run_in_background(self, task_name, work_fn, done_fn):
+        """Run work_fn in a daemon thread, deliver result via Qt signal.
+
+        task_name: unique string key (used to route result to done_fn)
+        work_fn: callable, returns result (run in thread)
+        done_fn: callable, receives result (run on main thread)
+        """
+        self._bg_callbacks[task_name] = done_fn
 
         def _worker():
             try:
                 result = work_fn()
             except Exception as e:
-                print(f'Background task error: {e}')
+                print(f'Background task [{task_name}] error: {e}')
                 result = None
-            signals.finished.emit(result)
+            self._bg_result.emit(task_name, result)
 
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
+        threading.Thread(target=_worker, daemon=True).start()
