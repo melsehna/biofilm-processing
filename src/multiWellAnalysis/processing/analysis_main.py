@@ -5,7 +5,6 @@ import json
 import numpy as np
 import pandas as pd
 import imageio.v3 as iio
-import imageio
 import cv2
 from glob import glob
 from tqdm import tqdm
@@ -28,6 +27,7 @@ from .preprocessing import (
 )
 from .segmentation import compute_mask_inplace, dust_correct_inplace
 from .registration import registerStackNormblur
+from .overlay import write_overlay_video
 from .plotting_tools import save_biomass_curve, save_peak_panel
 
 
@@ -78,6 +78,7 @@ def timelapse_processing(
     fftStride=3,
     downsample=2,
     skip_overlay=False,
+    label=None,
 ):
 
     processed_dir = os.path.join(outdir, 'processedImages')
@@ -188,33 +189,13 @@ def timelapse_processing(
         display_stack = normalize_local_contrast_output(
             raw_cropped, block_diameter, fpMean
         )
-
-        procVis = np.clip(display_stack, 0.0, 1.0)  # (H, W, T) float32
-
-        h_out, w_out = procVis.shape[:2]
-        # Ensure even dimensions for H.264 yuv420p
-        h_out_even = h_out & ~1
-        w_out_even = w_out & ~1
+        procVis = np.clip(display_stack, 0.0, 1.0)
 
         overlay_mp4_path = os.path.join(
             processed_dir, f'{filename}_overlay.mp4'
         )
 
-        alpha = np.float32(0.35)
-        cyan = np.array([0.0, 1.0, 1.0], dtype=np.float32)  # RGB cyan
-
-        with imageio.get_writer(
-            overlay_mp4_path, fps=2, codec='libx264',
-            quality=8, pixelformat='yuv420p',
-            macro_block_size=16
-        ) as writer:
-            for t in range(ntimepoints):
-                gray = procVis[:h_out_even, :w_out_even, t]
-                frame = np.stack([gray, gray, gray], axis=-1)  # (H, W, 3) float32 RGB
-                mask_t = masks[:h_out_even, :w_out_even, t]
-                frame[mask_t] = (1.0 - alpha) * frame[mask_t] + alpha * cyan
-                writer.append_data(np.clip(frame * 255, 0, 255).astype(np.uint8))
-
+        write_overlay_video(procVis, masks, overlay_mp4_path, label=label)
         register_image('overlay_mp4', overlay_mp4_path)
 
     return masks, biomass, odMean
