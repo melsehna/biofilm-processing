@@ -8,55 +8,52 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 
-def discover_plates(root_dir, max_depth=3):
+def discover_plates(root_dir):
     """Find candidate plate directories under root_dir.
 
-    Optimized for network drives (SMB/NFS): only uses os.scandir for
-    directory listings, never scans file contents. Identifies leaf
-    directories (those with no subdirectories) as plate candidates,
-    since plate dirs contain image files, not more folders.
+    Strategy: list immediate subdirectories only (one scandir call).
+    If any child has no subdirectories of its own, it's likely a plate.
+    If all children have subdirectories, they're experiment folders —
+    list THEIR children as plate candidates instead (two scandir calls).
 
-    If root_dir itself has no subdirectories, it is returned as-is.
+    Never scans file contents. Fast over SMB/NFS.
+    If root_dir itself has no subdirectories, treat it as a single plate.
     """
     if not root_dir or not os.path.isdir(root_dir):
         return []
 
-    candidates = []
-    _find_leaf_dirs(root_dir, candidates, depth=0, max_depth=max_depth)
-    return sorted(candidates)
+    children = _list_subdirs(root_dir)
+
+    # No subdirectories — root itself is likely a plate
+    if not children:
+        return [root_dir]
+
+    # Check if children are plates (no subdirs) or experiment folders (have subdirs)
+    # Only check the first child to decide — avoids scanning all of them
+    first_child_subdirs = _list_subdirs(children[0])
+
+    if not first_child_subdirs:
+        # Children are leaf dirs (plates). Example:
+        #   root/Plate1/  root/Plate2/
+        return sorted(children)
+
+    # Children are experiment folders. Go one level deeper. Example:
+    #   root/Experiment_A/Plate1/  root/Experiment_A/Plate2/
+    plates = []
+    for child in children:
+        plates.extend(_list_subdirs(child))
+    return sorted(plates)
 
 
-def _find_leaf_dirs(path, results, depth, max_depth):
-    """Collect leaf directories (dirs with no subdirs) via scandir.
-
-    On a typical imaging data layout:
-        root/                      <- has subdirs, recurse
-          experiment_A/            <- has subdirs, recurse
-            241106_Plate 1/        <- leaf (contains tifs, no subdirs) -> candidate
-            241106_Plate 2/        <- leaf -> candidate
-          experiment_B/            <- has subdirs, recurse
-            ...
-
-    Only directory metadata is read (is_dir), never file contents.
-    """
-    if depth >= max_depth:
-        # At max depth, add this directory as a candidate
-        results.append(path)
-        return
-
+def _list_subdirs(path):
+    """List immediate subdirectories of path. Single scandir call."""
     try:
-        subdirs = [e for e in os.scandir(path)
-                   if e.is_dir() and not e.name.startswith('.')]
+        return sorted(
+            e.path for e in os.scandir(path)
+            if e.is_dir() and not e.name.startswith('.')
+        )
     except PermissionError:
-        return
-
-    if not subdirs:
-        # Leaf directory — no subdirectories, likely a plate
-        results.append(path)
-    else:
-        subdirs.sort(key=lambda e: e.name)
-        for entry in subdirs:
-            _find_leaf_dirs(entry.path, results, depth + 1, max_depth)
+        return []
 
 
 class SetupTab(QWidget):
@@ -172,7 +169,12 @@ class SetupTab(QWidget):
 
         plates = discover_plates(root)
         for p in plates:
-            item = QListWidgetItem(os.path.basename(p))
+            # Show relative path from root so nested plates are distinguishable
+            try:
+                display = os.path.relpath(p, root)
+            except ValueError:
+                display = os.path.basename(p)
+            item = QListWidgetItem(display)
             item.setData(Qt.UserRole, p)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
@@ -207,18 +209,28 @@ class SetupTab(QWidget):
             self.state.set('magnification', selected)
 
     def _scan_magnifications(self, plates):
-        """Scan selected plates for available magnifications."""
+        """Scan selected plates for available magnifications.
+
+        Uses os.scandir and stops after finding enough samples — avoids
+        listing thousands of files over SMB.
+        """
         all_mags = set()
-        for plate_path in plates[:3]:
-            tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
-            bf_files = [f for f in tif_files
-                        if 'Bright Field' in f or 'Bright_Field' in f]
-            if not bf_files:
+        for plate_path in plates[:1]:  # only scan first plate
+            try:
+                count = 0
+                for entry in os.scandir(plate_path):
+                    if count > 200:  # sample first 200 entries max
+                        break
+                    if not entry.is_file() or not entry.name.endswith('.tif'):
+                        count += 1
+                        continue
+                    if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
+                        m = re.match(r'^[A-H]\d+(_\d+)_', entry.name)
+                        if m:
+                            all_mags.add(m.group(1))
+                    count += 1
+            except PermissionError:
                 continue
-            for f in bf_files:
-                m = re.match(r'^[A-H]\d+(_\d+)_', os.path.basename(f))
-                if m:
-                    all_mags.add(m.group(1))
 
         if not all_mags:
             self.mag_list.clear()
