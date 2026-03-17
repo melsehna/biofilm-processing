@@ -63,7 +63,7 @@ The GUI has five tabs:
 |---|---|
 | **Setup** | Select root directory, output directory, plates, and magnifications |
 | **Parameters** | Choose analyses to run, configure preprocessing, set worker count |
-| **Preview** | Live preview of raw, preprocessed, and mask overlay for any plate/well/frame |
+| **Preview** | Live preview of processing and colony segmentation for any plate/well/frame |
 | **Conditions** | 96-well grid for labeling experimental conditions per well |
 | **Run** | Start/stop processing with per-plate and per-well progress bars and a live log |
 
@@ -100,6 +100,22 @@ The GUI has five tabs:
 **Performance** -- set the number of workers for parallel operations (registration, I/O). Hard-capped at 75% of CPU cores.
 
 **Saved outputs (advanced)** -- toggle whether to keep intermediate files on disk (registered raw stacks, processed images, binary masks). Useful for saving disk space if you only need the final CSV results.
+
+### Preview tab
+
+Two rows of panels for visual quality control:
+
+**Top row -- processing preview (live from current parameters):**
+- **Raw** -- original image
+- **Preprocessed** -- after local contrast normalization
+- **Mask overlay** -- binary mask (cyan) on preprocessed image
+
+**Bottom row -- colony preview:**
+- **Colony segmentation** -- connected components from the mask, colored by label (live, using current min colony area)
+- **Tracked labels** -- loaded from saved tracking results if available (from a previous run)
+- **Colony overlay** -- colony labels blended on the raw image
+
+Select plate, well, and frame with the dropdowns and slider. Click **Refresh** to reload after running the pipeline.
 
 ### Conditions tab
 
