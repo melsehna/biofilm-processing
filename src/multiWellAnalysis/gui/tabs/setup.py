@@ -19,12 +19,12 @@ def discover_plates(root_dir, depth=0):
     Use the 'Search deeper' button to recurse one level if the root contains
     experiment folders rather than plate folders.
     """
-    if not root_dir or not os.path.isdir(root_dir):
+    if not root_dir:
         return []
 
     try:
         entries = sorted(os.listdir(root_dir))
-    except PermissionError:
+    except (PermissionError, FileNotFoundError, OSError):
         return []
 
     # Filter out hidden dirs and known output dirs by name only (no stat calls)
@@ -154,16 +154,23 @@ class SetupTab(QWidget):
             self.root_edit.setText(path)
             self.state.set('rootDir', path)
 
-            # auto-load config if it exists in root or output dir
-            config_path = os.path.join(path, 'experiment_config.json')
-            if os.path.exists(config_path):
+            # Try to load config in background (os.path.exists is slow over SMB)
+            def _try_load_config():
+                config_path = os.path.join(path, 'experiment_config.json')
                 try:
-                    self.state.load(config_path)
+                    with open(config_path, 'r') as f:
+                        import json
+                        return json.load(f)
+                except (FileNotFoundError, OSError):
+                    return None
+
+            def _config_loaded(config_data):
+                if config_data:
+                    self.state.from_dict(config_data)
                     self.root_edit.setText(self.state.get('rootDir', path))
                     self.outdir_edit.setText(self.state.get('outputDir', ''))
-                except Exception:
-                    pass
 
+            self._run_in_background(_try_load_config, _config_loaded)
             self._refresh_plates()
 
     def _browse_outdir(self):
