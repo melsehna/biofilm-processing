@@ -227,25 +227,54 @@ class SetupTab(QWidget):
             self.state.set('magnification', selected)
 
     def _scan_magnifications_async(self, plates):
-        """Scan magnifications in background thread."""
+        """Detect magnifications from the first plate.
+
+        Strategy (fast to slow, stops at first success):
+        1. Read protocol.csv if it exists (tiny file, explicit mag labels)
+        2. Sample a handful of filenames from scandir (parse mag suffix)
+        """
         def _scan():
             all_mags = set()
-            for plate_path in plates[:1]:
+            if not plates:
+                return all_mags
+            plate_path = plates[0]
+
+            # Method 1: protocol.csv (instant — small file)
+            protocol_path = os.path.join(plate_path, 'protocol.csv')
+            if os.path.exists(protocol_path):
                 try:
-                    count = 0
-                    for entry in os.scandir(plate_path):
-                        if count > 200:
-                            break
-                        if not entry.is_file() or not entry.name.endswith('.tif'):
-                            count += 1
-                            continue
-                        if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
-                            m = re.match(r'^[A-H]\d+(_\d+)_', entry.name)
-                            if m:
-                                all_mags.add(m.group(1))
-                        count += 1
-                except PermissionError:
-                    continue
+                    import csv
+                    with open(protocol_path, 'r') as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            if (row.get('action') == 'Imaging Read'
+                                    and row.get('channel') == 'Bright Field'
+                                    and 'step' in row):
+                                mag = row.get('magnification', '')
+                                step = row.get('step', '')
+                                label = str(mag) if mag else f'_{step}'
+                                all_mags.add(label)
+                except Exception:
+                    pass
+                if all_mags:
+                    return all_mags
+
+            # Method 2: sample filenames (stop after first 20 tifs found)
+            try:
+                tif_count = 0
+                for entry in os.scandir(plate_path):
+                    if tif_count >= 20:
+                        break
+                    if not entry.name.endswith('.tif'):
+                        continue
+                    tif_count += 1
+                    if 'Bright Field' in entry.name or 'Bright_Field' in entry.name:
+                        m = re.match(r'^[A-P]\d+(_\d+)_', entry.name)
+                        if m:
+                            all_mags.add(m.group(1))
+            except PermissionError:
+                pass
+
             return all_mags
 
         def _done(all_mags):
