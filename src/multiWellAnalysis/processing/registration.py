@@ -63,7 +63,7 @@ def _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample):
     return shifts
 
 
-def _apply_shifts_inplace(stack, shifts):
+def _apply_shifts_inplace(stack, shifts, workers=4):
     """Pass 2: apply precomputed shifts in-place (threaded)."""
     def _do(i):
         s = shifts[i]
@@ -71,7 +71,7 @@ def _apply_shifts_inplace(stack, shifts):
             return
         stack[..., i] = _apply_shift(stack[..., i], s)
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         pool.map(_do, range(1, stack.shape[2]))
 
 
@@ -80,7 +80,8 @@ def registerStackNormblur(
     rawStack,
     shiftThresh,
     fftStride=3,
-    downsample=2
+    downsample=2,
+    workers=4,
 ):
     """Two-pass registration: compute shifts, then apply in-place.
 
@@ -88,6 +89,6 @@ def registerStackNormblur(
     allocating two additional full-size copies (~940 MB for 1992x1992x31).
     """
     shifts = _compute_shifts(normBlurStack, shiftThresh, fftStride, downsample)
-    _apply_shifts_inplace(normBlurStack, shifts)
-    _apply_shifts_inplace(rawStack, shifts)
+    _apply_shifts_inplace(normBlurStack, shifts, workers=workers)
+    _apply_shifts_inplace(rawStack, shifts, workers=workers)
     return normBlurStack, rawStack, shifts
