@@ -302,10 +302,14 @@ class ProcessingWorker(QObject):
         mag_groups = discover_mag_groups(plate_path, bf_files) if bf_files else {}
 
         if mag_groups:
-            # Filter to selected magnification
+            # Filter to selected magnification(s)
             if mag_filter != 'all':
+                if isinstance(mag_filter, list):
+                    allowed = set(mag_filter) | {m.lstrip('_') for m in mag_filter}
+                else:
+                    allowed = {mag_filter, mag_filter.lstrip('_')}
                 mag_groups = {k: v for k, v in mag_groups.items()
-                              if k == mag_filter or k == mag_filter.lstrip('_')}
+                              if k in allowed or k.lstrip('_') in allowed}
 
             result = []
             for mag_label, wells_dict in sorted(mag_groups.items()):
