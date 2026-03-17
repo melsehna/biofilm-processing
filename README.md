@@ -2,63 +2,51 @@
 
 High-throughput biofilm phenotyping from automated brightfield timelapse microscopy. Processes 96-well plate image data through registration, segmentation, colony tracking, and feature extraction.
 
-## Background
-
-Biofilms grown in multi-well plates are imaged over time using brightfield microscopy, producing per-well TIFF stacks. Phenotypr automates the analysis pipeline:
-
-1. **Preprocessing** — Local contrast normalization removes illumination artifacts (vignetting, uneven lighting) so that downstream thresholding reflects actual biomass, not optics.
-
-2. **Registration** — Phase-correlation drift correction aligns frames across the timelapse, compensating for stage drift or plate movement between timepoints.
-
-3. **Segmentation** — Thresholding on the preprocessed, blurred image produces binary masks of biomass. Optional dust correction removes persistent bright artifacts that are not biological.
-
-4. **Colony tracking** — Connected-component labeling at a seed frame propagates labels forward in time using distance-based assignment. This links the same colony across frames, enabling growth-rate and morphology measurements at the single-colony level.
-
-5. **Colony feature extraction** — Per-colony geometry (area, circularity, eccentricity), intensity statistics, spatial features (centroid offset, nearest-neighbor distances), and background intensity are computed for every tracked colony at every frame. Well-level aggregates summarize colony populations per well.
-
-6. **Whole-image feature extraction** — Haralick texture moments (via Mahotas), intensity statistics, and entropy are extracted from each preprocessed frame as a global texture fingerprint of the well.
-
-### Data conventions
-
-- **Input**: A root directory containing plate subdirectories, each with per-well TIFF files.
-  - Multi-frame stacks: `A1.tif` (single file, shape `(T, H, W)` or `(H, W, T)`)
-  - Single-frame series: `A1_001.tif`, `A1_002.tif`, ...
-- **Well IDs**: Parsed from filenames via regex `^[A-H]\d{1,2}` (96-well layout: rows A-H, columns 1-12).
-- **Output**: All results are written to a user-specified output directory, mirroring the plate folder structure. The original data is never modified.
-
-## Installation
+## Quick start
 
 ```bash
-# 1. Clone the repository
+# Clone and install
 git clone <repo-url> biofilm-processing
 cd biofilm-processing
-
-# 2. Create and activate a conda environment
 conda create -n phenotypr python=3.11 -y
 conda activate phenotypr
-
-# 3. Install the package (pulls all dependencies)
 pip install -e .
-```
 
-### Dependencies
-
-Installed automatically by `pip install -e .`:
-
-numpy, scipy, scikit-image, mahotas, pandas, matplotlib, tifffile, imageio, imageio-ffmpeg, PySide6
-
-## Usage
-
-### GUI
-
-```bash
+# Launch the GUI
 phenotypr-gui
 ```
 
-Or equivalently:
+## What it does
+
+Biofilms grown in multi-well plates are imaged over time using brightfield microscopy, producing per-well TIFF stacks. Phenotypr automates the analysis:
+
+1. **Preprocessing** -- Local contrast normalization removes illumination artifacts (vignetting, uneven lighting) so that downstream thresholding reflects actual biomass, not optics.
+
+2. **Registration** -- Phase-correlation drift correction aligns frames across the timelapse, compensating for stage drift or plate movement between timepoints.
+
+3. **Segmentation** -- Thresholding on the preprocessed image produces binary masks of biomass. Optional dust correction removes persistent bright artifacts that are not biological.
+
+4. **Overlay generation** -- MP4 videos with cyan mask overlay on the processed frames, with optional text labels (mutant, plate, well).
+
+5. **Colony tracking** -- Connected-component labeling at a seed frame propagates labels forward in time using distance-based assignment. This links the same colony across frames, enabling growth-rate and morphology measurements at the single-colony level.
+
+6. **Colony feature extraction** -- Per-colony geometry (area, circularity, eccentricity), intensity statistics, spatial features (centroid offset, nearest-neighbor distances), and background intensity are computed for every tracked colony at every frame. Well-level aggregates summarize colony populations per well.
+
+7. **Whole-image feature extraction** -- Haralick texture moments (via Mahotas), intensity statistics, and entropy are extracted from each preprocessed frame as a global texture fingerprint of the well.
+
+## Input data
+
+- **Root directory** containing plate subdirectories, each with per-well TIFF files
+- Multi-frame stacks: `A1.tif` (single file, shape `(T, H, W)` or `(H, W, T)`)
+- Single-frame series: `A1_001.tif`, `A1_002.tif`, ...
+- Well IDs are parsed from filenames via regex `^[A-H]\d{1,2}` (96-well layout: rows A-H, columns 1-12)
+- For plates with multiple magnifications, filenames encode the magnification step: `A1_03_1_1_Bright Field_001.tif`
+
+## GUI
 
 ```bash
-python -m multiWellAnalysis.gui.app
+phenotypr-gui
+# or: python -m multiWellAnalysis.gui.app
 ```
 
 The GUI has five tabs:
@@ -66,39 +54,54 @@ The GUI has five tabs:
 | Tab | Purpose |
 |---|---|
 | **Setup** | Select root directory (input data), output directory, and which plates to process |
-| **Parameters** | Configure preprocessing (block diameter, threshold, FFT stride, downsample, dust correction), choose outputs to save, enable feature extraction |
-| **Preview** | Live preview of raw, preprocessed, and mask overlay for any plate/well/frame. Shows active parameter values in titles. |
+| **Parameters** | Configure preprocessing, choose outputs to save, enable feature extraction |
+| **Preview** | Live preview of raw, preprocessed, and mask overlay for any plate/well/frame |
 | **Conditions** | 96-well grid for labeling experimental conditions per well |
 | **Run** | Start/stop processing with per-plate and per-well progress bars and a live log |
 
-#### Output toggles
+### Parameters
 
-In the Parameters tab, you choose which outputs to save and which analyses to run:
+| Parameter | Default | Description |
+|---|---|---|
+| Block diameter | 101 | Kernel size for local contrast normalization (must be odd). Larger values smooth more background. |
+| Fixed threshold | 0.04 | Binary mask threshold on the normalized image. Lower = more sensitive. |
+| Shift threshold | 50 | Maximum allowed registration shift in pixels. Frames with larger drift are skipped. |
+| FFT stride | 6 | Compute registration shifts every N frames (interpolate between). Higher = faster. |
+| Downsample | 4 | Downsample factor for FFT registration. Higher = faster but less precise. |
+| Dust correction | on | Remove pixels that appear at t=0 but disappear later (likely dust, not biofilm). |
 
-- **Registered raw stacks** (.tif) — drift-corrected raw images
-- **Processed images** (.tif) — contrast-normalized images
-- **Binary masks** (.npz) — segmentation masks
-- **Mask overlay videos** (.mp4) — visualization of segmentation over time
+### Output toggles
 
-#### Feature extraction toggles
+In the Parameters tab, choose which outputs to save:
 
-- **Whole-image texture features** — requires processed stacks (auto-enabled)
-- **Colony tracking** — requires registered raw stacks and masks (auto-enabled)
-- **Colony-level feature extraction** — requires colony tracking (auto-enabled)
+- **Registered raw stacks** (.tif) -- drift-corrected raw images
+- **Processed images** (.tif) -- contrast-normalized images
+- **Binary masks** (.npz) -- segmentation masks
+- **Mask overlay videos** (.mp4) -- visualization of segmentation over time
 
-Dependencies between toggles are enforced automatically. For example, enabling colony features will also enable colony tracking and the registered raw stacks it depends on.
+### Feature extraction toggles
 
-#### Configuration
+- **Whole-image texture features** -- requires processed stacks (auto-enabled)
+- **Colony tracking** -- requires registered raw stacks and masks (auto-enabled)
+- **Colony-level feature extraction** -- requires colony tracking (auto-enabled)
 
-Use the **Save/Load configuration** buttons at the bottom of the window to save or load all settings (parameters, selected plates, output directory, conditions) as a JSON file. The save dialog lets you choose the file location.
+Dependencies between toggles are enforced automatically.
 
-If the root directory already contains an `experiment_config.json`, it is auto-loaded when you browse to that directory.
+### Configuration
 
-### CLI / scripting
+Use **Save/Load configuration** buttons to save or load all settings as JSON. If the root directory already contains an `experiment_config.json`, it is auto-loaded.
 
-The processing modules are standalone and can be used without the GUI.
+## CLI / scripting
 
-#### Preprocessing + segmentation (single well)
+### Process a single plate
+
+```bash
+python scripts/runSinglePlate.py /path/to/plate/directory \
+    -o /path/to/output \
+    -m _03                   # magnification suffix (optional, default: all)
+```
+
+### Process a single well (Python)
 
 ```python
 import numpy as np
@@ -118,33 +121,62 @@ masks, biomass, od_mean = timelapse_processing(
     shift_thresh=50,
     fixed_thresh=0.04,
     dust_correction=True,
-    outdir='path/to/output',     # creates processedImages/ here
+    outdir='path/to/output',
     filename='A1',
     image_records=None,
     fftStride=6,
     downsample=4,
+    label='mutantName  plateName-A1',  # optional text label on overlay
 )
 ```
 
-#### Colony tracking (single well)
+### Batch processing
+
+```python
+from multiWellAnalysis.processing.batch_runner import batch_run
+
+batch_run(
+    config_path='experiment_config.json',
+    replicate_csv='ReplicatePositions.csv',
+)
+```
+
+### Regenerate overlay videos
+
+If you need to regenerate overlays without rerunning the full pipeline (e.g., after fixing overlay settings or adding mutant labels):
+
+```bash
+# All wells in a plate
+python scripts/regenOverlays.py /path/to/plate/directory
+
+# Specific wells
+python scripts/regenOverlays.py /path/to/plate/directory --wells A1_03 B5_03
+
+# With mutant labels from an index CSV
+python scripts/regenOverlays.py /path/to/plate/directory --index /path/to/index.csv
+
+# Custom fps
+python scripts/regenOverlays.py /path/to/plate/directory --fps 6
+```
+
+### Colony tracking (single well)
 
 ```python
 from multiWellAnalysis.colony.runTrackingGUI import trackAndSave
 
 raw_stack = tifffile.imread('output/processedImages/A1_registered_raw.tif')
 mask_data = np.load('output/processedImages/A1_masks.npz')
-mask_stack = mask_data['masks']
 
 npz_path = trackAndSave(
-    raw_stack, mask_stack,
+    raw_stack, mask_data['masks'],
     outdir='output/processedImages',
     plateId='Plate_1',
     wellId='A1',
-    biomass=biomass,   # from timelapse_processing
+    biomass=biomass,
 )
 ```
 
-#### Colony feature extraction (single well)
+### Colony feature extraction (single well)
 
 ```python
 from multiWellAnalysis.colony.runColonyFeatsGUI import extractAndSave
@@ -163,7 +195,7 @@ colony_df, well_df = extractAndSave(
 )
 ```
 
-#### Whole-image texture features (single well)
+### Whole-image texture features (single well)
 
 ```python
 from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
@@ -176,20 +208,7 @@ status = extractWholeImageFeatures(
 )
 ```
 
-#### Batch processing (CLI, legacy)
-
-The original batch runner processes all plates listed in an experiment config:
-
-```python
-from multiWellAnalysis.processing.batch_runner import batch_run
-
-batch_run(
-    config_path='path/to/experiment_config.json',
-    replicate_csv='path/to/ReplicatePositions.csv',
-)
-```
-
-There are also standalone CLI scripts for colony tracking and feature extraction at scale:
+### Batch CLI tools
 
 ```bash
 # Colony feature extraction across plates
@@ -214,7 +233,7 @@ For each well (e.g., `A1`), the pipeline can produce:
 | `A1_registered_raw.tif` | Drift-corrected raw stack |
 | `A1_processed.tif` | Contrast-normalized stack |
 | `A1_masks.npz` | Binary segmentation masks (key: `masks`) |
-| `A1_overlay.mp4` | Mask overlay video |
+| `A1_overlay.mp4` | Mask overlay video with optional text label |
 | `A1_trackedLabels_allFrames_*.npz` | Colony label stack with tracking metadata |
 | `A1_colonyFeatures_*.csv` | Per-colony features (one row per colony per frame) |
 | `A1_wellColonyFeatures_*.csv` | Well-level colony aggregates (one row per frame) |
@@ -232,29 +251,62 @@ src/multiWellAnalysis/
             parameters.py         # Tab 2: processing parameters
             preview.py            # Tab 3: live image preview
             conditions.py         # Tab 4: 96-well condition assignment
-            runGUI.py             # Tab 5: pipeline execution (active)
-            run.py                # Tab 5: original version (unused)
-    processing/                   # Core image analysis (GUI-independent)
-        analysis_main.py          # timelapse_processing()
+            runGUI.py             # Tab 5: pipeline execution
+    processing/                   # Core image analysis
+        analysis_main.py          # timelapse_processing() — single-well pipeline
         preprocessing.py          # normalize_local_contrast(), mean_filter()
         registration.py           # Phase-correlation drift correction
         segmentation.py           # Binary masking + dust correction
-        batch_runner.py           # CLI batch processing
+        overlay.py                # Overlay video generation (cv2 VideoWriter)
+        batch_runner.py           # Multi-plate batch processing with magnification discovery
+        io_utils.py               # Threaded image I/O
+        helpers.py                # Utility functions
+        plotting.py               # Plate-level summary plots
+        plotting_tools.py         # Diagnostic panels (peak frame, biomass curves)
+        pipeline.py               # High-level Pipeline entry point
     colony/                       # Colony tracking & features
-        runTrackingGUI.py         # GUI-adapted colony tracking
-        runColonyFeatsGUI.py      # GUI-adapted colony feature extraction
-        runTrackingMpTraining.py  # Original batch tracking script
-        runColonyFeatsTrackedMP.py # Original batch feature script
+        runTrackingGUI.py         # Colony tracking
+        runColonyFeatsGUI.py      # Colony feature extraction
         runColFeatsCLI.py         # CLI colony feature extraction
         colonyFeatsMicrons.py     # Per-colony feature functions
         wellAggMicrons.py         # Well-level aggregation
         segmentation.py           # Colony-level segmentation
     wholeImage/                   # Whole-image texture features
-        runWholeImageGUI.py       # GUI-adapted whole-image features
-        runWholeImage.py          # Original batch script
+        runWholeImageGUI.py       # Whole-image feature extraction
+        runWholeImage.py          # Batch CLI runner
         extractWholeImageFeats.py # Mahotas feature extraction
     intensity/                    # Per-pixel intensity features
+scripts/
+    runSinglePlate.py             # CLI: process one plate with magnification filtering
+    regenOverlays.py              # CLI: regenerate overlay videos from existing data
+    reimaging/                    # Reimaging dataset scripts
+    training/                     # Training dataset scripts
+    transposons/                  # Transposon library scripts
 ```
+
+## Installation
+
+### Dependencies
+
+Installed automatically by `pip install -e .`:
+
+numpy, scipy, scikit-image, opencv-python, mahotas, pandas, matplotlib, tifffile, imageio, imageio-ffmpeg, PySide6
+
+### From source
+
+```bash
+git clone <repo-url> biofilm-processing
+cd biofilm-processing
+conda create -n phenotypr python=3.11 -y
+conda activate phenotypr
+pip install -e .
+```
+
+## Authors
+
+Seh Na Mellick, Jojo Prentice, Andrew Bridges
+CMU Ray and Stephanie Lane Computational Biology Department
+CMU Department of Biological Sciences
 
 ## License
 
