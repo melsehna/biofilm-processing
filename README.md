@@ -320,6 +320,16 @@ conda activate phenotypr
 pip install -e .
 ```
 
+### Desktop shortcut (Linux)
+
+After installing, create a clickable desktop shortcut:
+
+```bash
+bash scripts/install-desktop-shortcut.sh
+```
+
+This creates a shortcut on your Desktop and in the application menu. It automatically handles conda/virtualenv activation so the GUI launches with the correct environment.
+
 ## Authors
 
 Seh Na Mellick, Jojo Prentice, Andrew Bridges
