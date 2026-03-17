@@ -1,13 +1,14 @@
 import os
 import glob
 import re
+import threading
 import numpy as np
 from collections import defaultdict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSlider,
     QPushButton,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -192,9 +193,12 @@ def _make_label_cmap(n_labels):
 
 
 class PreviewTab(QWidget):
+    _well_result = Signal(object)  # delivers well entries from background thread
+
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
+        self._well_result.connect(self._on_wells_discovered)
         self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(300)
@@ -309,11 +313,31 @@ class PreviewTab(QWidget):
 
     def _on_plate_changed(self, idx):
         plate_path = self.plate_combo.currentData()
-        self._well_entries = discover_wells_with_mag(plate_path) if plate_path else []
+        if not plate_path:
+            self._well_entries = []
+            self.well_combo.clear()
+            self._load_source()
+            self._schedule_render()
+            return
 
+        self.well_combo.clear()
+        self.well_combo.addItem('Scanning...')
+        self.well_combo.setEnabled(False)
+
+        def _scan():
+            try:
+                return discover_wells_with_mag(plate_path)
+            except Exception:
+                return []
+
+        threading.Thread(target=lambda: self._well_result.emit(_scan()), daemon=True).start()
+
+    def _on_wells_discovered(self, entries):
+        self._well_entries = entries or []
         prev_text = self.well_combo.currentText()
         self.well_combo.blockSignals(True)
         self.well_combo.clear()
+        self.well_combo.setEnabled(True)
         restore_idx = 0
         for i, (label, well, mag, source) in enumerate(self._well_entries):
             self.well_combo.addItem(label)
