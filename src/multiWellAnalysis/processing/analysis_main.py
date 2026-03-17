@@ -79,6 +79,7 @@ def timelapse_processing(
     downsample=2,
     skip_overlay=False,
     label=None,
+    workers=4,
 ):
 
     processed_dir = os.path.join(outdir, 'processedImages')
@@ -119,11 +120,12 @@ def timelapse_processing(
 
     # 2) register normalized for masking; register raw for OD/biomass
     registered_norm, registered_raw, shifts_array = registerStackNormblur(
-        norm_blur, 
-        images, 
+        norm_blur,
+        images,
         shift_thresh,
         fftStride=fftStride,
-        downsample=downsample
+        downsample=downsample,
+        workers=workers,
     )
 
     # 3) crop away NaN borders (if any appeared)
