@@ -245,24 +245,35 @@ class SetupTab(QWidget):
             self.state.set('magnification', selected)
 
     def _scan_magnifications_async(self, plates):
-        """Detect magnifications from the first plate (background thread).
+        """Detect magnifications from selected plates (background thread).
 
-        Only reads protocol.csv (tiny file, one SMB read). Never scans
-        the plate directory itself — that's thousands of tifs over SMB.
-        If no protocol.csv exists, magnifications stay empty and the user
-        can set them manually or they'll be auto-detected at processing time.
+        Searches for protocol.csv directly in each plate, and also one level
+        deeper (handles experiment_folder/plate_folder/ layouts). Only reads
+        small CSV files — never scans directories with thousands of tifs.
         """
         def _scan():
+            import csv
             all_mags = set()
             if not plates:
                 return all_mags
 
-            # Try protocol.csv in each candidate until we find one
+            # Collect candidate paths to check for protocol.csv:
+            # the plate dir itself, plus its immediate children (via os.listdir)
+            paths_to_check = []
             for plate_path in plates[:5]:
-                protocol_path = os.path.join(plate_path, 'protocol.csv')
+                paths_to_check.append(plate_path)
+                # Also check one level deeper (fast os.listdir, no stat)
                 try:
-                    import csv
-                    with open(protocol_path, 'r') as f:
+                    for name in os.listdir(plate_path):
+                        if name.startswith('.') or '.' in name:
+                            continue  # skip files by extension heuristic
+                        paths_to_check.append(os.path.join(plate_path, name))
+                except (PermissionError, OSError):
+                    pass
+
+            for candidate in paths_to_check:
+                try:
+                    with open(os.path.join(candidate, 'protocol.csv'), 'r') as f:
                         reader = csv.DictReader(f)
                         for row in reader:
                             if (row.get('action') == 'Imaging Read'
