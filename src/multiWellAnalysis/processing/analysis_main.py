@@ -57,6 +57,7 @@ def timelapse_processing(
     skip_overlay=False,
     label=None,
     workers=4,
+    progress_fn=None,
 ):
 
     processed_dir = os.path.join(outdir, 'processedImages')
@@ -76,24 +77,30 @@ def timelapse_processing(
             })
         
 
+    def _progress(msg):
+        if progress_fn is not None:
+            progress_fn(msg)
+
     # scale raw to [0,1] like Julia floatloader
     images = images.astype(np.float32, copy=False)
     imax = images.max()
     if imax > 0:
         images /= imax
 
-        
+
     # Julia hardcodes sig = 2 for the post-normalization blur
     sigma = 2.0
 
     norm_blur = np.empty(images.shape, dtype=np.float32)
 
     for t in range(ntimepoints):
+        _progress(f'Normalizing frame {t+1}/{ntimepoints}')
         r = normalize_local_contrast(images[..., t], block_diameter)
         norm_blur[..., t] = cv2.GaussianBlur(
             r, (0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT
         )
 
+    _progress('Registering stack...')
 
     # 2) register normalized for masking; register raw for OD/biomass
     registered_norm, registered_raw, shifts_array = registerStackNormblur(
@@ -104,6 +111,8 @@ def timelapse_processing(
         downsample=downsample,
         workers=workers,
     )
+
+    _progress('Cropping + computing masks...')
 
     # 3) crop away NaN borders (if any appeared)
 
@@ -142,6 +151,8 @@ def timelapse_processing(
 
     else:
         biomass = np.nanmean((1.0 - raw_cropped) * masks, axis=(0, 1))
+
+    _progress('Saving outputs...')
 
     # 6) save stacks 
     save_stack(processed_stack, processed_dir, f"{filename}_processed") # normalized+blurred, registered, cropped

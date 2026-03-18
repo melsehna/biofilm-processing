@@ -46,6 +46,7 @@ class TestWellTab(QWidget):
         self._filtered_entries = []
         self._result = None  # stores last run result
         self._running = False
+        self._stop_event = threading.Event()
         self._build_ui()
         self._connect_signals()
 
@@ -67,10 +68,13 @@ class TestWellTab(QWidget):
         sel_row.addWidget(self.well_combo, stretch=1)
         layout.addLayout(sel_row)
 
-        # run button + progress
+        # run button + stop button + progress
         run_row = QHBoxLayout()
         self.run_btn = QPushButton('Run Full Pipeline on Well')
         run_row.addWidget(self.run_btn)
+        self.stop_btn = QPushButton('Stop')
+        self.stop_btn.setEnabled(False)
+        run_row.addWidget(self.stop_btn)
         self.status_label = QLabel('')
         self.status_label.setStyleSheet('color: gray; font-size: 11px;')
         run_row.addWidget(self.status_label, stretch=1)
@@ -113,6 +117,7 @@ class TestWellTab(QWidget):
         self.well_combo.currentIndexChanged.connect(self._on_well_changed)
         self.frame_slider.valueChanged.connect(self._on_frame_changed)
         self.run_btn.clicked.connect(self._run_pipeline)
+        self.stop_btn.clicked.connect(self._stop_pipeline)
         self.state.changed.connect(self._on_state_changed)
 
     # ── State / plate / well selection (same pattern as PreviewTab) ──
@@ -233,6 +238,11 @@ class TestWellTab(QWidget):
         label, well, mag, source = self._filtered_entries[idx]
         return plate_path, well, mag, source
 
+    def _stop_pipeline(self):
+        self._stop_event.set()
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText('Stopping...')
+
     def _run_pipeline(self):
         if self._running:
             return
@@ -244,7 +254,9 @@ class TestWellTab(QWidget):
 
         plate_path, well_id, mag, source = sel
         self._running = True
+        self._stop_event.clear()
         self.run_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.status_label.setText(f'Running pipeline on {well_id}...')
 
@@ -255,10 +267,16 @@ class TestWellTab(QWidget):
         if mag and mag in mag_params:
             s.update(mag_params[mag])
 
+        stop = self._stop_event
+
         def _work():
             try:
+                if stop.is_set():
+                    self._run_finished.emit(None)
+                    return
+
                 self._run_log.emit(f'Loading images for {well_id}...')
-                self._run_progress.emit('Loading', 0, 4)
+                self._run_progress.emit('Loading', 0, 5)
 
                 # Load image stack
                 if isinstance(source, str):
@@ -266,21 +284,33 @@ class TestWellTab(QWidget):
                     if stack.ndim == 2:
                         stack = stack[np.newaxis]
                 else:
-                    frames = [tifffile.imread(f).astype(np.float64) for f in source]
-                    stack = np.stack(frames)
+                    frames_loaded = []
+                    for fi, f in enumerate(source):
+                        if stop.is_set():
+                            self._run_finished.emit(None)
+                            return
+                        self._run_log.emit(f'Loading frame {fi+1}/{len(source)}...')
+                        frames_loaded.append(tifffile.imread(f).astype(np.float64))
+                    stack = np.stack(frames_loaded)
 
                 # ensure (H, W, T)
                 if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
                     stack = np.transpose(stack, (1, 2, 0))
 
+                if stop.is_set():
+                    self._run_finished.emit(None)
+                    return
+
                 # Step 1: timelapse processing
-                self._run_log.emit('Step 1/3: Preprocessing + registration...')
-                self._run_progress.emit('Preprocessing', 1, 4)
+                self._run_progress.emit('Preprocessing', 1, 5)
 
                 from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
                 outdir = os.path.join(plate_path, 'processedImages')
                 os.makedirs(outdir, exist_ok=True)
+
+                def _on_progress(msg):
+                    self._run_log.emit(f'Step 1/3: {msg}')
 
                 masks, biomass, od_mean = timelapse_processing(
                     images=stack,
@@ -295,11 +325,16 @@ class TestWellTab(QWidget):
                     fftStride=s.get('fftStride', 6),
                     downsample=s.get('downsample', 4),
                     skip_overlay=True,
+                    progress_fn=_on_progress,
                 )
+
+                if stop.is_set():
+                    self._run_finished.emit(None)
+                    return
 
                 # Step 2: colony tracking
                 self._run_log.emit('Step 2/3: Colony tracking...')
-                self._run_progress.emit('Tracking', 2, 4)
+                self._run_progress.emit('Tracking', 3, 5)
 
                 raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
                 mask_path = os.path.join(outdir, f'{well_id}_masks.npz')
@@ -330,13 +365,15 @@ class TestWellTab(QWidget):
                     plate_name, well_id,
                 )
 
-                self._run_log.emit(f'Tracking done: {reason}')
-                self._run_progress.emit('Building result', 3, 4)
+                if stop.is_set():
+                    self._run_finished.emit(None)
+                    return
+
+                self._run_log.emit(f'Step 3/3: Building result ({reason})')
+                self._run_progress.emit('Building result', 4, 5)
 
                 # Build label stack for visualization
                 if labels_by_frame and frames:
-                    h, w = raw_stack.shape[:2] if raw_stack.ndim >= 2 else (raw_stack.shape[0], raw_stack.shape[1])
-                    # Get dimensions from first label frame
                     first_key = list(labels_by_frame.keys())[0]
                     first_label = labels_by_frame[first_key]
                     h, w = first_label.shape[:2]
@@ -361,7 +398,7 @@ class TestWellTab(QWidget):
                         'well_id': well_id,
                     }
 
-                self._run_progress.emit('Done', 4, 4)
+                self._run_progress.emit('Done', 5, 5)
                 self._run_finished.emit(result)
 
             except Exception as e:
@@ -381,10 +418,14 @@ class TestWellTab(QWidget):
     def _on_run_finished(self, result):
         self._running = False
         self.run_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
         self._result = result
 
         if result is None:
-            self.status_label.setText('Pipeline failed — see error above')
+            if self._stop_event.is_set():
+                self.status_label.setText('Stopped by user')
+            else:
+                self.status_label.setText('Pipeline failed — see error above')
             return
 
         self.status_label.setText(f'Done — {result["well_id"]}')

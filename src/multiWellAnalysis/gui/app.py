@@ -27,6 +27,7 @@ class PhenotyprApp(QMainWindow):
 
         self.setWindowTitle('Phenotypr')
         self.resize(1000, 750)
+        self.setMinimumSize(400, 300)
 
         self.state = AppState()
 
