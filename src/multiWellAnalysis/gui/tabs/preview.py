@@ -12,8 +12,6 @@ from PySide6.QtCore import Qt, QTimer, Signal
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from matplotlib.colors import ListedColormap
-
 import cv2
 import tifffile
 
@@ -102,30 +100,6 @@ def _find_well_source(plate_dir, well_id):
     return files if files else None
 
 
-def find_masks(plate_dir, well_id, mag=''):
-    """Find saved mask .npz for a well (with optional mag suffix)."""
-    label = f'{well_id}_{mag}' if mag else well_id
-    proc_dir = os.path.join(plate_dir, 'processedImages')
-    for d in [proc_dir, plate_dir]:
-        for name in [f'{label}_masks.npz', f'{well_id}_masks.npz']:
-            path = os.path.join(d, name)
-            if os.path.exists(path):
-                return path
-    return None
-
-
-def find_tracked_labels(plate_dir, well_id, mag=''):
-    """Find tracked labels .npz for a well."""
-    label = f'{well_id}_{mag}' if mag else well_id
-    proc_dir = os.path.join(plate_dir, 'processedImages')
-    for d in [proc_dir, plate_dir]:
-        for prefix in [label, well_id]:
-            matches = glob.glob(os.path.join(d, f'{prefix}_trackedLabels_*.npz'))
-            if matches:
-                return matches[0]
-    return None
-
-
 def load_frame(source, frame_idx):
     """Load a single frame from a TIFF stack or list of files."""
     if isinstance(source, str):
@@ -151,50 +125,6 @@ def load_frame(source, frame_idx):
     return None, 0
 
 
-def load_mask_frame(mask_path, frame_idx):
-    """Load a single mask frame from .npz."""
-    if mask_path is None:
-        return None
-    data = np.load(mask_path)
-    key = 'masks' if 'masks' in data else list(data.keys())[0]
-    masks = data[key]
-    if masks.ndim == 3:
-        if masks.shape[2] < masks.shape[0] and masks.shape[2] < masks.shape[1]:
-            frame_idx = min(frame_idx, masks.shape[2] - 1)
-            return masks[:, :, frame_idx]
-        else:
-            frame_idx = min(frame_idx, masks.shape[0] - 1)
-            return masks[frame_idx]
-    return masks
-
-
-def load_label_frame(label_path, frame_idx):
-    """Load a single tracked label frame from .npz."""
-    if label_path is None:
-        return None, None
-    data = np.load(label_path)
-    if 'labels' not in data:
-        return None, None
-    labels = data['labels']
-    frames = data.get('frames', np.arange(labels.shape[2] if labels.ndim == 3 else 1))
-    if labels.ndim == 3:
-        if labels.shape[2] < labels.shape[0] and labels.shape[2] < labels.shape[1]:
-            idx = min(frame_idx, labels.shape[2] - 1)
-            return labels[:, :, idx], frames
-        else:
-            idx = min(frame_idx, labels.shape[0] - 1)
-            return labels[idx], frames
-    return labels, frames
-
-
-def _make_label_cmap(n_labels):
-    """Create a random colormap for label visualization."""
-    rng = np.random.RandomState(42)
-    colors = rng.rand(max(n_labels + 1, 2), 3)
-    colors[0] = [0, 0, 0]
-    return ListedColormap(colors)
-
-
 class PreviewTab(QWidget):
     _well_result = Signal(object)  # delivers well entries from background thread
 
@@ -210,8 +140,6 @@ class PreviewTab(QWidget):
         self._current_mag = ''
         self._current_well = ''
         self._n_frames = 0
-        self._mask_path = None
-        self._label_path = None
         self._well_entries = []  # list of (label, well_id, mag, source)
         self._build_ui()
         self._connect_signals()
@@ -249,16 +177,13 @@ class PreviewTab(QWidget):
         self.params_label.setStyleSheet('color: gray; font-size: 11px;')
         layout.addWidget(self.params_label)
 
-        # matplotlib canvas: 2 rows x 3 columns
-        self.figure = Figure(figsize=(12, 7))
+        # matplotlib canvas: 1 row x 3 columns
+        self.figure = Figure(figsize=(12, 4))
         self.canvas = FigureCanvasQTAgg(self.figure)
 
-        self.ax_raw = self.figure.add_subplot(2, 3, 1)
-        self.ax_proc = self.figure.add_subplot(2, 3, 2)
-        self.ax_mask = self.figure.add_subplot(2, 3, 3)
-        self.ax_seg = self.figure.add_subplot(2, 3, 4)
-        self.ax_labels = self.figure.add_subplot(2, 3, 5)
-        self.ax_colony_overlay = self.figure.add_subplot(2, 3, 6)
+        self.ax_raw = self.figure.add_subplot(1, 3, 1)
+        self.ax_proc = self.figure.add_subplot(1, 3, 2)
+        self.ax_mask = self.figure.add_subplot(1, 3, 3)
 
         for ax in self.figure.axes:
             ax.set_xticks([])
@@ -419,16 +344,12 @@ class PreviewTab(QWidget):
             self._current_mag = ''
             self._current_well = ''
             self._n_frames = 0
-            self._mask_path = None
-            self._label_path = None
             return
 
         label, well, mag, source = filtered[idx]
         self._current_source = source
         self._current_mag = mag
         self._current_well = well
-        self._mask_path = find_masks(plate_path, well, mag)
-        self._label_path = find_tracked_labels(plate_path, well, mag)
 
         if self._current_source is not None:
             _, self._n_frames = load_frame(self._current_source, 0)
@@ -530,71 +451,6 @@ class PreviewTab(QWidget):
             f'Mask Overlay\nthresh={fixed_thresh}  dust={dust_correction}',
             fontsize=9,
         )
-
-        # --- Bottom row: colony segmentation / tracking preview ---
-
-        saved_mask = load_mask_frame(self._mask_path, frame_idx)
-        mask_for_colony = saved_mask if saved_mask is not None else mask_live
-
-        try:
-            from multiWellAnalysis.colony.segmentation import segmentColonies
-            labels_seg, props = segmentColonies(
-                raw, mask_for_colony, minColonyArea_px=min_colony_area
-            )
-            n_colonies = labels_seg.max()
-            cmap = _make_label_cmap(n_colonies)
-            self.ax_seg.imshow(labels_seg, cmap=cmap, interpolation='nearest')
-            self.ax_seg.set_title(
-                f'Colony Segmentation\n{n_colonies} colonies (minArea={min_colony_area})',
-                fontsize=9,
-            )
-        except Exception as e:
-            labels_seg = None
-            self.ax_seg.set_title(f'Segmentation error\n{e}', fontsize=8)
-
-        label_frame, frames = load_label_frame(self._label_path, frame_idx)
-        if label_frame is not None:
-            n_tracked = label_frame.max()
-            cmap_tracked = _make_label_cmap(n_tracked)
-            self.ax_labels.imshow(
-                label_frame, cmap=cmap_tracked, interpolation='nearest'
-            )
-            self.ax_labels.set_title(
-                f'Tracked Labels\n{n_tracked} colonies',
-                fontsize=9,
-            )
-        else:
-            self.ax_labels.set_title('Tracked Labels\n(not yet computed)', fontsize=9)
-
-        # Colony overlay on raw
-        if rmax > 0:
-            raw_norm = raw / raw.max()
-        else:
-            raw_norm = raw.astype(np.float64)
-        colony_overlay = np.stack([raw_norm, raw_norm, raw_norm], axis=-1)
-
-        overlay_labels = label_frame if label_frame is not None else labels_seg
-        if overlay_labels is not None and overlay_labels.max() > 0:
-            n = overlay_labels.max()
-            rng = np.random.RandomState(42)
-            colors = rng.rand(n + 1, 3)
-            colors[0] = [0, 0, 0]
-            h = min(colony_overlay.shape[0], overlay_labels.shape[0])
-            w = min(colony_overlay.shape[1], overlay_labels.shape[1])
-            for label_id in range(1, n + 1):
-                region = overlay_labels[:h, :w] == label_id
-                if region.any():
-                    colony_overlay[:h, :w][region] = (
-                        colony_overlay[:h, :w][region] * 0.5
-                        + colors[label_id] * 0.5
-                    )
-            self.ax_colony_overlay.imshow(colony_overlay)
-            self.ax_colony_overlay.set_title('Colony Overlay', fontsize=9)
-        else:
-            self.ax_colony_overlay.imshow(colony_overlay)
-            self.ax_colony_overlay.set_title(
-                'Colony Overlay\n(no colonies)', fontsize=9
-            )
 
         self.figure.tight_layout()
         self.canvas.draw()
