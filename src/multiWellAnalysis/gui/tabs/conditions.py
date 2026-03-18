@@ -251,6 +251,10 @@ class ConditionsTab(QWidget):
 
     def _on_state_changed(self):
         """Rebuild grid if plate format changed."""
+        if not self.isVisible():
+            self._stale = True
+            return
+        self._stale = False
         plates = self.state.get('plates', [])
         if plates:
             rows, cols = detect_plate_format(plates)
@@ -259,6 +263,12 @@ class ConditionsTab(QWidget):
 
         if (rows, cols) != self._current_format:
             self._rebuild_grid(rows, cols)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, '_stale', False):
+            self._stale = False
+            self._on_state_changed()
 
     def _rebuild_grid(self, rows, cols):
         """Replace the well grid with a new one matching the plate format."""

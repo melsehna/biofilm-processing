@@ -296,6 +296,10 @@ class PreviewTab(QWidget):
         return block_diam, fixed_thresh, dust_correction, min_colony_area
 
     def _on_state_changed(self):
+        if not self.isVisible():
+            self._stale = True
+            return
+        self._stale = False
         plates = self.state.get('plates', [])
         current_plates = [
             self.plate_combo.itemData(i) for i in range(self.plate_combo.count())
@@ -304,6 +308,12 @@ class PreviewTab(QWidget):
             self._populate_plates()
         else:
             self._schedule_render()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, '_stale', False):
+            self._stale = False
+            self._on_state_changed()
 
     def _populate_plates(self):
         prev_plate = self.plate_combo.currentData()
