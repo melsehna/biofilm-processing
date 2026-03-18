@@ -31,7 +31,8 @@ class LogStream(io.StringIO):
 
 
 class ProcessingWorker(QObject):
-    progress = Signal(str, int, int, str, str)
+    progress = Signal(str, int, int, str, str)   # plate_name, plate_idx, total_plates, well_id, stage
+    well_progress = Signal(int, int)              # well_idx, total_wells
     log = Signal(str)
     finished = Signal()
     error = Signal(str)
@@ -77,7 +78,9 @@ class ProcessingWorker(QObject):
             outdir = os.path.join(plate_path, 'processedImages')
             os.makedirs(outdir, exist_ok=True)
 
-            for well_id, well_files in wells.items():
+            well_items = list(wells.items())
+            total_wells = len(well_items)
+            for well_idx, (well_id, well_files) in enumerate(well_items):
                 if self._stop.is_set():
                     self.log.emit('Cancelled by user.')
                     return
@@ -86,6 +89,7 @@ class ProcessingWorker(QObject):
                     plate_name, plate_idx, total_plates,
                     well_id, 'Processing'
                 )
+                self.well_progress.emit(well_idx, total_wells)
                 t0 = time.time()
 
                 try:
@@ -97,6 +101,8 @@ class ProcessingWorker(QObject):
                     self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
                 except Exception as e:
                     self.log.emit(f'  {well_id} ERROR: {e}')
+
+            self.well_progress.emit(total_wells, total_wells)
 
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
@@ -280,6 +286,10 @@ class RunTab(QWidget):
         self.well_label = QLabel('Well: \u2014')
         layout.addWidget(self.well_label)
 
+        self.well_progress_bar = QProgressBar()
+        self.well_progress_bar.setValue(0)
+        layout.addWidget(self.well_progress_bar)
+
         self.stage_label = QLabel('Stage: \u2014')
         layout.addWidget(self.stage_label)
 
@@ -308,6 +318,7 @@ class RunTab(QWidget):
 
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
+        self._worker.well_progress.connect(self._on_well_progress)
         self._worker.log.connect(self._on_log)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
@@ -326,6 +337,10 @@ class RunTab(QWidget):
         self.well_label.setText(f'Well: {well}' if well else 'Well: \u2014')
         self.stage_label.setText(f'Stage: {stage}')
 
+    def _on_well_progress(self, well_idx, total_wells):
+        self.well_progress_bar.setMaximum(total_wells)
+        self.well_progress_bar.setValue(well_idx)
+
     def _on_log(self, msg):
         self.log_text.append(msg)
         sb = self.log_text.verticalScrollBar()
@@ -339,6 +354,7 @@ class RunTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.log_text.append('\nDone.')
         self.progress_bar.setValue(self.progress_bar.maximum())
+        self.well_progress_bar.setValue(self.well_progress_bar.maximum())
         self.stage_label.setText('Stage: Complete')
 
         if self._thread:
