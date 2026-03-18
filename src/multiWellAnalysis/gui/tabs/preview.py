@@ -225,6 +225,10 @@ class PreviewTab(QWidget):
         self.plate_combo = QComboBox()
         sel_row.addWidget(self.plate_combo, stretch=1)
 
+        sel_row.addWidget(QLabel('Mag:'))
+        self.mag_combo = QComboBox()
+        sel_row.addWidget(self.mag_combo)
+
         sel_row.addWidget(QLabel('Well:'))
         self.well_combo = QComboBox()
         sel_row.addWidget(self.well_combo, stretch=1)
@@ -268,6 +272,7 @@ class PreviewTab(QWidget):
 
     def _connect_signals(self):
         self.plate_combo.currentIndexChanged.connect(self._on_plate_changed)
+        self.mag_combo.currentIndexChanged.connect(self._on_mag_changed)
         self.well_combo.currentIndexChanged.connect(self._on_well_changed)
         self.frame_slider.valueChanged.connect(self._on_frame_changed)
         self.refresh_btn.clicked.connect(self._refresh_all)
@@ -323,6 +328,8 @@ class PreviewTab(QWidget):
             self._schedule_render()
             return
 
+        self.mag_combo.clear()
+        self.mag_combo.setEnabled(False)
         self.well_combo.clear()
         self.well_combo.addItem('Scanning...')
         self.well_combo.setEnabled(False)
@@ -337,16 +344,51 @@ class PreviewTab(QWidget):
 
     def _on_wells_discovered(self, entries):
         self._well_entries = entries or []
-        prev_text = self.well_combo.currentText()
+        self.well_combo.setEnabled(True)
+        self.mag_combo.setEnabled(True)
+
+        # Extract unique magnifications
+        mags = sorted({mag for _, _, mag, _ in self._well_entries if mag})
+
+        prev_mag = self.mag_combo.currentData()
+        self.mag_combo.blockSignals(True)
+        self.mag_combo.clear()
+        if not mags:
+            self.mag_combo.addItem('(none)', '')
+        else:
+            restore_idx = 0
+            for i, mag in enumerate(mags):
+                mag_label = MAG_SUFFIXES.get(mag, mag)
+                self.mag_combo.addItem(mag_label, mag)
+                if mag == prev_mag:
+                    restore_idx = i
+            self.mag_combo.setCurrentIndex(restore_idx)
+        self.mag_combo.blockSignals(False)
+
+        self._populate_wells_for_mag()
+
+    def _on_mag_changed(self, idx):
+        self._populate_wells_for_mag()
+
+    def _populate_wells_for_mag(self):
+        """Filter well combo to show only wells for the selected magnification."""
+        selected_mag = self.mag_combo.currentData() or ''
+        filtered = [(label, well, mag, source)
+                     for label, well, mag, source in self._well_entries
+                     if mag == selected_mag]
+
+        prev_well = self.well_combo.currentData()
         self.well_combo.blockSignals(True)
         self.well_combo.clear()
-        self.well_combo.setEnabled(True)
         restore_idx = 0
-        for i, (label, well, mag, source) in enumerate(self._well_entries):
-            self.well_combo.addItem(label)
-            if label == prev_text:
+        for i, (label, well, mag, source) in enumerate(filtered):
+            self.well_combo.addItem(well, i)  # store index into filtered
+            if well == prev_well:
                 restore_idx = i
         self.well_combo.blockSignals(False)
+
+        # Store filtered list for _load_source
+        self._filtered_entries = filtered
 
         if self.well_combo.count() > 0:
             self.well_combo.setCurrentIndex(restore_idx)
@@ -360,8 +402,9 @@ class PreviewTab(QWidget):
     def _load_source(self):
         idx = self.well_combo.currentIndex()
         plate_path = self.plate_combo.currentData()
+        filtered = getattr(self, '_filtered_entries', [])
 
-        if idx < 0 or idx >= len(self._well_entries) or not plate_path:
+        if idx < 0 or idx >= len(filtered) or not plate_path:
             self._current_source = None
             self._current_mag = ''
             self._current_well = ''
@@ -370,7 +413,7 @@ class PreviewTab(QWidget):
             self._label_path = None
             return
 
-        label, well, mag, source = self._well_entries[idx]
+        label, well, mag, source = filtered[idx]
         self._current_source = source
         self._current_mag = mag
         self._current_well = well
