@@ -75,9 +75,6 @@ class ProcessingWorker(QObject):
                 self.log.emit(f'  No wells found in {plate_name}, skipping.')
                 continue
 
-            outdir = os.path.join(plate_path, 'processedImages')
-            os.makedirs(outdir, exist_ok=True)
-
             well_items = list(wells.items())
             total_wells = len(well_items)
             for well_idx, (well_id, well_files) in enumerate(well_items):
@@ -94,7 +91,7 @@ class ProcessingWorker(QObject):
 
                 try:
                     self._process_well(
-                        plate_path, plate_name, outdir,
+                        plate_path, plate_name,
                         well_id, well_files
                     )
                     elapsed = time.time() - t0
@@ -106,7 +103,7 @@ class ProcessingWorker(QObject):
 
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
-    def _process_well(self, plate_path, plate_name, outdir, well_id, well_files):
+    def _process_well(self, plate_path, plate_name, well_id, well_files):
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         # load images as float32 (timelapse_processing uses float32 internally)
@@ -131,6 +128,7 @@ class ProcessingWorker(QObject):
             stack = np.transpose(stack, (1, 2, 0))
 
         s = self._state
+        outdir = os.path.join(plate_path, 'processedImages')
 
         # Step 1: image processing
         self.log.emit(f'  {well_id}: preprocessing + registration...')
@@ -141,7 +139,7 @@ class ProcessingWorker(QObject):
             shift_thresh=s['shiftThresh'],
             fixed_thresh=s['fixedThresh'],
             dust_correction=s['dustCorrection'],
-            outdir=outdir,
+            outdir=plate_path,
             filename=well_id,
             image_records=None,
             fftStride=s['fftStride'],

@@ -30,6 +30,7 @@ def discover_plates(root_dir, depth=1):
         'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
     }
 
+    has_tifs = False
     candidates = []
     for name in entries:
         if name.startswith('.') or name.startswith('~$'):
@@ -41,11 +42,16 @@ def discover_plates(root_dir, depth=1):
             'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
             'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
         }:
+            if name.lower().endswith(('.tif', '.tiff')):
+                has_tifs = True
             continue
         candidates.append(os.path.join(root_dir, name))
 
+    # If this directory contains TIF files, it IS a plate — don't recurse
+    if has_tifs:
+        return [root_dir]
+
     if not candidates:
-        # No subdirectories found — root itself is likely a plate
         return [root_dir]
 
     # If depth requested, recurse one level into each candidate

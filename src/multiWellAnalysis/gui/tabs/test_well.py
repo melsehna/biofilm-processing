@@ -77,6 +77,7 @@ class TestWellTab(QWidget):
         run_row.addWidget(self.stop_btn)
         self.status_label = QLabel('')
         self.status_label.setStyleSheet('color: gray; font-size: 11px;')
+        self.status_label.setWordWrap(True)
         run_row.addWidget(self.status_label, stretch=1)
         layout.addLayout(run_row)
 
@@ -313,9 +314,6 @@ class TestWellTab(QWidget):
 
                 from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
-                outdir = os.path.join(plate_path, 'processedImages')
-                os.makedirs(outdir, exist_ok=True)
-
                 def _on_progress(msg):
                     self._run_log.emit(f'Step 1/3: {msg}')
 
@@ -326,7 +324,7 @@ class TestWellTab(QWidget):
                     shift_thresh=s['shiftThresh'],
                     fixed_thresh=s['fixedThresh'],
                     dust_correction=s['dustCorrection'],
-                    outdir=outdir,
+                    outdir=plate_path,
                     filename=well_id,
                     image_records=None,
                     fftStride=s.get('fftStride', 6),
@@ -343,8 +341,9 @@ class TestWellTab(QWidget):
                 self._run_log.emit('Step 2/3: Colony tracking...')
                 self._run_progress.emit('Tracking', 3, 5)
 
-                raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
-                mask_path = os.path.join(outdir, f'{well_id}_masks.npz')
+                proc_dir = os.path.join(plate_path, 'processedImages')
+                raw_path = os.path.join(proc_dir, f'{well_id}_registered_raw.tif')
+                mask_path = os.path.join(proc_dir, f'{well_id}_masks.npz')
 
                 raw_stack = tifffile.imread(raw_path)
                 mask_data = np.load(mask_path)
@@ -409,7 +408,10 @@ class TestWellTab(QWidget):
                 self._run_finished.emit(result)
 
             except Exception as e:
-                self._run_log.emit(f'Error: {e}')
+                import traceback
+                tb = traceback.format_exc()
+                self._run_log.emit(f'Error: {e}\n{tb}')
+                print(tb)  # also print to terminal for debugging
                 self._run_finished.emit(None)
 
         threading.Thread(target=_work, daemon=True).start()
@@ -431,8 +433,7 @@ class TestWellTab(QWidget):
         if result is None:
             if self._stop_event.is_set():
                 self.status_label.setText('Stopped by user')
-            else:
-                self.status_label.setText('Pipeline failed — see error above')
+            # else: error message already set by _on_log in the except block
             return
 
         self.status_label.setText(f'Done — {result["well_id"]}')
