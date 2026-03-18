@@ -13,6 +13,7 @@ from .tabs.setup import SetupTab
 from .tabs.parameters import ParametersTab
 from .tabs.preview import PreviewTab
 from .tabs.conditions import ConditionsTab
+from .tabs.test_well import TestWellTab
 from .tabs.runGUI import RunTab
 
 
@@ -35,6 +36,7 @@ class PhenotyprApp(QMainWindow):
         self.tabs.addTab(ParametersTab(self.state), 'Parameters')
         self.tabs.addTab(PreviewTab(self.state), 'Preview')
         self.tabs.addTab(ConditionsTab(self.state), 'Conditions')
+        self.tabs.addTab(TestWellTab(self.state), 'Test Well')
         self.tabs.addTab(RunTab(self.state), 'Run')
 
         # layout
