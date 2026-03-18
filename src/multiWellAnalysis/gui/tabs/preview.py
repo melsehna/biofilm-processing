@@ -19,6 +19,8 @@ import tifffile
 
 from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
 
+MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
+
 
 def discover_wells_with_mag(plate_dir):
     """Find well+mag combinations from TIF filenames.
@@ -51,7 +53,8 @@ def discover_wells_with_mag(plate_dir):
             for mag in sorted(groups):
                 for well in sorted(groups[mag]):
                     files = sorted(groups[mag][well])
-                    label = f'{well} (mag {mag})'
+                    mag_label = MAG_SUFFIXES.get(mag, mag)
+                    label = f'{well} ({mag_label})'
                     result.append((label, well, mag, files))
             return result
 

@@ -264,85 +264,37 @@ class SetupTab(QWidget):
         else:
             self.state.set('magnification', selected)
 
+    # suffix → human-readable magnification
+    MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
+
     def _scan_magnifications_async(self, plates):
         """Detect magnifications (background thread).
 
-        Strategy (fast to slow, stops at first success):
-        1. Read protocol.csv in plate dir or one level deeper (tiny file)
-        2. Parse directory/parent names for magnification patterns (no I/O)
-        3. Sample first 30 filenames via os.listdir (one SMB call on plate dir)
+        One os.listdir call on the first checked plate.  Scan filenames for
+        known suffixes (_02=4x, _03=10x, _04=20x, _05=40x).
         """
         def _scan():
-            import csv
             all_mags = set()
             if not plates:
                 return all_mags, 'no plates'
 
-            # Collect dirs to check: each plate + its children
-            dirs_to_check = []
             for plate_path in plates[:3]:
-                dirs_to_check.append(plate_path)
                 try:
-                    for name in os.listdir(plate_path):
-                        if name.startswith('.') or '.' in name:
-                            continue
-                        dirs_to_check.append(os.path.join(plate_path, name))
-                except (PermissionError, OSError):
-                    pass
-
-            # Method 1: protocol.csv
-            for d in dirs_to_check:
-                try:
-                    with open(os.path.join(d, 'protocol.csv'), 'r') as f:
-                        reader = csv.DictReader(f)
-                        for row in reader:
-                            if (row.get('action') == 'Imaging Read'
-                                    and row.get('channel') == 'Bright Field'
-                                    and 'step' in row):
-                                mag = row.get('magnification', '')
-                                step = row.get('step', '')
-                                label = str(mag) if mag else f'_{step}'
-                                all_mags.add(label)
-                    if all_mags:
-                        return all_mags, 'from protocol.csv'
-                except (FileNotFoundError, OSError):
-                    continue
-
-            # Method 2: parse parent/plate directory names for mag patterns
-            # e.g. "4x_10x_20x_40x" in the experiment folder name
-            for plate_path in plates[:3]:
-                for part in [plate_path, os.path.dirname(plate_path)]:
-                    dirname = os.path.basename(part)
-                    mag_matches = re.findall(r'(\d+)x', dirname, re.IGNORECASE)
-                    if len(mag_matches) >= 2:
-                        # Map known magnifications to suffixes
-                        # Convention: _01=4x, _02=4x, _03=10x, _04=20x, _05=40x
-                        # But we can't know the exact mapping without filenames.
-                        # Just report the magnification values found.
-                        for m in mag_matches:
-                            all_mags.add(f'{m}x')
-                        if all_mags:
-                            return all_mags, 'from directory name'
-
-            # Method 3: sample filenames from the deepest plate dir
-            # Find the actual plate dir (the one with tifs, not an experiment folder)
-            for d in dirs_to_check:
-                try:
-                    names = os.listdir(d)
+                    names = os.listdir(plate_path)
                 except (PermissionError, OSError):
                     continue
-                count = 0
                 for name in names:
-                    if count >= 30:
-                        break
                     if not name.endswith('.tif'):
                         continue
-                    count += 1
                     m = re.match(r'^[A-P]\d+(_\d+)_', name)
                     if m:
-                        all_mags.add(m.group(1))
+                        suffix = m.group(1)
+                        if suffix in self.MAG_SUFFIXES:
+                            all_mags.add(suffix)
+                    if len(all_mags) == len(self.MAG_SUFFIXES):
+                        break  # found all possible magnifications
                 if all_mags:
-                    return all_mags, f'from filenames in {os.path.basename(d)}'
+                    return all_mags, f'from filenames in {os.path.basename(plate_path)}'
 
             return all_mags, 'no magnifications found'
 
@@ -369,7 +321,8 @@ class SetupTab(QWidget):
             self.mag_list.blockSignals(True)
             self.mag_list.clear()
             for mag in sorted(all_mags):
-                item = QListWidgetItem(f'Magnification {mag}')
+                mag_label = self.MAG_SUFFIXES.get(mag, mag)
+                item = QListWidgetItem(f'{mag_label} ({mag})')
                 item.setData(Qt.UserRole, mag)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked if mag in saved else Qt.Unchecked)
