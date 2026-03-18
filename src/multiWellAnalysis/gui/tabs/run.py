@@ -109,14 +109,22 @@ class ProcessingWorker(QObject):
     def _process_well(self, plate_path, plate_name, outdir, well_id, well_files):
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
-        # load images
+        # load images as float32 (timelapse_processing uses float32 internally)
         if isinstance(well_files, str):
-            stack = tifffile.imread(well_files).astype(np.float64)
-            if stack.ndim == 2:
-                stack = stack[np.newaxis]
+            raw = tifffile.imread(well_files)
+            if raw.ndim == 2:
+                stack = raw[np.newaxis].astype(np.float32)
+            else:
+                stack = raw.astype(np.float32)
+            del raw
         else:
-            frames = [tifffile.imread(f).astype(np.float64) for f in well_files]
-            stack = np.stack(frames)
+            first = tifffile.imread(well_files[0])
+            h, w = first.shape[:2]
+            stack = np.empty((len(well_files), h, w), dtype=np.float32)
+            stack[0] = first.astype(np.float32)
+            del first
+            for fi in range(1, len(well_files)):
+                stack[fi] = tifffile.imread(well_files[fi]).astype(np.float32)
 
         # ensure (H, W, T)
         if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:

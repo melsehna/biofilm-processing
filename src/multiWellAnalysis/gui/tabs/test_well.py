@@ -278,20 +278,27 @@ class TestWellTab(QWidget):
                 self._run_log.emit(f'Loading images for {well_id}...')
                 self._run_progress.emit('Loading', 0, 5)
 
-                # Load image stack
+                # Load image stack directly as float32
                 if isinstance(source, str):
-                    stack = tifffile.imread(source).astype(np.float64)
-                    if stack.ndim == 2:
-                        stack = stack[np.newaxis]
+                    raw = tifffile.imread(source)
+                    if raw.ndim == 2:
+                        stack = raw[np.newaxis].astype(np.float32)
+                    else:
+                        stack = raw.astype(np.float32)
+                    del raw
                 else:
-                    frames_loaded = []
-                    for fi, f in enumerate(source):
+                    # Pre-allocate array instead of stacking
+                    first = tifffile.imread(source[0])
+                    h, w = first.shape[:2]
+                    stack = np.empty((len(source), h, w), dtype=np.float32)
+                    stack[0] = first.astype(np.float32)
+                    del first
+                    for fi in range(1, len(source)):
                         if stop.is_set():
                             self._run_finished.emit(None)
                             return
                         self._run_log.emit(f'Loading frame {fi+1}/{len(source)}...')
-                        frames_loaded.append(tifffile.imread(f).astype(np.float64))
-                    stack = np.stack(frames_loaded)
+                        stack[fi] = tifffile.imread(source[fi]).astype(np.float32)
 
                 # ensure (H, W, T)
                 if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
