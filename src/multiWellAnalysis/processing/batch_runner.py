@@ -43,7 +43,7 @@ def _mag_groups_from_protocol(plate_dir, tif_files):
     for f in tif_files:
         base = os.path.basename(f)
         # Parse step from filename: WELL_STEP_..._Bright[_ ]Field_NNN.tif
-        m = re.match(r'^([A-H]\d+)_0?(\d+)_', base)
+        m = re.match(r'^([A-P]\d+)_0?(\d+)_', base)
         if not m:
             continue
         well = m.group(1)
@@ -66,7 +66,7 @@ def _mag_groups_from_filenames(tif_files):
     groups = defaultdict(lambda: defaultdict(list))
     for f in tif_files:
         base = os.path.basename(f)
-        m = re.match(r'^([A-H]\d+)(_\d+)_', base)
+        m = re.match(r'^([A-P]\d+)(_\d+)_', base)
         if not m:
             continue
         well = m.group(1)

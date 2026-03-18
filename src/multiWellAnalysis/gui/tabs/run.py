@@ -230,11 +230,11 @@ class ProcessingWorker(QObject):
 
         for f in tif_files:
             name = os.path.basename(f)
-            if re.match(r'^[A-H]\d{1,2}\.tif$', name):
+            if re.match(r'^[A-P]\d{1,2}\.tif$', name):
                 well_id = os.path.splitext(name)[0]
                 wells[well_id] = f
                 continue
-            m = re.match(r'^([A-H]\d{1,2})_', name)
+            m = re.match(r'^([A-P]\d{1,2})_', name)
             if m:
                 well_id = m.group(1)
                 wells.setdefault(well_id, [])
