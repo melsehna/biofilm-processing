@@ -260,10 +260,13 @@ class ProcessingWorker(QObject):
 
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
         if not tif_files:
-            tif_files = sorted(glob.glob(os.path.join(plate_path, '*', '*.tif')))
+            deeper = os.path.join(plate_path, '*', '*.tif')
+            tif_files = sorted(glob.glob(deeper))
+            print(f'[_discover_wells] no TIFs in root, tried {deeper}: found {len(tif_files)}')
 
         bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
         candidates = bf_files if bf_files else tif_files
+        print(f'[_discover_wells] {len(tif_files)} TIFs, {len(bf_files)} BF, {len(candidates)} candidates')
 
         # Group by (well, mag_suffix)
         groups = defaultdict(list)
@@ -278,6 +281,7 @@ class ProcessingWorker(QObject):
                 m2 = re.match(r'^([A-P]\d{1,2})[_.]', name)
                 if m2:
                     groups[(m2.group(1), '')].append(f)
+        print(f'[_discover_wells] {len(groups)} well+mag groups')
 
         # Filter by selected magnifications
         mag_setting = self._state.get('magnification', 'all')
