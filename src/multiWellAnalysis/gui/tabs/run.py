@@ -90,9 +90,12 @@ class ProcessingWorker(QObject):
                 t0 = time.time()
 
                 try:
+                    # Extract mag suffix from well key (e.g. 'A1_02' → '_02')
+                    m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+                    mag = m.group(1) if m else ''
                     self._process_well(
                         plate_path, plate_name,
-                        well_id, well_files
+                        well_id, well_files, mag
                     )
                     elapsed = time.time() - t0
                     self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
@@ -103,7 +106,7 @@ class ProcessingWorker(QObject):
 
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
-    def _process_well(self, plate_path, plate_name, well_id, well_files):
+    def _process_well(self, plate_path, plate_name, well_id, well_files, mag=''):
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         # load images as float32 (timelapse_processing uses float32 internally)
@@ -130,15 +133,26 @@ class ProcessingWorker(QObject):
         s = self._state
         outdir = os.path.join(plate_path, 'processedImages')
 
+        # Apply per-magnification parameter overrides
+        block_diam = s['blockDiam']
+        fixed_thresh = s['fixedThresh']
+        dust_correction = s['dustCorrection']
+        mag_params = s.get('magParams', {})
+        if mag and mag in mag_params:
+            overrides = mag_params[mag]
+            block_diam = overrides.get('blockDiam', block_diam)
+            fixed_thresh = overrides.get('fixedThresh', fixed_thresh)
+            dust_correction = overrides.get('dustCorrection', dust_correction)
+
         # Step 1: image processing
         self.log.emit(f'  {well_id}: preprocessing + registration...')
         masks, biomass, od_mean = timelapse_processing(
             images=stack,
-            block_diameter=s['blockDiam'],
+            block_diameter=block_diam,
             ntimepoints=stack.shape[2],
             shift_thresh=s['shiftThresh'],
-            fixed_thresh=s['fixedThresh'],
-            dust_correction=s['dustCorrection'],
+            fixed_thresh=fixed_thresh,
+            dust_correction=dust_correction,
             outdir=plate_path,
             filename=well_id,
             image_records=None,
@@ -236,24 +250,50 @@ class ProcessingWorker(QObject):
             self.log.emit(f'    Whole-image feats error: {e}')
 
     def _discover_wells(self, plate_path):
-        """Find wells and their image files."""
-        wells = {}
+        """Find wells and their image files, filtered by selected magnifications.
+
+        Groups Bright Field TIF files by (well, mag_suffix), then returns
+        only wells matching the magnifications selected in the setup tab.
+        Returns dict: {(well_id, mag_suffix): [files]}
+        """
+        from collections import defaultdict
+
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
         if not tif_files:
             tif_files = sorted(glob.glob(os.path.join(plate_path, '*', '*.tif')))
 
-        for f in tif_files:
+        bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
+        candidates = bf_files if bf_files else tif_files
+
+        # Group by (well, mag_suffix)
+        groups = defaultdict(list)
+        for f in candidates:
             name = os.path.basename(f)
-            if re.match(r'^[A-P]\d{1,2}\.tif$', name):
-                well_id = os.path.splitext(name)[0]
-                wells[well_id] = f
-                continue
-            m = re.match(r'^([A-P]\d{1,2})_', name)
+            m = re.match(r'^([A-P]\d+)(_\d+)_', name)
             if m:
-                well_id = m.group(1)
-                wells.setdefault(well_id, [])
-                if isinstance(wells[well_id], list):
-                    wells[well_id].append(f)
+                well, mag = m.group(1), m.group(2)
+                groups[(well, mag)].append(f)
+            else:
+                # No mag suffix
+                m2 = re.match(r'^([A-P]\d{1,2})[_.]', name)
+                if m2:
+                    groups[(m2.group(1), '')].append(f)
+
+        # Filter by selected magnifications
+        mag_setting = self._state.get('magnification', 'all')
+        if mag_setting == 'all':
+            selected_mags = None  # process all
+        elif isinstance(mag_setting, str):
+            selected_mags = {mag_setting}
+        else:
+            selected_mags = set(mag_setting)
+
+        wells = {}
+        for (well, mag), files in sorted(groups.items()):
+            if selected_mags is not None and mag not in selected_mags:
+                continue
+            key = f'{well}{mag}' if mag else well
+            wells[key] = sorted(files)
 
         return wells
 
