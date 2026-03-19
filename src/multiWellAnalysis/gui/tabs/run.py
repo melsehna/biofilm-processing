@@ -227,14 +227,22 @@ def _colony_feats_one_well(plate_name, row):
 # ── Well discovery ──
 
 def discover_wells(plate_path, mag_setting='all'):
-    """Find wells and their BF image files, filtered by selected magnifications."""
+    """Find wells and their BF image files, filtered by selected magnifications.
+
+    Returns (resolved_plate_path, wells_dict).
+    resolved_plate_path is the directory that actually contains the TIF files
+    (may be plate_path itself or a child directory).
+    """
+    resolved = plate_path
     tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
     if not tif_files:
         try:
             for child in os.listdir(plate_path):
-                child_tifs = sorted(glob.glob(os.path.join(plate_path, child, '*.tif')))
+                child_path = os.path.join(plate_path, child)
+                child_tifs = sorted(glob.glob(os.path.join(child_path, '*.tif')))
                 if child_tifs:
                     tif_files = child_tifs
+                    resolved = child_path
                     break
         except (PermissionError, OSError):
             pass
@@ -267,7 +275,7 @@ def discover_wells(plate_path, mag_setting='all'):
         key = f'{well}{mag}' if mag else well
         wells[key] = sorted(files)
 
-    return wells
+    return resolved, wells
 
 
 # ── Qt Worker ──
@@ -309,13 +317,15 @@ class ProcessingWorker(QObject):
             self.log.emit(f'{"="*60}')
 
             mag_setting = s.get('magnification', 'all')
-            wells = discover_wells(plate_path, mag_setting)
+            resolved_plate, wells = discover_wells(plate_path, mag_setting)
+            if resolved_plate != plate_path:
+                self.log.emit(f'  Resolved plate dir: {os.path.basename(resolved_plate)}')
             self.log.emit(f'  Found {len(wells)} wells (mag={mag_setting})')
             if not wells:
                 self.log.emit(f'  No wells found, skipping.')
                 continue
 
-            outdir = os.path.join(plate_path, 'processedImages')
+            outdir = os.path.join(resolved_plate, 'processedImages')
             os.makedirs(outdir, exist_ok=True)
 
             index = {}
@@ -327,7 +337,7 @@ class ProcessingWorker(QObject):
             self._run_stage_parallel(
                 plate_name, plate_idx, total_plates, 'Processing',
                 well_items, index, outdir, n_workers,
-                self._submit_processing, plate_path, s
+                self._submit_processing, resolved_plate, s
             )
 
             # ── Stage 2: Whole-image features (parallel) ──
@@ -360,7 +370,7 @@ class ProcessingWorker(QObject):
                     )
 
             # ── Save index.csv ──
-            self._save_index(index, outdir, plate_name, plate_path)
+            self._save_index(index, outdir, plate_name, resolved_plate)
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
     def _run_stage_parallel(self, plate_name, plate_idx, total_plates, stage_name,
