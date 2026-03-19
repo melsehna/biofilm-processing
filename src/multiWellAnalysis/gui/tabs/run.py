@@ -239,6 +239,8 @@ class ProcessingWorker(QObject):
         """Find wells and their image files."""
         wells = {}
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
+        if not tif_files:
+            tif_files = sorted(glob.glob(os.path.join(plate_path, '*', '*.tif')))
 
         for f in tif_files:
             name = os.path.basename(f)
