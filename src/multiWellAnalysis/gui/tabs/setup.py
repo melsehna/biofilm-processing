@@ -9,12 +9,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 
-def discover_plates(root_dir, depth=1):
+def discover_plates(root_dir, depth=2):
     """Find candidate plate directories under root_dir.
 
-    Recurses one level by default so drawer/experiment folders are handled
-    automatically.  A directory whose listdir contains only files (no
-    subdirectory-looking entries) is treated as a plate itself.
+    Recurses up to two levels by default so experiment/drawer/plate
+    structures are handled automatically.  Stops recursing when a
+    directory contains TIF files (i.e. it IS a plate).
     """
     if not root_dir:
         return []
@@ -195,7 +195,7 @@ class SetupTab(QWidget):
             self.outdir_edit.setText(path)
             self.state.set('outputDir', path)
 
-    def _refresh_plates(self, search_depth=1):
+    def _refresh_plates(self, search_depth=2):
         root = self.root_edit.text().strip()
         self.plate_list.blockSignals(True)
         self.plate_list.clear()
@@ -233,7 +233,7 @@ class SetupTab(QWidget):
         self._run_in_background('plates', _scan, _done)
 
     def _refresh_plates_deeper(self):
-        self._refresh_plates(search_depth=2)
+        self._refresh_plates(search_depth=3)
 
     def _update_selected_plates(self):
         selected = []
