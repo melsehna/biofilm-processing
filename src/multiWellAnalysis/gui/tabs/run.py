@@ -259,14 +259,15 @@ class ProcessingWorker(QObject):
         from collections import defaultdict
 
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
+        self.log.emit(f'  Scanning {plate_path}: {len(tif_files)} TIFs at root')
         if not tif_files:
             deeper = os.path.join(plate_path, '*', '*.tif')
             tif_files = sorted(glob.glob(deeper))
-            print(f'[_discover_wells] no TIFs in root, tried {deeper}: found {len(tif_files)}')
+            self.log.emit(f'  Tried one level down: {len(tif_files)} TIFs')
 
         bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
         candidates = bf_files if bf_files else tif_files
-        print(f'[_discover_wells] {len(tif_files)} TIFs, {len(bf_files)} BF, {len(candidates)} candidates')
+        self.log.emit(f'  {len(tif_files)} TIFs, {len(bf_files)} BF, {len(candidates)} candidates')
 
         # Group by (well, mag_suffix)
         groups = defaultdict(list)
@@ -281,7 +282,7 @@ class ProcessingWorker(QObject):
                 m2 = re.match(r'^([A-P]\d{1,2})[_.]', name)
                 if m2:
                     groups[(m2.group(1), '')].append(f)
-        print(f'[_discover_wells] {len(groups)} well+mag groups')
+        self.log.emit(f'  {len(groups)} well+mag groups, mag_setting={mag_setting}')
 
         # Filter by selected magnifications
         mag_setting = self._state.get('magnification', 'all')
