@@ -41,22 +41,20 @@ def discover_plates(root_dir, max_depth=4):
         return []
 
     plates = []
-    # BFS queue: (path, current_depth)
     queue = [(root_dir, 0)]
 
     while queue:
         path, depth = queue.pop(0)
         try:
             entries = os.listdir(path)
-        except (PermissionError, FileNotFoundError, OSError):
+        except (PermissionError, FileNotFoundError, OSError) as e:
+            print(f'[discover_plates] cannot list {path}: {e}')
             continue
 
-        # If this directory has well-named TIF files, it's a plate
         if _has_well_tifs(entries):
             plates.append(path)
-            continue  # don't recurse into plates
+            continue
 
-        # Otherwise look deeper (up to max_depth)
         if depth >= max_depth:
             continue
 
@@ -65,9 +63,12 @@ def discover_plates(root_dir, max_depth=4):
                 continue
             if name.lower() in _SKIP_DIRS:
                 continue
-            # Skip obvious files by extension (no stat needed)
-            if '.' in name and name.rsplit('.', 1)[1].lower() in _FILE_EXTS:
-                continue
+            # Only skip entries that look like files (have a short known extension)
+            # Directory names with dots (e.g. "v1.2_data") should NOT be skipped
+            if '.' in name:
+                ext = name.rsplit('.', 1)[1].lower()
+                if len(ext) <= 5 and ext in _FILE_EXTS:
+                    continue
             queue.append((os.path.join(path, name), depth + 1))
 
     return sorted(plates)
@@ -160,6 +161,7 @@ class SetupTab(QWidget):
 
     def _connect_signals(self):
         self.browse_btn.clicked.connect(self._browse)
+        self.root_edit.editingFinished.connect(self._on_root_edited)
         self.refresh_btn.clicked.connect(self._refresh_plates)
         self.deeper_btn.clicked.connect(self._refresh_plates_deeper)
         self.outdir_browse_btn.clicked.connect(self._browse_outdir)
@@ -172,6 +174,12 @@ class SetupTab(QWidget):
         self.notes_edit.textChanged.connect(
             lambda: self.state.set('notes', self.notes_edit.toPlainText())
         )
+
+    def _on_root_edited(self):
+        root = self.root_edit.text().strip()
+        if root and root != self.state.get('rootDir', ''):
+            self.state.set('rootDir', root)
+            self._refresh_plates()
 
     def _browse(self):
         path = QFileDialog.getExistingDirectory(self, 'Select Root Directory')
@@ -237,6 +245,10 @@ class SetupTab(QWidget):
                 item.setCheckState(Qt.Unchecked)
                 self.plate_list.addItem(item)
             self.plate_list.blockSignals(False)
+            if not plates:
+                self.mag_status.setText(
+                    f'No plates found (no well-named TIF files in {root})'
+                )
             self._update_selected_plates()
 
         self._run_in_background('plates', _scan, _done)
