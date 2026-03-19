@@ -196,13 +196,26 @@ class SetupTab(QWidget):
                 return all_mags, 'no plates'
 
             for plate_path in plates[:3]:
+                # Collect TIF names from plate_path, or one level down
+                tif_names = []
                 try:
                     names = os.listdir(plate_path)
                 except (PermissionError, OSError):
                     continue
-                for name in names:
-                    if not name.endswith('.tif'):
-                        continue
+                tif_names = [n for n in names if n.lower().endswith('.tif')]
+                if not tif_names:
+                    # Look one level down (drawer → plate)
+                    for child in names:
+                        child_path = os.path.join(plate_path, child)
+                        try:
+                            child_names = os.listdir(child_path)
+                            tif_names = [n for n in child_names if n.lower().endswith('.tif')]
+                            if tif_names:
+                                break
+                        except (PermissionError, OSError):
+                            continue
+
+                for name in tif_names:
                     m = re.match(r'^[A-P]\d+(_\d+)_', name)
                     if m:
                         suffix = m.group(1)
