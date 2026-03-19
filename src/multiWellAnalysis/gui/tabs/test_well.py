@@ -17,7 +17,7 @@ from matplotlib.colors import ListedColormap
 import tifffile
 
 from multiWellAnalysis.gui.tabs.preview import (
-    discover_wells_with_mag, load_frame, MAG_SUFFIXES,
+    discover_wells_with_mag, MAG_SUFFIXES,
 )
 
 
@@ -272,14 +272,19 @@ class TestWellTab(QWidget):
 
         def _work():
             try:
+                import cv2
+                from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
+                from multiWellAnalysis.processing.registration import registerStackNormblur
+                from multiWellAnalysis.processing.segmentation import compute_mask_inplace, dust_correct_inplace
+
                 if stop.is_set():
                     self._run_finished.emit(None)
                     return
 
+                # ── Load ──
                 self._run_log.emit(f'Loading images for {well_id}...')
                 self._run_progress.emit('Loading', 0, 5)
 
-                # Load image stack directly as float32
                 if isinstance(source, str):
                     raw = tifffile.imread(source)
                     if raw.ndim == 2:
@@ -288,7 +293,6 @@ class TestWellTab(QWidget):
                         stack = raw.astype(np.float32)
                     del raw
                 else:
-                    # Pre-allocate array instead of stacking
                     first = tifffile.imread(source[0])
                     h, w = first.shape[:2]
                     stack = np.empty((len(source), h, w), dtype=np.float32)
@@ -309,65 +313,60 @@ class TestWellTab(QWidget):
                     self._run_finished.emit(None)
                     return
 
-                # Step 1: timelapse processing
+                # ── Step 1: Preprocess + register (in memory, no file I/O) ──
                 self._run_progress.emit('Preprocessing', 1, 5)
+                ntimepoints = stack.shape[2]
 
-                from multiWellAnalysis.processing.analysis_main import timelapse_processing
+                imax = stack.max()
+                if imax > 0:
+                    stack /= imax
 
-                def _on_progress(msg):
-                    self._run_log.emit(f'Step 1/3: {msg}')
+                sigma = 2.0
+                block_diam = s['blockDiam']
+                norm_blur = np.empty(stack.shape, dtype=np.float32)
+                for t in range(ntimepoints):
+                    if stop.is_set():
+                        self._run_finished.emit(None)
+                        return
+                    self._run_log.emit(f'Step 1/3: Normalizing frame {t+1}/{ntimepoints}')
+                    r = normalize_local_contrast(stack[..., t], block_diam)
+                    norm_blur[..., t] = cv2.GaussianBlur(
+                        r, (0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT
+                    )
 
-                masks, biomass, od_mean = timelapse_processing(
-                    images=stack,
-                    block_diameter=s['blockDiam'],
-                    ntimepoints=stack.shape[2],
-                    shift_thresh=s['shiftThresh'],
-                    fixed_thresh=s['fixedThresh'],
-                    dust_correction=s['dustCorrection'],
-                    outdir=plate_path,
-                    filename=well_id,
-                    image_records=None,
+                self._run_log.emit('Step 1/3: Registering...')
+                self._run_progress.emit('Registering', 2, 5)
+                registered_norm, registered_raw, _ = registerStackNormblur(
+                    norm_blur, stack,
+                    s['shiftThresh'],
                     fftStride=s.get('fftStride', 6),
                     downsample=s.get('downsample', 4),
-                    skip_overlay=True,
-                    progress_fn=_on_progress,
                 )
+
+                # Compute masks
+                self._run_log.emit('Step 1/3: Computing masks...')
+                masks = np.zeros(registered_norm.shape, dtype=bool)
+                compute_mask_inplace(registered_norm, masks, s['fixedThresh'])
+                if s['dustCorrection']:
+                    dust_correct_inplace(masks)
 
                 if stop.is_set():
                     self._run_finished.emit(None)
                     return
 
-                # Step 2: colony tracking
+                # ── Step 2: Colony tracking (in memory) ──
                 self._run_log.emit('Step 2/3: Colony tracking...')
                 self._run_progress.emit('Tracking', 3, 5)
 
-                proc_dir = os.path.join(plate_path, 'processedImages')
-                raw_path = os.path.join(proc_dir, f'{well_id}_registered_raw.tif')
-                mask_path = os.path.join(proc_dir, f'{well_id}_masks.npz')
-
-                raw_stack = tifffile.imread(raw_path)
-                mask_data = np.load(mask_path)
-                mask_key = 'masks' if 'masks' in mask_data else list(mask_data.keys())[0]
-                mask_stack = mask_data[mask_key]
-
-                # find seed/peak frames from mask area
-                if mask_stack.ndim == 3:
-                    if mask_stack.shape[2] < mask_stack.shape[0]:
-                        mask_sums = np.array([mask_stack[:, :, t].sum()
-                                              for t in range(mask_stack.shape[2])])
-                    else:
-                        mask_sums = np.array([mask_stack[t].sum()
-                                              for t in range(mask_stack.shape[0])])
-                else:
-                    mask_sums = np.array([mask_stack.sum()])
-
+                # find seed/peak frames
+                mask_sums = np.array([masks[..., t].sum() for t in range(ntimepoints)])
                 peak_frame = int(np.argmax(mask_sums))
                 seed_frame = max(0, peak_frame // 3)
 
                 from multiWellAnalysis.colony.runTrackingMpTraining import trackColoniesAllFrames
                 plate_name = os.path.basename(plate_path)
                 labels_by_frame, _, reason, frames = trackColoniesAllFrames(
-                    raw_stack, mask_stack, seed_frame, peak_frame,
+                    registered_raw, masks, seed_frame, peak_frame,
                     plate_name, well_id,
                 )
 
@@ -378,31 +377,24 @@ class TestWellTab(QWidget):
                 self._run_log.emit(f'Step 3/3: Building result ({reason})')
                 self._run_progress.emit('Building result', 4, 5)
 
-                # Build label stack for visualization
+                # Build result for visualization (all in memory)
                 if labels_by_frame and frames:
-                    first_key = list(labels_by_frame.keys())[0]
-                    first_label = labels_by_frame[first_key]
-                    h, w = first_label.shape[:2]
-
-                    label_stack = np.zeros((h, w, len(frames)), dtype=np.int32)
+                    first_label = labels_by_frame[list(labels_by_frame.keys())[0]]
+                    lh, lw = first_label.shape[:2]
+                    label_stack = np.zeros((lh, lw, len(frames)), dtype=np.int32)
                     for i, f_idx in enumerate(frames):
                         if f_idx in labels_by_frame:
-                            lbl = labels_by_frame[f_idx]
-                            label_stack[:, :, i] = lbl[:h, :w]
-
-                    result = {
-                        'raw_path': raw_path,
-                        'label_stack': label_stack,
-                        'frames': frames,
-                        'well_id': well_id,
-                    }
+                            label_stack[:, :, i] = labels_by_frame[f_idx][:lh, :lw]
                 else:
-                    result = {
-                        'raw_path': raw_path,
-                        'label_stack': None,
-                        'frames': [],
-                        'well_id': well_id,
-                    }
+                    label_stack = None
+                    frames = list(range(ntimepoints))
+
+                result = {
+                    'raw_stack': registered_raw,
+                    'label_stack': label_stack,
+                    'frames': frames,
+                    'well_id': well_id,
+                }
 
                 self._run_progress.emit('Done', 5, 5)
                 self._run_finished.emit(result)
@@ -411,7 +403,7 @@ class TestWellTab(QWidget):
                 import traceback
                 tb = traceback.format_exc()
                 self._run_log.emit(f'Error: {e}\n{tb}')
-                print(tb)  # also print to terminal for debugging
+                print(tb)
                 self._run_finished.emit(None)
 
         threading.Thread(target=_work, daemon=True).start()
@@ -480,12 +472,14 @@ class TestWellTab(QWidget):
 
         frame_idx = self.frame_slider.value()
 
-        # Load raw frame
-        raw, _ = load_frame(self._result['raw_path'], frame_idx)
-        if raw is None:
-            self.ax_raw.set_title('Could not load')
+        # Get raw frame from in-memory stack
+        raw_stack = self._result.get('raw_stack')
+        if raw_stack is None:
+            self.ax_raw.set_title('No data')
             self.canvas.draw()
             return
+        fi = min(frame_idx, raw_stack.shape[2] - 1)
+        raw = raw_stack[:, :, fi].astype(np.float64)
 
         self.ax_raw.imshow(raw, cmap='gray')
         self.ax_raw.set_title('Raw')
