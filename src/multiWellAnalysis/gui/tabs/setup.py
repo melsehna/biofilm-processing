@@ -100,16 +100,28 @@ class SetupTab(QWidget):
         )
 
     def _add_plates(self):
-        """Add plate folders one at a time (click again to add more)."""
-        path = QFileDialog.getExistingDirectory(self, 'Select plate folder')
-        if path:
+        """Add plate folders — supports multi-select."""
+        from PySide6.QtWidgets import QListView, QTreeView, QAbstractItemView
+        dlg = QFileDialog(self, 'Select plate folder(s)')
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        # Force Qt's own dialog (not native) so we can modify selection mode
+        dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+        for view in dlg.findChildren(QListView):
+            view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        for view in dlg.findChildren(QTreeView):
+            view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+        if dlg.exec():
             existing = {
                 self.plate_list.item(i).data(Qt.UserRole)
                 for i in range(self.plate_list.count())
             }
-            if path not in existing:
-                self._add_plate_item(path)
-                self._sync_state()
+            for path in dlg.selectedFiles():
+                if path not in existing:
+                    self._add_plate_item(path)
+                    existing.add(path)
+            self._sync_state()
 
     def _add_plate_item(self, path):
         item = QListWidgetItem(os.path.basename(path))

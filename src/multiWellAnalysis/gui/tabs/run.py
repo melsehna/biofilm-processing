@@ -162,12 +162,14 @@ def _whole_image_one_well(plate_name, row):
             row['processed'], plate_name, well_id, outdir
         )
         elapsed = time.perf_counter() - t0
-        feats_path = os.path.join(outdir, f'{well_id}_wholeImage.csv')
+        # Find the actual output file (has version string in name)
+        feats_files = glob.glob(os.path.join(outdir, f'{well_id}_wholeImage_*.csv'))
+        feats_path = feats_files[0] if feats_files else ''
         return {
             'well': well_id,
-            'status': 'done' if os.path.exists(feats_path) else status,
+            'status': 'done' if feats_path else status,
             'elapsed': elapsed,
-            'whole_image_feats': feats_path if os.path.exists(feats_path) else '',
+            'whole_image_feats': feats_path,
         }
     except Exception as e:
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
@@ -206,15 +208,16 @@ def _colony_feats_one_well(plate_name, row):
         )
         elapsed = time.perf_counter() - t0
 
-        colony_path = os.path.join(outdir, f'{well_id}_colonyFeatures.csv')
-        agg_path = os.path.join(outdir, f'{well_id}_wellColonyFeatures.csv')
+        # Find actual output files (have version string in name)
+        colony_files = glob.glob(os.path.join(outdir, f'{well_id}_colonyFeatures_*.csv'))
+        agg_files = glob.glob(os.path.join(outdir, f'{well_id}_wellColonyFeatures_*.csv'))
 
         return {
             'well': well_id,
             'status': 'done',
             'elapsed': elapsed,
-            'colony_feats': colony_path if colony_df is not None else '',
-            'well_colony_feats': agg_path if well_df is not None else '',
+            'colony_feats': colony_files[0] if colony_files else '',
+            'well_colony_feats': agg_files[0] if agg_files else '',
         }
     except Exception as e:
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
