@@ -31,7 +31,15 @@ def discover_wells_with_mag(plate_dir):
 
     tif_files = sorted(glob.glob(os.path.join(plate_dir, '*.tif')))
     if not tif_files:
-        tif_files = sorted(glob.glob(os.path.join(plate_dir, '*', '*.tif')))
+        # Look one level down (drawer → plate)
+        try:
+            for child in os.listdir(plate_dir):
+                child_tifs = sorted(glob.glob(os.path.join(plate_dir, child, '*.tif')))
+                if child_tifs:
+                    tif_files = child_tifs
+                    break
+        except (PermissionError, OSError):
+            pass
 
     bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
 

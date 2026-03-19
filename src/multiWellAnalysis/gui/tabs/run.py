@@ -261,9 +261,17 @@ class ProcessingWorker(QObject):
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
         self.log.emit(f'  Scanning {plate_path}: {len(tif_files)} TIFs at root')
         if not tif_files:
-            deeper = os.path.join(plate_path, '*', '*.tif')
-            tif_files = sorted(glob.glob(deeper))
-            self.log.emit(f'  Tried one level down: {len(tif_files)} TIFs')
+            # Look one level down using os.listdir (no stat calls, SMB-safe)
+            try:
+                for child in os.listdir(plate_path):
+                    child_path = os.path.join(plate_path, child)
+                    child_tifs = sorted(glob.glob(os.path.join(child_path, '*.tif')))
+                    if child_tifs:
+                        tif_files = child_tifs
+                        self.log.emit(f'  Found {len(tif_files)} TIFs in {child}')
+                        break
+            except (PermissionError, OSError):
+                pass
 
         bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
         candidates = bf_files if bf_files else tif_files
