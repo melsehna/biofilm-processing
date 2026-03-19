@@ -9,59 +9,68 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 
-def discover_plates(root_dir, depth=2):
-    """Find candidate plate directories under root_dir.
+_WELL_TIF_RE = re.compile(r'^[A-P]\d{1,2}[_.]', re.IGNORECASE)
 
-    Recurses up to two levels by default so experiment/drawer/plate
-    structures are handled automatically.  Stops recursing when a
-    directory contains TIF files (i.e. it IS a plate).
+_SKIP_DIRS = {
+    'processedimages', 'processed_images_py', 'numerical_data_py',
+    'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
+}
+
+_FILE_EXTS = {
+    'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
+    'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
+}
+
+
+def _has_well_tifs(entries):
+    """Check if any entry looks like a well TIF file (by name only)."""
+    for name in entries:
+        if name.lower().endswith(('.tif', '.tiff')) and _WELL_TIF_RE.match(name):
+            return True
+    return False
+
+
+def discover_plates(root_dir, max_depth=4):
+    """Find plate directories by walking the tree looking for well-named TIFs.
+
+    A plate directory is one that contains TIF files matching well naming
+    patterns (e.g. A1_02_Bright Field_1.tif).  Uses only os.listdir
+    (no stat calls) for speed over SMB.
     """
     if not root_dir:
         return []
 
-    try:
-        entries = sorted(os.listdir(root_dir))
-    except (PermissionError, FileNotFoundError, OSError):
-        return []
+    plates = []
+    # BFS queue: (path, current_depth)
+    queue = [(root_dir, 0)]
 
-    # Filter out hidden dirs and known output dirs by name only (no stat calls)
-    skip = {
-        'processedimages', 'processed_images_py', 'numerical_data_py',
-        'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
-    }
-
-    has_tifs = False
-    candidates = []
-    for name in entries:
-        if name.startswith('.') or name.startswith('~$'):
+    while queue:
+        path, depth = queue.pop(0)
+        try:
+            entries = os.listdir(path)
+        except (PermissionError, FileNotFoundError, OSError):
             continue
-        if name.lower() in skip:
+
+        # If this directory has well-named TIF files, it's a plate
+        if _has_well_tifs(entries):
+            plates.append(path)
+            continue  # don't recurse into plates
+
+        # Otherwise look deeper (up to max_depth)
+        if depth >= max_depth:
             continue
-        # Skip obvious non-directory files by extension
-        if '.' in name and name.rsplit('.', 1)[1].lower() in {
-            'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
-            'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
-        }:
-            if name.lower().endswith(('.tif', '.tiff')):
-                has_tifs = True
-            continue
-        candidates.append(os.path.join(root_dir, name))
 
-    # If this directory contains TIF files, it IS a plate — don't recurse
-    if has_tifs:
-        return [root_dir]
+        for name in sorted(entries):
+            if name.startswith('.') or name.startswith('~$'):
+                continue
+            if name.lower() in _SKIP_DIRS:
+                continue
+            # Skip obvious files by extension (no stat needed)
+            if '.' in name and name.rsplit('.', 1)[1].lower() in _FILE_EXTS:
+                continue
+            queue.append((os.path.join(path, name), depth + 1))
 
-    if not candidates:
-        return [root_dir]
-
-    # If depth requested, recurse one level into each candidate
-    if depth > 0:
-        deeper = []
-        for c in candidates:
-            deeper.extend(discover_plates(c, depth=depth - 1))
-        return sorted(deeper)
-
-    return sorted(candidates)
+    return sorted(plates)
 
 
 class SetupTab(QWidget):
@@ -195,7 +204,7 @@ class SetupTab(QWidget):
             self.outdir_edit.setText(path)
             self.state.set('outputDir', path)
 
-    def _refresh_plates(self, search_depth=2):
+    def _refresh_plates(self, max_depth=4):
         root = self.root_edit.text().strip()
         self.plate_list.blockSignals(True)
         self.plate_list.clear()
@@ -205,7 +214,7 @@ class SetupTab(QWidget):
         self.refresh_btn.setText('Scanning...')
 
         def _scan():
-            return discover_plates(root, depth=search_depth), root
+            return discover_plates(root, max_depth=max_depth), root
 
         def _done(result):
             self.refresh_btn.setEnabled(True)
@@ -233,7 +242,7 @@ class SetupTab(QWidget):
         self._run_in_background('plates', _scan, _done)
 
     def _refresh_plates_deeper(self):
-        self._refresh_plates(search_depth=3)
+        self._refresh_plates(max_depth=6)
 
     def _update_selected_plates(self):
         selected = []
