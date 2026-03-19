@@ -133,6 +133,7 @@ class WellGridWidget(QWidget):
                 self._painting = True
                 self._paint_state = not btn.isChecked()
                 btn.setChecked(self._paint_state)
+                self.grabMouse()  # redirect all mouse events here
                 return
         super().mousePressEvent(event)
 
@@ -144,8 +145,9 @@ class WellGridWidget(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and self._painting:
             self._painting = False
+            self.releaseMouse()
         super().mouseReleaseEvent(event)
 
     def _toggle_row(self, row):
