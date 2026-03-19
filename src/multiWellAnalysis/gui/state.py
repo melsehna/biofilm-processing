@@ -23,7 +23,7 @@ DEFAULTS = {
     'conditions':       {},
     'notes':            '',
     'magnification':    'all',
-    'workers':          4,
+    'workers':          8,
     'magParams':        {},   # per-mag overrides: {'_03': {'fixedThresh': 0.02}, ...}
 }
 

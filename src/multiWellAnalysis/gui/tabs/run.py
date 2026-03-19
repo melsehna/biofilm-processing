@@ -65,6 +65,7 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
             fftStride=params.get('fftStride', 6),
             downsample=params.get('downsample', 4),
             skip_overlay=True,
+            workers=1,  # parallelism is at the well level, not frame level
         )
         del stack
 
