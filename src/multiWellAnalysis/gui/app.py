@@ -14,7 +14,7 @@ from .tabs.parameters import ParametersTab
 from .tabs.preview import PreviewTab
 from .tabs.conditions import ConditionsTab
 from .tabs.test_well import TestWellTab
-from .tabs.runGUI import RunTab
+from .tabs.run import RunTab
 
 
 CONFIG_FILENAME = 'experiment_config.json'
