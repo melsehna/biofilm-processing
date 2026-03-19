@@ -1,77 +1,11 @@
 import os
 import re
-import glob
 import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
 )
 from PySide6.QtCore import Qt, Signal
-
-
-_WELL_TIF_RE = re.compile(r'^[A-P]\d{1,2}[_.]', re.IGNORECASE)
-
-_SKIP_DIRS = {
-    'processedimages', 'processed_images_py', 'numerical_data_py',
-    'numericaldata', 'plots', '__pycache__', '.git', 'checkpoints',
-}
-
-_FILE_EXTS = {
-    'tif', 'tiff', 'csv', 'json', 'xlsx', 'xls', 'pdf', 'png',
-    'jpg', 'mp4', 'npz', 'npy', 'log', 'txt', 'py', 'r', 'md',
-}
-
-
-def _has_well_tifs(entries):
-    """Check if any entry looks like a well TIF file (by name only)."""
-    for name in entries:
-        if name.lower().endswith(('.tif', '.tiff')) and _WELL_TIF_RE.match(name):
-            return True
-    return False
-
-
-def discover_plates(root_dir, max_depth=4):
-    """Find plate directories by walking the tree looking for well-named TIFs.
-
-    A plate directory is one that contains TIF files matching well naming
-    patterns (e.g. A1_02_Bright Field_1.tif).  Uses only os.listdir
-    (no stat calls) for speed over SMB.
-    """
-    if not root_dir:
-        return []
-
-    plates = []
-    queue = [(root_dir, 0)]
-
-    while queue:
-        path, depth = queue.pop(0)
-        try:
-            entries = os.listdir(path)
-        except (PermissionError, FileNotFoundError, OSError) as e:
-            print(f'[discover_plates] cannot list {path}: {e}')
-            continue
-
-        if _has_well_tifs(entries):
-            plates.append(path)
-            continue
-
-        if depth >= max_depth:
-            continue
-
-        for name in sorted(entries):
-            if name.startswith('.') or name.startswith('~$'):
-                continue
-            if name.lower() in _SKIP_DIRS:
-                continue
-            # Only skip entries that look like files (have a short known extension)
-            # Directory names with dots (e.g. "v1.2_data") should NOT be skipped
-            if '.' in name:
-                ext = name.rsplit('.', 1)[1].lower()
-                if len(ext) <= 5 and ext in _FILE_EXTS:
-                    continue
-            queue.append((os.path.join(path, name), depth + 1))
-
-    return sorted(plates)
 
 
 class SetupTab(QWidget):
@@ -85,34 +19,32 @@ class SetupTab(QWidget):
         self._build_ui()
         self._connect_signals()
 
-        # restore from state if already set
-        root = self.state.get('rootDir', '')
-        if root:
-            self.root_edit.setText(root)
-            self._refresh_plates()
+        # restore plates from state
+        for p in self.state.get('plates', []):
+            self._add_plate_item(p)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        # root directory row
-        dir_label = QLabel('Root Directory (input data):')
-        layout.addWidget(dir_label)
+        # plate folders — user selects directly (like Julia GUI)
+        plates_label = QLabel('Plate folders (containing images):')
+        layout.addWidget(plates_label)
 
-        dir_row = QHBoxLayout()
-        self.root_edit = QLineEdit()
-        self.root_edit.setPlaceholderText('Select directory containing plate folders...')
-        dir_row.addWidget(self.root_edit)
+        btn_row = QHBoxLayout()
+        self.add_btn = QPushButton('Add plate folders...')
+        btn_row.addWidget(self.add_btn)
+        self.remove_btn = QPushButton('Remove selected')
+        self.remove_btn.setEnabled(False)
+        btn_row.addWidget(self.remove_btn)
+        self.clear_btn = QPushButton('Clear all')
+        self.clear_btn.setEnabled(False)
+        btn_row.addWidget(self.clear_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
-        self.browse_btn = QPushButton('Browse...')
-        dir_row.addWidget(self.browse_btn)
-
-        self.refresh_btn = QPushButton('Refresh')
-        dir_row.addWidget(self.refresh_btn)
-
-        self.deeper_btn = QPushButton('Search deeper')
-        self.deeper_btn.setToolTip('Look inside each folder for plate subdirectories')
-        dir_row.addWidget(self.deeper_btn)
-        layout.addLayout(dir_row)
+        self.plate_list = QListWidget()
+        self.plate_list.setSelectionMode(QListWidget.ExtendedSelection)
+        layout.addWidget(self.plate_list, stretch=1)
 
         # output directory row
         outdir_label = QLabel('Output Directory:')
@@ -127,13 +59,6 @@ class SetupTab(QWidget):
         self.outdir_browse_btn = QPushButton('Browse...')
         outdir_row.addWidget(self.outdir_browse_btn)
         layout.addLayout(outdir_row)
-
-        # plate list
-        plates_label = QLabel('Discovered Plates:')
-        layout.addWidget(plates_label)
-
-        self.plate_list = QListWidget()
-        layout.addWidget(self.plate_list, stretch=1)
 
         # magnification selector
         mag_row = QHBoxLayout()
@@ -160,109 +85,67 @@ class SetupTab(QWidget):
         layout.addWidget(self.notes_edit)
 
     def _connect_signals(self):
-        self.browse_btn.clicked.connect(self._browse)
-        self.root_edit.editingFinished.connect(self._on_root_edited)
-        self.refresh_btn.clicked.connect(self._refresh_plates)
-        self.deeper_btn.clicked.connect(self._refresh_plates_deeper)
+        self.add_btn.clicked.connect(self._add_plates)
+        self.remove_btn.clicked.connect(self._remove_selected)
+        self.clear_btn.clicked.connect(self._clear_all)
+        self.plate_list.itemSelectionChanged.connect(self._update_remove_btn)
         self.outdir_browse_btn.clicked.connect(self._browse_outdir)
         self.outdir_edit.editingFinished.connect(
             lambda: self.state.set('outputDir', self.outdir_edit.text().strip())
         )
-        self.plate_list.itemChanged.connect(self._update_selected_plates)
         self.detect_mag_btn.clicked.connect(self._on_detect_mag_clicked)
         self.mag_list.itemChanged.connect(self._on_mag_changed)
         self.notes_edit.textChanged.connect(
             lambda: self.state.set('notes', self.notes_edit.toPlainText())
         )
 
-    def _on_root_edited(self):
-        root = self.root_edit.text().strip()
-        if root and root != self.state.get('rootDir', ''):
-            self.state.set('rootDir', root)
-            self._refresh_plates()
-
-    def _browse(self):
-        path = QFileDialog.getExistingDirectory(self, 'Select Root Directory')
+    def _add_plates(self):
+        path = QFileDialog.getExistingDirectory(self, 'Select plate folder')
         if path:
-            self.root_edit.setText(path)
-            self.state.set('rootDir', path)
+            # Check if already added
+            existing = {
+                self.plate_list.item(i).data(Qt.UserRole)
+                for i in range(self.plate_list.count())
+            }
+            if path not in existing:
+                self._add_plate_item(path)
+                self._sync_state()
 
-            # Try to load config in background (os.path.exists is slow over SMB)
-            def _try_load_config():
-                config_path = os.path.join(path, 'experiment_config.json')
-                try:
-                    with open(config_path, 'r') as f:
-                        import json
-                        return json.load(f)
-                except (FileNotFoundError, OSError):
-                    return None
+    def _add_plate_item(self, path):
+        item = QListWidgetItem(os.path.basename(path))
+        item.setData(Qt.UserRole, path)
+        item.setToolTip(path)
+        self.plate_list.addItem(item)
+        self.clear_btn.setEnabled(True)
 
-            def _config_loaded(config_data):
-                if config_data:
-                    self.state.from_dict(config_data)
-                    self.root_edit.setText(self.state.get('rootDir', path))
-                    self.outdir_edit.setText(self.state.get('outputDir', ''))
+    def _remove_selected(self):
+        for item in self.plate_list.selectedItems():
+            self.plate_list.takeItem(self.plate_list.row(item))
+        self._sync_state()
+        self._update_remove_btn()
 
-            self._run_in_background('config', _try_load_config, _config_loaded)
-            self._refresh_plates()
+    def _clear_all(self):
+        self.plate_list.clear()
+        self.clear_btn.setEnabled(False)
+        self.remove_btn.setEnabled(False)
+        self._sync_state()
+
+    def _update_remove_btn(self):
+        self.remove_btn.setEnabled(len(self.plate_list.selectedItems()) > 0)
+
+    def _sync_state(self):
+        plates = [
+            self.plate_list.item(i).data(Qt.UserRole)
+            for i in range(self.plate_list.count())
+        ]
+        self.state.set('plates', plates)
+        self.clear_btn.setEnabled(len(plates) > 0)
 
     def _browse_outdir(self):
         path = QFileDialog.getExistingDirectory(self, 'Select Output Directory')
         if path:
             self.outdir_edit.setText(path)
             self.state.set('outputDir', path)
-
-    def _refresh_plates(self, max_depth=4):
-        root = self.root_edit.text().strip()
-        self.plate_list.blockSignals(True)
-        self.plate_list.clear()
-        self.plate_list.blockSignals(False)
-        self.refresh_btn.setEnabled(False)
-        self.deeper_btn.setEnabled(False)
-        self.refresh_btn.setText('Scanning...')
-
-        def _scan():
-            return discover_plates(root, max_depth=max_depth), root
-
-        def _done(result):
-            self.refresh_btn.setEnabled(True)
-            self.deeper_btn.setEnabled(True)
-            self.refresh_btn.setText('Refresh')
-            if isinstance(result, tuple):
-                plates, root_used = result
-            else:
-                plates, root_used = (result or []), root
-            self.plate_list.blockSignals(True)
-            self.plate_list.clear()
-            for p in plates:
-                try:
-                    display = os.path.relpath(p, root_used)
-                except ValueError:
-                    display = os.path.basename(p)
-                item = QListWidgetItem(display)
-                item.setData(Qt.UserRole, p)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Unchecked)
-                self.plate_list.addItem(item)
-            self.plate_list.blockSignals(False)
-            if not plates:
-                self.mag_status.setText(
-                    f'No plates found (no well-named TIF files in {root})'
-                )
-            self._update_selected_plates()
-
-        self._run_in_background('plates', _scan, _done)
-
-    def _refresh_plates_deeper(self):
-        self._refresh_plates(max_depth=6)
-
-    def _update_selected_plates(self):
-        selected = []
-        for i in range(self.plate_list.count()):
-            item = self.plate_list.item(i)
-            if item.checkState() == Qt.Checked:
-                selected.append(item.data(Qt.UserRole))
-        self.state.set('plates', selected)
 
     def _on_detect_mag_clicked(self):
         selected = self.state.get('plates', [])
