@@ -55,10 +55,12 @@ class ProcessingWorker(QObject):
             self.finished.emit()
 
     def _run_pipeline(self):
+        import csv as csv_mod
         from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         plates = self._state['plates']
         total_plates = len(plates)
+        s = self._state
 
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
@@ -75,28 +77,67 @@ class ProcessingWorker(QObject):
                 self.log.emit(f'  No wells found in {plate_name}, skipping.')
                 continue
 
+            outdir = os.path.join(plate_path, 'processedImages')
+            os.makedirs(outdir, exist_ok=True)
+
+            # Index: one row per well, built up across stages
+            index = {}  # well_id → dict of paths
             well_items = list(wells.items())
             total_wells = len(well_items)
+
+            # ── Stage 1: Processing ──
+            self.log.emit(f'\n  --- Stage 1: Processing ({total_wells} wells) ---')
             for well_idx, (well_id, well_files) in enumerate(well_items):
                 if self._stop.is_set():
                     self.log.emit('Cancelled by user.')
                     return
-
-                self.progress.emit(
-                    plate_name, plate_idx, total_plates,
-                    well_id, 'Processing'
-                )
+                self.progress.emit(plate_name, plate_idx, total_plates, well_id, 'Processing')
                 self.well_progress.emit(well_idx, total_wells)
                 t0 = time.time()
 
                 try:
-                    # Extract mag suffix from well key (e.g. 'A1_02' → '_02')
                     m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
                     mag = m.group(1) if m else ''
-                    self._process_well(
-                        plate_path, plate_name,
-                        well_id, well_files, mag
+
+                    stack = self._load_stack(well_files)
+
+                    block_diam, fixed_thresh, dust_correction = self._get_params(s, mag)
+
+                    self.log.emit(f'  {well_id}: preprocessing + registration...')
+                    masks, biomass, od_mean = timelapse_processing(
+                        images=stack,
+                        block_diameter=block_diam,
+                        ntimepoints=stack.shape[2],
+                        shift_thresh=s['shiftThresh'],
+                        fixed_thresh=fixed_thresh,
+                        dust_correction=dust_correction,
+                        outdir=plate_path,
+                        filename=well_id,
+                        image_records=None,
+                        fftStride=s['fftStride'],
+                        downsample=s['downsample'],
+                        skip_overlay=True,
                     )
+                    del stack
+
+                    # Save biomass CSV
+                    biomass_path = os.path.join(outdir, f'{well_id}_biomass.csv')
+                    import pandas as pd
+                    pd.DataFrame({'frame': range(len(biomass)), 'biomass': biomass}).to_csv(
+                        biomass_path, index=False
+                    )
+
+                    index[well_id] = {
+                        'plate': plate_name,
+                        'plate_path': plate_path,
+                        'well': well_id,
+                        'mag': mag,
+                        'registered_raw': os.path.join(outdir, f'{well_id}_registered_raw.tif'),
+                        'processed': os.path.join(outdir, f'{well_id}_processed.tif'),
+                        'masks': os.path.join(outdir, f'{well_id}_masks.npz'),
+                        'biomass': biomass_path,
+                    }
+
                     elapsed = time.time() - t0
                     self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
                 except Exception as e:
@@ -104,12 +145,87 @@ class ProcessingWorker(QObject):
 
             self.well_progress.emit(total_wells, total_wells)
 
+            # ── Stage 2: Whole-image features ──
+            if s.get('wholeImageFeats'):
+                self.log.emit(f'\n  --- Stage 2: Whole-image features ---')
+                for well_idx, well_id in enumerate(index):
+                    if self._stop.is_set():
+                        return
+                    self.progress.emit(plate_name, plate_idx, total_plates, well_id, 'Whole-image')
+                    self.well_progress.emit(well_idx, len(index))
+                    row = index[well_id]
+                    try:
+                        self.log.emit(f'  {well_id}: whole-image features...')
+                        from multiWellAnalysis.wholeImage.runWholeImage import processWellWholeImage
+                        processWellWholeImage(
+                            plate_name, well_id,
+                            row['registered_raw'], row['processed'], outdir
+                        )
+                        row['whole_image_feats'] = os.path.join(outdir, f'{well_id}_wholeImageFeatures.csv')
+                    except Exception as e:
+                        self.log.emit(f'  {well_id} whole-image ERROR: {e}')
+                self.well_progress.emit(len(index), len(index))
+
+            # ── Stage 3: Colony tracking ──
+            if s.get('colonyTracking') or s.get('colonyFeats'):
+                self.log.emit(f'\n  --- Stage 3: Colony tracking ---')
+                for well_idx, well_id in enumerate(index):
+                    if self._stop.is_set():
+                        return
+                    self.progress.emit(plate_name, plate_idx, total_plates, well_id, 'Tracking')
+                    self.well_progress.emit(well_idx, len(index))
+                    row = index[well_id]
+                    try:
+                        self.log.emit(f'  {well_id}: colony tracking...')
+                        labels_path = self._run_tracking(plate_name, row)
+                        if labels_path:
+                            row['tracked_labels'] = labels_path
+                    except Exception as e:
+                        self.log.emit(f'  {well_id} tracking ERROR: {e}')
+                self.well_progress.emit(len(index), len(index))
+
+            # ── Stage 4: Colony features ──
+            if s.get('colonyFeats'):
+                self.log.emit(f'\n  --- Stage 4: Colony features ---')
+                for well_idx, well_id in enumerate(index):
+                    if self._stop.is_set():
+                        return
+                    self.progress.emit(plate_name, plate_idx, total_plates, well_id, 'Colony feats')
+                    self.well_progress.emit(well_idx, len(index))
+                    row = index[well_id]
+                    if 'tracked_labels' not in row:
+                        self.log.emit(f'  {well_id}: skipping (no tracked labels)')
+                        continue
+                    try:
+                        self.log.emit(f'  {well_id}: colony features...')
+                        colony_path, agg_path = self._run_colony_feats(plate_name, row)
+                        if colony_path:
+                            row['colony_feats'] = colony_path
+                            row['well_colony_feats'] = agg_path
+                    except Exception as e:
+                        self.log.emit(f'  {well_id} colony feats ERROR: {e}')
+                self.well_progress.emit(len(index), len(index))
+
+            # ── Save index.csv ──
+            index_path = os.path.join(outdir, 'index.csv')
+            if index:
+                all_keys = list(list(index.values())[0].keys())
+                # Collect all possible keys across all wells
+                for row in index.values():
+                    for k in row:
+                        if k not in all_keys:
+                            all_keys.append(k)
+                with open(index_path, 'w', newline='') as f:
+                    writer = csv_mod.DictWriter(f, fieldnames=all_keys)
+                    writer.writeheader()
+                    for row in index.values():
+                        writer.writerow(row)
+                self.log.emit(f'\n  Index saved: {index_path}')
+
             self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
-    def _process_well(self, plate_path, plate_name, well_id, well_files, mag=''):
-        from multiWellAnalysis.processing.analysis_main import timelapse_processing
-
-        # load images as float32 (timelapse_processing uses float32 internally)
+    def _load_stack(self, well_files):
+        """Load image stack as float32, ensure (H, W, T)."""
         if isinstance(well_files, str):
             raw = tifffile.imread(well_files)
             if raw.ndim == 2:
@@ -126,14 +242,12 @@ class ProcessingWorker(QObject):
             for fi in range(1, len(well_files)):
                 stack[fi] = tifffile.imread(well_files[fi]).astype(np.float32)
 
-        # ensure (H, W, T)
         if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
             stack = np.transpose(stack, (1, 2, 0))
+        return stack
 
-        s = self._state
-        outdir = os.path.join(plate_path, 'processedImages')
-
-        # Apply per-magnification parameter overrides
+    def _get_params(self, s, mag):
+        """Get processing params with per-mag overrides applied."""
         block_diam = s['blockDiam']
         fixed_thresh = s['fixedThresh']
         dust_correction = s['dustCorrection']
@@ -143,111 +257,68 @@ class ProcessingWorker(QObject):
             block_diam = overrides.get('blockDiam', block_diam)
             fixed_thresh = overrides.get('fixedThresh', fixed_thresh)
             dust_correction = overrides.get('dustCorrection', dust_correction)
+        return block_diam, fixed_thresh, dust_correction
 
-        # Step 1: image processing
-        self.log.emit(f'  {well_id}: preprocessing + registration...')
-        masks, biomass, od_mean = timelapse_processing(
-            images=stack,
-            block_diameter=block_diam,
-            ntimepoints=stack.shape[2],
-            shift_thresh=s['shiftThresh'],
-            fixed_thresh=fixed_thresh,
-            dust_correction=dust_correction,
-            outdir=plate_path,
-            filename=well_id,
-            image_records=None,
-            fftStride=s['fftStride'],
-            downsample=s['downsample'],
-        )
-
-        # Step 2: colony tracking
-        if s.get('colonyTracking') or s.get('colonyFeats'):
-            self.log.emit(f'  {well_id}: colony tracking...')
-            self._run_tracking(plate_name, outdir, well_id, masks)
-
-        # Step 3: colony features
-        if s.get('colonyFeats'):
-            self.log.emit(f'  {well_id}: colony feature extraction...')
-            self._run_colony_feats(plate_name, outdir, well_id)
-
-        # Step 4: whole-image features
-        if s.get('wholeImageFeats'):
-            self.log.emit(f'  {well_id}: whole-image features...')
-            self._run_whole_image_feats(plate_name, outdir, well_id)
-
-    def _run_tracking(self, plate_name, outdir, well_id, masks):
-        raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
-        mask_path = os.path.join(outdir, f'{well_id}_masks.npz')
+    def _run_tracking(self, plate_name, row):
+        """Run colony tracking using paths from the index row. Returns labels path or None."""
+        raw_path = row['registered_raw']
+        mask_path = row['masks']
+        well_id = row['well']
 
         if not os.path.exists(raw_path) or not os.path.exists(mask_path):
             self.log.emit(f'    Skipping tracking: missing raw/mask files')
-            return
+            return None
 
         raw_stack = tifffile.imread(raw_path)
         mask_data = np.load(mask_path)
         mask_key = 'masks' if 'masks' in mask_data else list(mask_data.keys())[0]
         mask_stack = mask_data[mask_key]
 
-        # find seed/peak frames from mask area
-        if mask_stack.ndim == 3:
-            n_frames = mask_stack.shape[-1] if mask_stack.shape[-1] < mask_stack.shape[0] else mask_stack.shape[0]
-            mask_sums = np.array([mask_stack[..., t].sum() for t in range(mask_stack.shape[-1])])
-        else:
-            mask_sums = np.array([mask_stack[t].sum() for t in range(mask_stack.shape[0])])
-
+        n_frames = mask_stack.shape[-1] if mask_stack.ndim == 3 and mask_stack.shape[-1] < mask_stack.shape[0] else mask_stack.shape[0]
+        mask_sums = np.array([mask_stack[..., t].sum() for t in range(n_frames)])
         peak_frame = int(np.argmax(mask_sums))
         seed_frame = max(0, peak_frame // 3)
 
-        try:
-            from multiWellAnalysis.colony.runTrackingMpTraining import trackColoniesAllFrames
-            trackColoniesAllFrames(
-                raw_stack, mask_stack, seed_frame, peak_frame,
-                plate_name, well_id
-            )
-        except ImportError:
-            self.log.emit(f'    trackColoniesAllFrames not available')
+        from multiWellAnalysis.colony.runTrackingMpTraining import trackColoniesAllFrames
+        trackColoniesAllFrames(
+            raw_stack, mask_stack, seed_frame, peak_frame,
+            plate_name, well_id
+        )
 
-    def _run_colony_feats(self, plate_name, outdir, well_id):
-        try:
-            from multiWellAnalysis.colony.runColonyFeatsTrackedMP import extractTrackedColonyFeatures
-            from multiWellAnalysis.colony.wellAggMicrons import aggregateWellFeatures
+        # Find the saved tracked labels file
+        outdir = os.path.dirname(raw_path)
+        labels_paths = glob.glob(os.path.join(outdir, f'{well_id}_trackedLabels_*.npz'))
+        return labels_paths[0] if labels_paths else None
 
-            labels_paths = glob.glob(os.path.join(outdir, f'{well_id}_trackedLabels_*.npz'))
-            raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
-            if not labels_paths or not os.path.exists(raw_path):
-                self.log.emit(f'    Skipping colony feats: missing files')
-                return
+    def _run_colony_feats(self, plate_name, row):
+        """Run colony feature extraction using paths from the index row. Returns (colony_path, agg_path) or (None, None)."""
+        from multiWellAnalysis.colony.runColonyFeatsTrackedMP import extractTrackedColonyFeatures
+        from multiWellAnalysis.colony.wellAggMicrons import aggregateWellFeatures
 
-            data = np.load(labels_paths[0])
-            raw_stack = tifffile.imread(raw_path)
-            labels = data['labels']
-            frames = data['frames']
-            was_tracked = data.get('wasTracked', np.ones(len(frames), dtype=bool))
+        well_id = row['well']
+        labels_path = row['tracked_labels']
+        raw_path = row['registered_raw']
+        outdir = os.path.dirname(raw_path)
 
-            colony_df = extractTrackedColonyFeatures(
-                raw_stack, labels, frames,
-                plate_name, well_id, was_tracked,
-                labels_paths[0], raw_path
-            )
-            all_frames = list(range(raw_stack.shape[0]))
-            agg_df = aggregateWellFeatures(colony_df, all_frames, plate_name, well_id)
+        data = np.load(labels_path)
+        raw_stack = tifffile.imread(raw_path)
+        labels = data['labels']
+        frames = data['frames']
+        was_tracked = data.get('wasTracked', np.ones(len(frames), dtype=bool))
 
-            colony_df.to_csv(os.path.join(outdir, f'{well_id}_colonyFeatures.csv'), index=False)
-            agg_df.to_csv(os.path.join(outdir, f'{well_id}_wellColonyFeatures.csv'), index=False)
-        except Exception as e:
-            self.log.emit(f'    Colony feats error: {e}')
+        colony_df = extractTrackedColonyFeatures(
+            raw_stack, labels, frames,
+            plate_name, well_id, was_tracked,
+            labels_path, raw_path
+        )
+        all_frames = list(range(raw_stack.shape[0]))
+        agg_df = aggregateWellFeatures(colony_df, all_frames, plate_name, well_id)
 
-    def _run_whole_image_feats(self, plate_name, outdir, well_id):
-        try:
-            from multiWellAnalysis.wholeImage.runWholeImage import processWellWholeImage
-            raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
-            proc_path = os.path.join(outdir, f'{well_id}_processed.tif')
-            if not os.path.exists(raw_path):
-                self.log.emit(f'    Skipping whole-image: missing raw')
-                return
-            processWellWholeImage(plate_name, well_id, raw_path, proc_path, outdir)
-        except Exception as e:
-            self.log.emit(f'    Whole-image feats error: {e}')
+        colony_path = os.path.join(outdir, f'{well_id}_colonyFeatures.csv')
+        agg_path = os.path.join(outdir, f'{well_id}_wellColonyFeatures.csv')
+        colony_df.to_csv(colony_path, index=False)
+        agg_df.to_csv(agg_path, index=False)
+        return colony_path, agg_path
 
     def _discover_wells(self, plate_path):
         """Find wells and their image files, filtered by selected magnifications.
