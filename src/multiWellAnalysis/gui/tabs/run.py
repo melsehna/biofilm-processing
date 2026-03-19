@@ -90,7 +90,7 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
 
 
 def _track_one_well(plate_name, row):
-    """Run colony tracking on a single well. Returns updated row dict."""
+    """Run colony tracking on a single well using trackAndSave."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
@@ -105,48 +105,44 @@ def _track_one_well(plate_name, row):
             return {'well': well_id, 'status': 'skipped', 'reason': 'missing files'}
 
         t0 = time.perf_counter()
+
+        # Load raw stack: tifffile returns (T, H, W), convert to (H, W, T)
         raw_stack = tifffile.imread(raw_path)
+        if raw_stack.ndim == 3 and raw_stack.shape[0] < raw_stack.shape[1]:
+            raw_stack = np.transpose(raw_stack, (1, 2, 0))
+
         mask_data = np.load(mask_path)
         mask_key = 'masks' if 'masks' in mask_data else list(mask_data.keys())[0]
         mask_stack = mask_data[mask_key]
 
-        n_frames = mask_stack.shape[-1] if mask_stack.ndim == 3 and mask_stack.shape[-1] < mask_stack.shape[0] else mask_stack.shape[0]
-
-        # Find seed frame from biomass if available
-        seed_frame = None
-        peak_frame = None
+        # Load biomass for seed frame detection
+        biomass = None
         if biomass_path and os.path.exists(biomass_path):
             bdf = pd.read_csv(biomass_path)
-            if 'biomass' in bdf.columns and len(bdf):
+            if 'biomass' in bdf.columns:
                 biomass = bdf['biomass'].values
-                peak_frame = int(np.argmax(biomass))
-                # First frame where biomass exceeds threshold
-                for t in range(len(biomass)):
-                    if biomass[t] >= 0.005:
-                        seed_frame = t
-                        break
-
-        if seed_frame is None:
-            mask_sums = np.array([mask_stack[..., t].sum() for t in range(n_frames)])
-            peak_frame = int(np.argmax(mask_sums))
-            seed_frame = max(0, peak_frame // 3)
-
-        from multiWellAnalysis.colony.runTrackingMpTraining import trackColoniesAllFrames
-        trackColoniesAllFrames(
-            raw_stack, mask_stack, seed_frame, peak_frame,
-            plate_name, well_id
-        )
 
         outdir = os.path.dirname(raw_path)
-        labels_paths = glob.glob(os.path.join(outdir, f'{well_id}_trackedLabels_*.npz'))
+
+        from multiWellAnalysis.colony.runTrackingGUI import trackAndSave
+        npz_path = trackAndSave(
+            raw_stack, mask_stack, outdir,
+            plate_name, well_id,
+            biomass=biomass,
+        )
+
         elapsed = time.perf_counter() - t0
 
-        return {
-            'well': well_id,
-            'status': 'done',
-            'elapsed': elapsed,
-            'tracked_labels': labels_paths[0] if labels_paths else '',
-        }
+        if npz_path:
+            return {
+                'well': well_id,
+                'status': 'done',
+                'elapsed': elapsed,
+                'tracked_labels': npz_path,
+            }
+        else:
+            return {'well': well_id, 'status': 'skipped', 'reason': 'no tracking output'}
+
     except Exception as e:
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
@@ -159,19 +155,19 @@ def _whole_image_one_well(plate_name, row):
 
     well_id = row['well']
     try:
-        from multiWellAnalysis.wholeImage.runWholeImage import processWellWholeImage
-        outdir = os.path.dirname(row['registered_raw'])
+        from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
+        outdir = os.path.dirname(row['processed'])
         t0 = time.perf_counter()
-        processWellWholeImage(
-            plate_name, well_id,
-            row['registered_raw'], row['processed'], outdir
+        status = extractWholeImageFeatures(
+            row['processed'], plate_name, well_id, outdir
         )
         elapsed = time.perf_counter() - t0
+        feats_path = os.path.join(outdir, f'{well_id}_wholeImage.csv')
         return {
             'well': well_id,
-            'status': 'done',
+            'status': 'done' if os.path.exists(feats_path) else status,
             'elapsed': elapsed,
-            'whole_image_feats': os.path.join(outdir, f'{well_id}_wholeImageFeatures.csv'),
+            'whole_image_feats': feats_path if os.path.exists(feats_path) else '',
         }
     except Exception as e:
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
@@ -185,40 +181,40 @@ def _colony_feats_one_well(plate_name, row):
 
     well_id = row['well']
     try:
-        from multiWellAnalysis.colony.runColonyFeatsTrackedMP import extractTrackedColonyFeatures
-        from multiWellAnalysis.colony.wellAggMicrons import aggregateWellFeatures
+        from multiWellAnalysis.colony.runColonyFeatsGUI import extractAndSave
 
         labels_path = row['tracked_labels']
         raw_path = row['registered_raw']
         outdir = os.path.dirname(raw_path)
 
         data = np.load(labels_path)
+        # Load raw: tifffile returns (T, H, W), convert to (H, W, T)
         raw_stack = tifffile.imread(raw_path)
+        if raw_stack.ndim == 3 and raw_stack.shape[0] < raw_stack.shape[1]:
+            raw_stack = np.transpose(raw_stack, (1, 2, 0))
+
         labels = data['labels']
         frames = data['frames']
-        was_tracked = data.get('wasTracked', np.ones(len(frames), dtype=bool))
+        was_tracked = bool(data['wasTracked']) if 'wasTracked' in data else True
 
         t0 = time.perf_counter()
-        colony_df = extractTrackedColonyFeatures(
+        colony_df, well_df = extractAndSave(
             raw_stack, labels, frames,
             plate_name, well_id, was_tracked,
-            labels_path, raw_path
+            labels_path, raw_path,
+            outdir=outdir,
         )
-        all_frames = list(range(raw_stack.shape[0]))
-        agg_df = aggregateWellFeatures(colony_df, all_frames, plate_name, well_id)
+        elapsed = time.perf_counter() - t0
 
         colony_path = os.path.join(outdir, f'{well_id}_colonyFeatures.csv')
         agg_path = os.path.join(outdir, f'{well_id}_wellColonyFeatures.csv')
-        colony_df.to_csv(colony_path, index=False)
-        agg_df.to_csv(agg_path, index=False)
-        elapsed = time.perf_counter() - t0
 
         return {
             'well': well_id,
             'status': 'done',
             'elapsed': elapsed,
-            'colony_feats': colony_path,
-            'well_colony_feats': agg_path,
+            'colony_feats': colony_path if colony_df is not None else '',
+            'well_colony_feats': agg_path if well_df is not None else '',
         }
     except Exception as e:
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
