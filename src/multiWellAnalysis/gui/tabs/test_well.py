@@ -358,12 +358,33 @@ class TestWellTab(QWidget):
                 self._run_log.emit('Step 2/3: Colony tracking...')
                 self._run_progress.emit('Tracking', 3, 5)
 
-                # find seed/peak frames
+                from multiWellAnalysis.colony.runTrackingGUI import (
+                    trackColoniesAllFrames, findSeedFrame,
+                )
+
+                # Compute biomass (mean of masked region per frame)
+                biomass = np.array([
+                    registered_raw[..., t][masks[..., t]].mean()
+                    if masks[..., t].any() else 0.0
+                    for t in range(ntimepoints)
+                ])
+
+                # Find seed frame using biomass (same logic as trackAndSave)
+                seed_frame = findSeedFrame(biomass)
+                if seed_frame is None:
+                    # Fall back to normalized mask area
+                    mask_areas = np.array([masks[..., t].sum() for t in range(ntimepoints)], dtype=float)
+                    if mask_areas.max() > 0:
+                        seed_frame = findSeedFrame(mask_areas / mask_areas.max())
+
+                if seed_frame is None:
+                    seed_frame = 0
+
                 mask_sums = np.array([masks[..., t].sum() for t in range(ntimepoints)])
                 peak_frame = int(np.argmax(mask_sums))
-                seed_frame = max(0, peak_frame // 3)
 
-                from multiWellAnalysis.colony.runTrackingGUI import trackColoniesAllFrames
+                self._run_log.emit(f'  Seed frame: {seed_frame}, Peak frame: {peak_frame}')
+
                 labels_by_frame, _, reason, frames = trackColoniesAllFrames(
                     registered_raw, masks, seed_frame, peak_frame,
                 )
