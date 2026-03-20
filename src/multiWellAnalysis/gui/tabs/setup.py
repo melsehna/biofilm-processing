@@ -4,8 +4,57 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
+    QInputDialog,
 )
 from PySide6.QtCore import Qt, Signal
+
+
+# Directories that contain pipeline outputs, never raw images.
+_OUTPUT_DIR_NAMES = {
+    'processedimages', 'processed_images', 'processed_images_py',
+    'numerical_data', 'numerical_data_py',
+}
+
+
+def _detect_mag_suffixes_from_tifs(root, suffixes, max_depth=2):
+    """Check which magnification suffixes appear in TIF filenames under *root*.
+
+    For each suffix in *suffixes* (e.g. {'_02', '_03', '_04', '_05'}), scans
+    directories up to *max_depth* levels deep and stops checking a suffix as
+    soon as one matching file is found.  Skips output directories.
+    Returns the set of suffixes found.
+    """
+    remaining = set(suffixes)
+    found = set()
+
+    def _scan_dir(directory, depth):
+        nonlocal remaining
+        try:
+            entries = list(os.scandir(directory))
+        except (PermissionError, OSError):
+            return
+        # Check files at this level
+        for entry in entries:
+            if not remaining:
+                return
+            if entry.is_file() and entry.name.lower().endswith('.tif'):
+                for suffix in list(remaining):
+                    if suffix in entry.name:
+                        found.add(suffix)
+                        remaining.discard(suffix)
+                        if not remaining:
+                            return
+        # Recurse into subdirectories (skip output dirs)
+        if depth < max_depth:
+            for entry in entries:
+                if not remaining:
+                    return
+                if entry.is_dir() and not entry.name.startswith('.') \
+                        and entry.name.lower() not in _OUTPUT_DIR_NAMES:
+                    _scan_dir(entry.path, depth + 1)
+
+    _scan_dir(root, 0)
+    return found
 
 
 class SetupTab(QWidget):
@@ -33,6 +82,15 @@ class SetupTab(QWidget):
         btn_row = QHBoxLayout()
         self.add_btn = QPushButton('Add plate folders...')
         btn_row.addWidget(self.add_btn)
+        self.add_parent_btn = QPushButton('Add from parent folder...')
+        self.add_parent_btn.setToolTip(
+            'Select a root directory and add all its sub-folders as plates\n'
+            '(e.g. select the experiment folder containing multiple drawer directories)'
+        )
+        btn_row.addWidget(self.add_parent_btn)
+        self.paste_btn = QPushButton('Paste path...')
+        self.paste_btn.setToolTip('Type or paste a path to a plate folder (useful for network mounts)')
+        btn_row.addWidget(self.paste_btn)
         self.remove_btn = QPushButton('Remove selected')
         self.remove_btn.setEnabled(False)
         btn_row.addWidget(self.remove_btn)
@@ -86,6 +144,8 @@ class SetupTab(QWidget):
 
     def _connect_signals(self):
         self.add_btn.clicked.connect(self._add_plates)
+        self.add_parent_btn.clicked.connect(self._add_from_parent)
+        self.paste_btn.clicked.connect(self._paste_path)
         self.remove_btn.clicked.connect(self._remove_selected)
         self.clear_btn.clicked.connect(self._clear_all)
         self.plate_list.itemSelectionChanged.connect(self._update_remove_btn)
@@ -100,27 +160,88 @@ class SetupTab(QWidget):
         )
 
     def _add_plates(self):
-        """Add plate folders — supports multi-select."""
-        from PySide6.QtWidgets import QListView, QTreeView, QAbstractItemView
-        dlg = QFileDialog(self, 'Select plate folder(s)')
-        dlg.setFileMode(QFileDialog.Directory)
-        dlg.setOption(QFileDialog.ShowDirsOnly, True)
-        # Force Qt's own dialog (not native) so we can modify selection mode
-        dlg.setOption(QFileDialog.DontUseNativeDialog, True)
-        for view in dlg.findChildren(QListView):
-            view.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        for view in dlg.findChildren(QTreeView):
-            view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        """Add plate folders using the native dialog.
 
-        if dlg.exec():
-            existing = {
-                self.plate_list.item(i).data(Qt.UserRole)
-                for i in range(self.plate_list.count())
-            }
-            for path in dlg.selectedFiles():
-                if path not in existing:
-                    self._add_plate_item(path)
-                    existing.add(path)
+        The native macOS dialog only supports single-folder selection,
+        so we loop until the user cancels, allowing them to add plates
+        one at a time.  This preserves access to SMB/network mounts
+        that the non-native Qt dialog cannot see.
+        """
+        existing = {
+            self.plate_list.item(i).data(Qt.UserRole)
+            for i in range(self.plate_list.count())
+        }
+        added_any = False
+        while True:
+            start = self.state.get('lastBrowseDir', '')
+            path = QFileDialog.getExistingDirectory(
+                self, 'Select a plate folder (Cancel when done)', start,
+            )
+            if not path:
+                break  # user cancelled — done adding
+            self.state.set('lastBrowseDir', os.path.dirname(path))
+            if path not in existing:
+                self._add_plate_item(path)
+                existing.add(path)
+                added_any = True
+        if added_any:
+            self._sync_state()
+
+    def _add_from_parent(self):
+        """Select a parent directory and add all its sub-folders as plates.
+
+        Useful for experiments stored as:
+            root/
+              drawer1/
+                plate1/   ← images here
+              drawer2/
+                plate1/   ← images here
+        The user picks 'root' and every immediate child directory is added.
+        """
+        start = self.state.get('lastBrowseDir', '')
+        parent = QFileDialog.getExistingDirectory(
+            self, 'Select parent folder containing plate directories', start,
+        )
+        if not parent:
+            return
+        self.state.set('lastBrowseDir', parent)
+        existing = {
+            self.plate_list.item(i).data(Qt.UserRole)
+            for i in range(self.plate_list.count())
+        }
+        added_any = False
+        try:
+            children = sorted(os.listdir(parent))
+        except (PermissionError, OSError):
+            return
+        for name in children:
+            path = os.path.join(parent, name)
+            if os.path.isdir(path) and not name.startswith('.') and path not in existing:
+                self._add_plate_item(path)
+                existing.add(path)
+                added_any = True
+        if added_any:
+            self._sync_state()
+
+    def _paste_path(self):
+        """Add a plate folder by typing or pasting a path directly."""
+        text, ok = QInputDialog.getText(
+            self, 'Paste plate folder path',
+            'Enter full path to plate folder:',
+        )
+        if not ok or not text.strip():
+            return
+        path = os.path.expanduser(text.strip())
+        if not os.path.isdir(path):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, 'Not found', f'Directory not found:\n{path}')
+            return
+        existing = {
+            self.plate_list.item(i).data(Qt.UserRole)
+            for i in range(self.plate_list.count())
+        }
+        if path not in existing:
+            self._add_plate_item(path)
             self._sync_state()
 
     def _add_plate_item(self, path):
@@ -154,7 +275,8 @@ class SetupTab(QWidget):
         self.clear_btn.setEnabled(len(plates) > 0)
 
     def _browse_outdir(self):
-        path = QFileDialog.getExistingDirectory(self, 'Select Output Directory')
+        start = self.state.get('outputDir', '') or self.state.get('lastBrowseDir', '')
+        path = QFileDialog.getExistingDirectory(self, 'Select Output Directory', start)
         if path:
             self.outdir_edit.setText(path)
             self.state.set('outputDir', path)
@@ -183,50 +305,40 @@ class SetupTab(QWidget):
         else:
             self.state.set('magnification', selected)
 
-    # suffix → human-readable magnification
+    # suffix → human-readable magnification (and reverse)
     MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
+    _MAG_LABEL_TO_SUFFIX = {v: k for k, v in MAG_SUFFIXES.items()}  # '4x' → '_02'
 
     def _scan_magnifications_async(self, plates):
         """Detect magnifications (background thread).
 
-        One os.listdir call on the first checked plate.  Scan filenames for
-        known suffixes (_02=4x, _03=10x, _04=20x, _05=40x).
+        First tries to parse magnifications from directory names (instant,
+        no I/O into subdirs).  Falls back to scanning a sample of TIF
+        filenames if directory names don't contain magnification labels.
         """
         def _scan():
             all_mags = set()
             if not plates:
                 return all_mags, 'no plates'
 
+            # --- Fast path: parse directory names ---
+            # e.g. "241010_..._4x_10x_20x_40x_Discontinuous_Drawer1 ..."
             for plate_path in plates[:3]:
-                # Collect TIF names from plate_path, or one level down
-                tif_names = []
-                try:
-                    names = os.listdir(plate_path)
-                except (PermissionError, OSError):
-                    continue
-                tif_names = [n for n in names if n.lower().endswith('.tif')]
-                if not tif_names:
-                    # Look one level down (drawer → plate)
-                    for child in names:
-                        child_path = os.path.join(plate_path, child)
-                        try:
-                            child_names = os.listdir(child_path)
-                            tif_names = [n for n in child_names if n.lower().endswith('.tif')]
-                            if tif_names:
-                                break
-                        except (PermissionError, OSError):
-                            continue
+                dirname = os.path.basename(plate_path)
+                for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
+                    # Match standalone magnification labels (word boundary)
+                    if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', dirname):
+                        all_mags.add(suffix)
+            if all_mags:
+                return all_mags, 'from directory names'
 
-                for name in tif_names:
-                    m = re.match(r'^[A-P]\d+(_\d+)_', name)
-                    if m:
-                        suffix = m.group(1)
-                        if suffix in self.MAG_SUFFIXES:
-                            all_mags.add(suffix)
-                    if len(all_mags) == len(self.MAG_SUFFIXES):
-                        break  # found all possible magnifications
-                if all_mags:
-                    return all_mags, f'from filenames in {os.path.basename(plate_path)}'
+            # --- Slow path: check for one TIF per suffix ---
+            for plate_path in plates[:3]:
+                found = _detect_mag_suffixes_from_tifs(
+                    plate_path, set(self.MAG_SUFFIXES), max_depth=2,
+                )
+                if found:
+                    return found, f'from filenames in {os.path.basename(plate_path)}'
 
             return all_mags, 'no magnifications found'
 

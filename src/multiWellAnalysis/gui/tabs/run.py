@@ -52,6 +52,10 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
         if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
             stack = np.transpose(stack, (1, 2, 0))
 
+        # outdir already points to <plate_outdir>/processedImages;
+        # timelapse_processing expects the *parent* and creates
+        # processedImages/ inside it.
+        plate_outdir = os.path.dirname(outdir)
         masks, biomass, od_mean = timelapse_processing(
             images=stack,
             block_diameter=params['blockDiam'],
@@ -59,7 +63,7 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
             shift_thresh=params['shiftThresh'],
             fixed_thresh=params['fixedThresh'],
             dust_correction=params['dustCorrection'],
-            outdir=plate_path,
+            outdir=plate_outdir,
             filename=well_id,
             image_records=None,
             fftStride=params.get('fftStride', 6),
@@ -225,6 +229,65 @@ def _colony_feats_one_well(plate_name, row):
 
 # ── Well discovery ──
 
+# Directories that contain pipeline outputs, never raw images.
+_OUTPUT_DIR_NAMES = {
+    'processedimages', 'processed_images', 'processed_images_py',
+    'numerical_data', 'numerical_data_py',
+}
+
+
+def _is_output_dir(name):
+    return name.lower() in _OUTPUT_DIR_NAMES
+
+
+def _has_raw_tif(directory):
+    """True if *directory* contains at least one raw BF .tif (not a processed stack)."""
+    try:
+        for entry in os.scandir(directory):
+            if not entry.is_file() or not entry.name.lower().endswith('.tif'):
+                continue
+            # Raw images match WELL_MAG_..._NNN.tif (e.g. A1_03_1_1_Bright Field_001.tif)
+            # Processed outputs match WELL_processed.tif / WELL_registered_raw.tif etc.
+            if re.match(r'^[A-P]\d+[_.]', entry.name) and 'processed' not in entry.name.lower() \
+                    and 'registered' not in entry.name.lower():
+                return True
+    except (PermissionError, OSError):
+        pass
+    return False
+
+
+def _resolve_tif_dir(root, max_depth=2):
+    """Find the directory containing raw TIF images, up to *max_depth* levels below *root*.
+
+    Skips known output directories (processedImages, Numerical_data_py, etc.)
+    and ignores processed/registered stacks.  Uses os.scandir to stay fast on
+    network mounts.  Returns the resolved directory path, or *root* if nothing
+    is found.
+    """
+    if _has_raw_tif(root):
+        return root
+
+    # Walk one level at a time up to max_depth
+    dirs_at_level = [root]
+    for _ in range(max_depth):
+        next_level = []
+        for d in dirs_at_level:
+            try:
+                next_level.extend(
+                    e.path for e in os.scandir(d)
+                    if e.is_dir() and not e.name.startswith('.')
+                    and not _is_output_dir(e.name)
+                )
+            except (PermissionError, OSError):
+                continue
+        for d in next_level:
+            if _has_raw_tif(d):
+                return d
+        dirs_at_level = next_level
+
+    return root
+
+
 def discover_wells(plate_path, mag_setting='all'):
     """Find wells and their BF image files, filtered by selected magnifications.
 
@@ -232,22 +295,16 @@ def discover_wells(plate_path, mag_setting='all'):
     resolved_plate_path is the directory that actually contains the TIF files
     (may be plate_path itself or a child directory).
     """
-    resolved = plate_path
-    tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
-    if not tif_files:
-        try:
-            for child in os.listdir(plate_path):
-                child_path = os.path.join(plate_path, child)
-                child_tifs = sorted(glob.glob(os.path.join(child_path, '*.tif')))
-                if child_tifs:
-                    tif_files = child_tifs
-                    resolved = child_path
-                    break
-        except (PermissionError, OSError):
-            pass
+    resolved = _resolve_tif_dir(plate_path, max_depth=2)
+    tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
 
-    bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
-    candidates = bf_files if bf_files else tif_files
+    # Filter out processed/registered stacks that may live alongside raw images
+    raw_tifs = [f for f in tif_files
+                if '_processed' not in os.path.basename(f).lower()
+                and '_registered' not in os.path.basename(f).lower()]
+
+    bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
+    candidates = bf_files if bf_files else raw_tifs
 
     groups = defaultdict(list)
     for f in candidates:
@@ -304,6 +361,7 @@ class ProcessingWorker(QObject):
         plates = s['plates']
         total_plates = len(plates)
         n_workers = s.get('workers', 4)
+        output_root = s.get('outputDir', '')
 
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
@@ -324,8 +382,15 @@ class ProcessingWorker(QObject):
                 self.log.emit(f'  No wells found, skipping.')
                 continue
 
-            outdir = os.path.join(resolved_plate, 'processedImages')
+            # Output goes under the user-specified output directory,
+            # falling back to the resolved plate dir if none was set.
+            if output_root:
+                plate_outdir = os.path.join(output_root, plate_name)
+            else:
+                plate_outdir = resolved_plate
+            outdir = os.path.join(plate_outdir, 'processedImages')
             os.makedirs(outdir, exist_ok=True)
+            self.log.emit(f'  Output dir: {outdir}')
 
             index = {}
             well_items = list(wells.items())

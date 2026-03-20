@@ -29,22 +29,19 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    tif_files = sorted(glob.glob(os.path.join(plate_dir, '*.tif')))
-    if not tif_files:
-        # Look one level down (drawer → plate)
-        try:
-            for child in os.listdir(plate_dir):
-                child_tifs = sorted(glob.glob(os.path.join(plate_dir, child, '*.tif')))
-                if child_tifs:
-                    tif_files = child_tifs
-                    break
-        except (PermissionError, OSError):
-            pass
+    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir
+    resolved = _resolve_tif_dir(plate_dir, max_depth=2)
+    tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
 
-    bf_files = [f for f in tif_files if 'Bright Field' in f or 'Bright_Field' in f]
+    # Filter out processed/registered stacks
+    raw_tifs = [f for f in tif_files
+                if '_processed' not in os.path.basename(f).lower()
+                and '_registered' not in os.path.basename(f).lower()]
+
+    bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
 
     # Try magnification-aware grouping
-    candidates = bf_files if bf_files else tif_files
+    candidates = bf_files if bf_files else raw_tifs
     if candidates:
         groups = defaultdict(lambda: defaultdict(list))
         for f in candidates:

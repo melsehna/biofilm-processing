@@ -363,11 +363,9 @@ class TestWellTab(QWidget):
                 peak_frame = int(np.argmax(mask_sums))
                 seed_frame = max(0, peak_frame // 3)
 
-                from multiWellAnalysis.colony.runTrackingMpTraining import trackColoniesAllFrames
-                plate_name = os.path.basename(plate_path)
+                from multiWellAnalysis.colony.runTrackingGUI import trackColoniesAllFrames
                 labels_by_frame, _, reason, frames = trackColoniesAllFrames(
                     registered_raw, masks, seed_frame, peak_frame,
-                    plate_name, well_id,
                 )
 
                 if stop.is_set():
