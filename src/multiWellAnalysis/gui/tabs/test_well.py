@@ -272,10 +272,11 @@ class TestWellTab(QWidget):
 
         def _work():
             try:
-                import cv2
-                from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
-                from multiWellAnalysis.processing.registration import registerStackNormblur
-                from multiWellAnalysis.processing.segmentation import compute_mask_inplace, dust_correct_inplace
+                import tempfile
+                from multiWellAnalysis.processing.analysis_main import timelapse_processing
+                from multiWellAnalysis.colony.runTrackingGUI import (
+                    trackColoniesAllFrames, findSeedFrame,
+                )
 
                 if stop.is_set():
                     self._run_finished.emit(None)
@@ -313,76 +314,63 @@ class TestWellTab(QWidget):
                     self._run_finished.emit(None)
                     return
 
-                # ── Step 1: Preprocess + register (in memory, no file I/O) ──
-                self._run_progress.emit('Preprocessing', 1, 5)
+                # ── Step 1: Run the real pipeline (same as batch processing) ──
+                self._run_progress.emit('Processing', 1, 5)
                 ntimepoints = stack.shape[2]
+                self._run_log.emit(f'Step 1/3: Processing {ntimepoints} frames...')
 
-                imax = stack.max()
-                if imax > 0:
-                    stack /= imax
-
-                sigma = 2.0
-                block_diam = s['blockDiam']
-                norm_blur = np.empty(stack.shape, dtype=np.float32)
-                for t in range(ntimepoints):
-                    if stop.is_set():
-                        self._run_finished.emit(None)
-                        return
-                    self._run_log.emit(f'Step 1/3: Normalizing frame {t+1}/{ntimepoints}')
-                    r = normalize_local_contrast(stack[..., t], block_diam)
-                    norm_blur[..., t] = cv2.GaussianBlur(
-                        r, (0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    masks, biomass, _ = timelapse_processing(
+                        images=stack,
+                        block_diameter=s['blockDiam'],
+                        ntimepoints=ntimepoints,
+                        shift_thresh=s['shiftThresh'],
+                        fixed_thresh=s['fixedThresh'],
+                        dust_correction=s['dustCorrection'],
+                        outdir=tmpdir,
+                        filename=well_id,
+                        image_records=None,
+                        fftStride=s.get('fftStride', 6),
+                        downsample=s.get('downsample', 4),
+                        skip_overlay=True,
+                        workers=1,
+                        progress_fn=lambda msg: self._run_log.emit(f'  {msg}'),
                     )
-
-                self._run_log.emit('Step 1/3: Registering...')
-                self._run_progress.emit('Registering', 2, 5)
-                registered_norm, registered_raw, _ = registerStackNormblur(
-                    norm_blur, stack,
-                    s['shiftThresh'],
-                    fftStride=s.get('fftStride', 6),
-                    downsample=s.get('downsample', 4),
-                )
-
-                # Compute masks
-                self._run_log.emit('Step 1/3: Computing masks...')
-                masks = np.zeros(registered_norm.shape, dtype=bool)
-                compute_mask_inplace(registered_norm, masks, s['fixedThresh'])
-                if s['dustCorrection']:
-                    dust_correct_inplace(masks)
+                    # stack was modified in-place by timelapse_processing
+                    # (scaled, registered, cropped) — it IS the registered raw now.
+                    # However timelapse_processing saves cropped stacks to disk;
+                    # read them back so we have the cropped versions.
+                    import os as _os
+                    proc_dir = _os.path.join(tmpdir, 'processedImages')
+                    raw_path = _os.path.join(proc_dir, f'{well_id}_registered_raw.tif')
+                    if _os.path.exists(raw_path):
+                        registered_raw = tifffile.imread(raw_path)
+                        if registered_raw.ndim == 3 and registered_raw.shape[0] < registered_raw.shape[1]:
+                            registered_raw = np.transpose(registered_raw, (1, 2, 0))
+                    else:
+                        # Fallback: use the in-place modified stack
+                        registered_raw = stack
 
                 if stop.is_set():
                     self._run_finished.emit(None)
                     return
 
+                ntimepoints = masks.shape[2]
+
                 # ── Step 2: Colony tracking (in memory) ──
                 self._run_log.emit('Step 2/3: Colony tracking...')
                 self._run_progress.emit('Tracking', 3, 5)
 
-                from multiWellAnalysis.colony.runTrackingGUI import (
-                    trackColoniesAllFrames, findSeedFrame,
-                )
-
-                # Compute biomass (mean of masked region per frame)
-                biomass = np.array([
-                    registered_raw[..., t][masks[..., t]].mean()
-                    if masks[..., t].any() else 0.0
-                    for t in range(ntimepoints)
-                ])
-
                 # Find seed frame using biomass (same logic as trackAndSave)
                 seed_frame = findSeedFrame(biomass)
                 if seed_frame is None:
-                    # Fall back to normalized mask area
                     mask_areas = np.array([masks[..., t].sum() for t in range(ntimepoints)], dtype=float)
                     if mask_areas.max() > 0:
                         seed_frame = findSeedFrame(mask_areas / mask_areas.max())
-
                 if seed_frame is None:
                     seed_frame = 0
 
-                mask_sums = np.array([masks[..., t].sum() for t in range(ntimepoints)])
-                peak_frame = int(np.argmax(mask_sums))
-
+                peak_frame = int(np.argmax([masks[..., t].sum() for t in range(ntimepoints)]))
                 self._run_log.emit(f'  Seed frame: {seed_frame}, Peak frame: {peak_frame}')
 
                 labels_by_frame, _, reason, frames = trackColoniesAllFrames(
