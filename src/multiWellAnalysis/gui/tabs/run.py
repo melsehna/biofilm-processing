@@ -383,9 +383,16 @@ class ProcessingWorker(QObject):
                 continue
 
             # Output goes under the user-specified output directory,
+            # mirroring the source structure (drawer/plate/), and
             # falling back to the resolved plate dir if none was set.
             if output_root:
-                plate_outdir = os.path.join(output_root, plate_name)
+                # Preserve the relative path from the user-selected dir
+                # to the resolved plate dir (e.g. "Plate 1" inside a drawer)
+                if resolved_plate != plate_path:
+                    rel = os.path.relpath(resolved_plate, plate_path)
+                    plate_outdir = os.path.join(output_root, plate_name, rel)
+                else:
+                    plate_outdir = os.path.join(output_root, plate_name)
             else:
                 plate_outdir = resolved_plate
             outdir = os.path.join(plate_outdir, 'processedImages')
