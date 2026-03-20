@@ -233,23 +233,28 @@ def _colony_feats_one_well(plate_name, row):
 _OUTPUT_DIR_NAMES = {
     'processedimages', 'processed_images', 'processed_images_py',
     'numerical_data', 'numerical_data_py',
+    'results_images', 'results_data',
 }
+
+# Raw BF frame: WELL_MAG_..._FRAMENUM.tif  (e.g. A1_03_1_1_Bright Field_001.tif)
+# Frame number is always _NNN at the end before .tif
+_RAW_FRAME_RE = re.compile(r'^[A-P]\d+_\d+_.+_\d{3}\.tif$', re.IGNORECASE)
 
 
 def _is_output_dir(name):
     return name.lower() in _OUTPUT_DIR_NAMES
 
 
+def _is_raw_frame(filename):
+    """True if *filename* looks like a raw single-frame BF image."""
+    return bool(_RAW_FRAME_RE.match(filename))
+
+
 def _has_raw_tif(directory):
-    """True if *directory* contains at least one raw BF .tif (not a processed stack)."""
+    """True if *directory* contains at least one raw BF frame .tif."""
     try:
         for entry in os.scandir(directory):
-            if not entry.is_file() or not entry.name.lower().endswith('.tif'):
-                continue
-            # Raw images match WELL_MAG_..._NNN.tif (e.g. A1_03_1_1_Bright Field_001.tif)
-            # Processed outputs match WELL_processed.tif / WELL_registered_raw.tif etc.
-            if re.match(r'^[A-P]\d+[_.]', entry.name) and 'processed' not in entry.name.lower() \
-                    and 'registered' not in entry.name.lower():
+            if entry.is_file() and _is_raw_frame(entry.name):
                 return True
     except (PermissionError, OSError):
         pass
@@ -298,10 +303,15 @@ def discover_wells(plate_path, mag_setting='all'):
     resolved = _resolve_tif_dir(plate_path, max_depth=2)
     tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
 
-    # Filter out processed/registered stacks that may live alongside raw images
-    raw_tifs = [f for f in tif_files
-                if '_processed' not in os.path.basename(f).lower()
-                and '_registered' not in os.path.basename(f).lower()]
+    # Keep only raw single-frame BF images, deduplicated by filename
+    # (SMB mounts can return the same file multiple times in directory listings)
+    seen = set()
+    raw_tifs = []
+    for f in tif_files:
+        name = os.path.basename(f)
+        if name not in seen and _is_raw_frame(name):
+            seen.add(name)
+            raw_tifs.append(f)
 
     bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
     candidates = bf_files if bf_files else raw_tifs

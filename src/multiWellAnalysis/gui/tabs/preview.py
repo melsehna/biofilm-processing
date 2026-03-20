@@ -29,14 +29,19 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir
+    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir, _is_raw_frame
     resolved = _resolve_tif_dir(plate_dir, max_depth=2)
     tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
 
-    # Filter out processed/registered stacks
-    raw_tifs = [f for f in tif_files
-                if '_processed' not in os.path.basename(f).lower()
-                and '_registered' not in os.path.basename(f).lower()]
+    # Keep only raw single-frame BF images, deduplicated by filename
+    # (SMB mounts can return the same file multiple times in directory listings)
+    seen = set()
+    raw_tifs = []
+    for f in tif_files:
+        name = os.path.basename(f)
+        if name not in seen and _is_raw_frame(name):
+            seen.add(name)
+            raw_tifs.append(f)
 
     bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
 
@@ -61,48 +66,18 @@ def discover_wells_with_mag(plate_dir):
                     result.append((label, well, mag, files))
             return result
 
-    # Fallback: no magnification suffixes
-    # Check for processed files first
-    proc_dir = os.path.join(plate_dir, 'processedImages')
-    wells = set()
-
-    for d in [proc_dir, plate_dir]:
-        if not os.path.isdir(d):
-            continue
-        for f in glob.glob(os.path.join(d, '*.tif')):
-            name = os.path.basename(f)
-            m = re.match(r'^([A-P]\d{1,2})', name)
-            if m:
-                wells.add(m.group(1))
+    # Fallback: no magnification suffixes — group raw TIFs by well
+    wells = defaultdict(list)
+    for f in raw_tifs:
+        name = os.path.basename(f)
+        m = re.match(r'^([A-P]\d{1,2})[_.]', name)
+        if m:
+            wells[m.group(1)].append(f)
 
     result = []
     for well in sorted(wells):
-        source = _find_well_source(plate_dir, well)
-        if source:
-            result.append((well, well, '', source))
+        result.append((well, well, '', sorted(wells[well])))
     return result
-
-
-def _find_well_source(plate_dir, well_id):
-    """Find image source for a well without mag suffix."""
-    proc_dir = os.path.join(plate_dir, 'processedImages')
-
-    for d in [proc_dir, plate_dir]:
-        raw_path = os.path.join(d, f'{well_id}_registered_raw.tif')
-        if os.path.exists(raw_path):
-            return raw_path
-
-    stack_path = os.path.join(plate_dir, f'{well_id}.tif')
-    if os.path.exists(stack_path):
-        return stack_path
-
-    proc_path = os.path.join(proc_dir, f'{well_id}_processed.tif')
-    if os.path.exists(proc_path):
-        return proc_path
-
-    pattern = os.path.join(plate_dir, f'{well_id}_*.tif')
-    files = sorted(glob.glob(pattern))
-    return files if files else None
 
 
 def load_frame(source, frame_idx):

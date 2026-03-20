@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, Signal
 _OUTPUT_DIR_NAMES = {
     'processedimages', 'processed_images', 'processed_images_py',
     'numerical_data', 'numerical_data_py',
+    'results_images', 'results_data',
 }
 
 
