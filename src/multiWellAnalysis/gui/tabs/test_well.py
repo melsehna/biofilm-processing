@@ -375,6 +375,8 @@ class TestWellTab(QWidget):
 
                 labels_by_frame, _, reason, frames = trackColoniesAllFrames(
                     registered_raw, masks, seed_frame, peak_frame,
+                    min_area=s.get('minColonyAreaPx', 200),
+                    prop_radius=s.get('propRadiusPx', 25),
                 )
 
                 if stop.is_set():
