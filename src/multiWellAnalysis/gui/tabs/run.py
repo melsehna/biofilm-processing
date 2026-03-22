@@ -132,7 +132,7 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
         return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
 
-def _track_one_well(plate_name, row):
+def _track_one_well(plate_name, row, tracking_params=None):
     """Run colony tracking on a single well using trackAndSave."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -142,6 +142,8 @@ def _track_one_well(plate_name, row):
     raw_path = row['registered_raw']
     mask_path = row['masks']
     biomass_path = row.get('biomass', '')
+    if tracking_params is None:
+        tracking_params = {}
 
     try:
         if not os.path.exists(raw_path) or not os.path.exists(mask_path):
@@ -172,6 +174,8 @@ def _track_one_well(plate_name, row):
             raw_stack, mask_stack, outdir,
             plate_name, well_id,
             biomass=biomass,
+            min_colony_area=tracking_params.get('minColonyAreaPx'),
+            prop_radius=tracking_params.get('propRadiusPx'),
         )
 
         elapsed = time.perf_counter() - t0
@@ -523,7 +527,7 @@ class ProcessingWorker(QObject):
                 self._run_stage_parallel(
                     plate_name, plate_idx, total_plates, 'Tracking',
                     list(index.items()), index, outdir, n_workers,
-                    self._submit_tracking, plate_name
+                    self._submit_tracking, plate_name, s
                 )
 
             # ── Stage 4: Colony features (parallel) ──
@@ -610,10 +614,25 @@ class ProcessingWorker(QObject):
             return None
         return pool.submit(_whole_image_one_well, plate_name, {**row, 'well': well_id})
 
-    def _submit_tracking(self, pool, well_id, row, outdir, plate_name):
+    def _submit_tracking(self, pool, well_id, row, outdir, plate_name, state):
         if 'registered_raw' not in row:
             return None
-        return pool.submit(_track_one_well, plate_name, {**row, 'well': well_id})
+        m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+        mag = m.group(1) if m else ''
+
+        tracking_params = {
+            'minColonyAreaPx': state.get('minColonyAreaPx', 200),
+            'propRadiusPx': state.get('propRadiusPx', 25),
+        }
+        mag_params = state.get('magParams', {})
+        if mag and mag in mag_params:
+            mp = mag_params[mag]
+            if 'minColonyAreaPx' in mp:
+                tracking_params['minColonyAreaPx'] = mp['minColonyAreaPx']
+            if 'propRadiusPx' in mp:
+                tracking_params['propRadiusPx'] = mp['propRadiusPx']
+
+        return pool.submit(_track_one_well, plate_name, {**row, 'well': well_id}, tracking_params)
 
     def _submit_colony_feats(self, pool, well_id, row, outdir, plate_name):
         if 'tracked_labels' not in row:

@@ -36,10 +36,10 @@ BIOMASS_THRESHOLD = 0.005
 
 # utils
 
-def cleanBinary(mask):
+def cleanBinary(mask, min_area=minColonyAreaPx):
     binary = mask.astype(bool)
     binary = binary_fill_holes(binary)
-    return remove_small_objects(binary, min_size=minColonyAreaPx)
+    return remove_small_objects(binary, min_size=min_area)
 
 
 def countComponents(mask):
@@ -75,8 +75,9 @@ def stripBorderLabels(labels, marginPx):
 
 # tracking
 
-def propagateLabelsFastVectorized(labelsPrev, maskNext, nextLabelId, effectiveRadius):
-    binaryNext = cleanBinary(maskNext)
+def propagateLabelsFastVectorized(labelsPrev, maskNext, nextLabelId, effectiveRadius,
+                                  min_area=minColonyAreaPx):
+    binaryNext = cleanBinary(maskNext, min_area=min_area)
     labelsNext = np.zeros_like(labelsPrev, dtype=np.int32)
 
     if labelsPrev.max() == 0:
@@ -102,14 +103,15 @@ def propagateLabelsFastVectorized(labelsPrev, maskNext, nextLabelId, effectiveRa
 
     for lab in range(1, newLabels.max() + 1):
         region = newLabels == lab
-        if region.sum() >= minColonyAreaPx:
+        if region.sum() >= min_area:
             labelsNext[region] = nextLabelId
             nextLabelId += 1
 
     return labelsNext, nextLabelId
 
 
-def trackColoniesAllFrames(rawStack, maskStack, seedFrame, peakFrame):
+def trackColoniesAllFrames(rawStack, maskStack, seedFrame, peakFrame,
+                           min_area=minColonyAreaPx, prop_radius=propRadiusPx):
     """Core tracking algorithm. Returns (labelsByFrame, usedTracking, reason, frames)."""
     t0 = time.perf_counter()
 
@@ -141,12 +143,13 @@ def trackColoniesAllFrames(rawStack, maskStack, seedFrame, peakFrame):
     prevT = seedFrame
 
     for t in range(seedFrame + 1, nFrames):
-        effRadius = propRadiusPx * (t - prevT if prevT < peakFrame else 1)
+        effRadius = prop_radius * (t - prevT if prevT < peakFrame else 1)
         labels, nextLabelId = propagateLabelsFastVectorized(
             labels,
             maskStack[:, :, t],
             nextLabelId,
-            effRadius
+            effRadius,
+            min_area=min_area,
         )
         labelsByFrame[t] = labels.copy()
         prevT = t
@@ -166,6 +169,8 @@ def trackAndSave(
     plateId,
     wellId,
     biomass=None,
+    min_colony_area=None,
+    prop_radius=None,
 ):
     """Run colony tracking and save labelled stack to outdir.
 
@@ -178,12 +183,20 @@ def trackAndSave(
     plateId, wellId : str
     biomass : array-like or None
         Per-frame biomass values from timelapse_processing.
+    min_colony_area : int or None
+        Override for minimum colony area (px). Uses module default if None.
+    prop_radius : int or None
+        Override for propagation radius (px). Uses module default if None.
 
     Returns
     -------
     npzPath : str or None
         Path to the saved NPZ file, or None if tracking produced no output.
     """
+    if min_colony_area is None:
+        min_colony_area = minColonyAreaPx
+    if prop_radius is None:
+        prop_radius = propRadiusPx
     os.makedirs(outdir, exist_ok=True)
 
     nFrames = rawStack.shape[2]
@@ -215,7 +228,8 @@ def trackAndSave(
         peakFrame = int(np.argmax(maskAreas))
 
         labelsByFrame, usedTracking, reason, frames = trackColoniesAllFrames(
-            rawStack, maskStack, seedFrame, peakFrame
+            rawStack, maskStack, seedFrame, peakFrame,
+            min_area=min_colony_area, prop_radius=prop_radius,
         )
 
         trackedFrames = np.zeros(nFrames, dtype=bool)

@@ -311,6 +311,7 @@ class ParametersTab(QWidget):
             'fixedThresh': self.fixed_thresh.value(),
             'dustCorrection': self.dust_correction.isChecked(),
             'minColonyAreaPx': self.min_colony_area.value(),
+            'propRadiusPx': self.prop_radius.value(),
         }
         self.state.set('magParams', mag_params)
         self._refresh_mag_overrides_list()
@@ -328,14 +329,17 @@ class ParametersTab(QWidget):
         self.fixed_thresh.blockSignals(True)
         self.dust_correction.blockSignals(True)
         self.min_colony_area.blockSignals(True)
+        self.prop_radius.blockSignals(True)
         self.block_diam.setValue(p.get('blockDiam', self.state.get('blockDiam', 101)))
         self.fixed_thresh.setValue(p.get('fixedThresh', self.state.get('fixedThresh', 0.04)))
         self.dust_correction.setChecked(p.get('dustCorrection', self.state.get('dustCorrection', True)))
         self.min_colony_area.setValue(p.get('minColonyAreaPx', self.state.get('minColonyAreaPx', 200)))
+        self.prop_radius.setValue(p.get('propRadiusPx', self.state.get('propRadiusPx', 25)))
         self.block_diam.blockSignals(False)
         self.fixed_thresh.blockSignals(False)
         self.dust_correction.blockSignals(False)
         self.min_colony_area.blockSignals(False)
+        self.prop_radius.blockSignals(False)
 
     def _delete_mag_override(self):
         mag = self.mag_override_combo.currentText()
