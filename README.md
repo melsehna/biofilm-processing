@@ -14,6 +14,17 @@ pip install -e .
 
 Dependencies (installed automatically): numpy, scipy, scikit-image, opencv-python, mahotas, pandas, matplotlib, tifffile, imageio, imageio-ffmpeg, PySide6
 
+### Windows: C compiler required for mahotas
+
+`mahotas` is a C extension and needs a compiler to build on Windows. The easiest option is to install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (standalone, not the full IDE). During install, check only **"Desktop development with C++"**. After that, `pip install -e .` will work as normal.
+
+Alternatively, install mahotas via conda before pip:
+
+```bash
+conda install -c conda-forge mahotas
+pip install -e .
+```
+
 ### Desktop shortcut
 
 Create a clickable shortcut so you can launch the GUI without a terminal:
@@ -92,9 +103,6 @@ The GUI has five tabs:
 |---|---|---|
 | Block diameter | 101 | Kernel size for local contrast normalization (must be odd). Larger values smooth more background. |
 | Fixed threshold | 0.04 | Binary mask threshold on the normalized image. Lower = more sensitive. |
-| Shift threshold | 50 | Maximum allowed registration shift in pixels. Frames with larger drift are skipped. |
-| FFT stride | 6 | Compute registration shifts every N frames (interpolate between). Higher = faster. |
-| Downsample | 4 | Downsample factor for FFT registration. Higher = faster but less precise. |
 | Dust correction | on | Remove pixels that appear at t=0 but disappear later (likely dust, not biofilm). |
 
 **Performance** -- set the number of workers for parallel operations (registration, I/O). Hard-capped at 75% of CPU cores.
