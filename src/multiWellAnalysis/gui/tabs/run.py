@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import io
@@ -17,9 +18,47 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QProgressBar, QTextEdit,
+    QProgressBar, QTextEdit, QMessageBox,
 )
 from PySide6.QtCore import QObject, QThread, Signal
+
+
+# ── Run params (for resume / overwrite detection) ──
+
+_PARAM_KEYS = [
+    'blockDiam', 'fixedThresh', 'dustCorrection',
+    'shiftThresh', 'fftStride', 'downsample',
+    'magnification', 'magParams',
+]
+
+_RUN_PARAMS_FILE = 'run_params.json'
+
+
+def _extract_run_params(state):
+    """Extract the processing-relevant params from the state dict."""
+    return {k: state.get(k) for k in _PARAM_KEYS}
+
+
+def _save_run_params(outdir, params):
+    path = os.path.join(outdir, _RUN_PARAMS_FILE)
+    with open(path, 'w') as f:
+        json.dump(params, f, indent=2)
+
+
+def _load_run_params(outdir):
+    path = os.path.join(outdir, _RUN_PARAMS_FILE)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _well_already_processed(outdir, well_id):
+    """Check if a well has existing output files from a previous run."""
+    return os.path.exists(os.path.join(outdir, f'{well_id}_processed.tif'))
 
 
 # ── Top-level worker functions (picklable for multiprocessing) ──
@@ -250,26 +289,40 @@ def _is_raw_frame(filename):
     return bool(_RAW_FRAME_RE.match(filename))
 
 
-def _has_raw_tif(directory):
-    """True if *directory* contains at least one raw BF frame .tif."""
+def _list_raw_tifs(directory):
+    """Return sorted, deduplicated list of raw BF frame paths in *directory*.
+
+    Uses os.listdir (single syscall, full listing) instead of os.scandir
+    or glob to avoid partial results from macOS SMB directory caching.
+    """
     try:
-        for entry in os.scandir(directory):
-            if entry.is_file() and _is_raw_frame(entry.name):
-                return True
+        names = os.listdir(directory)
     except (PermissionError, OSError):
-        pass
-    return False
+        return []
+    seen = set()
+    result = []
+    for name in sorted(names):
+        if name not in seen and _is_raw_frame(name):
+            seen.add(name)
+            result.append(os.path.join(directory, name))
+    return result
 
 
 def _resolve_tif_dir(root, max_depth=2):
     """Find the directory containing raw TIF images, up to *max_depth* levels below *root*.
 
     Skips known output directories (processedImages, Numerical_data_py, etc.)
-    and ignores processed/registered stacks.  Uses os.scandir to stay fast on
-    network mounts.  Returns the resolved directory path, or *root* if nothing
-    is found.
+    and ignores processed/registered stacks.  Uses os.listdir to avoid
+    incomplete results from macOS SMB directory caching.
+    Returns the resolved directory path, or *root* if nothing is found.
     """
-    if _has_raw_tif(root):
+    try:
+        names = os.listdir(root)
+    except (PermissionError, OSError):
+        return root
+
+    # Check if root itself has raw TIFs
+    if any(_is_raw_frame(n) for n in names):
         return root
 
     # Walk one level at a time up to max_depth
@@ -278,16 +331,21 @@ def _resolve_tif_dir(root, max_depth=2):
         next_level = []
         for d in dirs_at_level:
             try:
-                next_level.extend(
-                    e.path for e in os.scandir(d)
-                    if e.is_dir() and not e.name.startswith('.')
-                    and not _is_output_dir(e.name)
-                )
+                entries = os.listdir(d)
             except (PermissionError, OSError):
                 continue
+            for name in entries:
+                if name.startswith('.') or _is_output_dir(name):
+                    continue
+                child = os.path.join(d, name)
+                if os.path.isdir(child):
+                    next_level.append(child)
         for d in next_level:
-            if _has_raw_tif(d):
-                return d
+            try:
+                if any(_is_raw_frame(n) for n in os.listdir(d)):
+                    return d
+            except (PermissionError, OSError):
+                continue
         dirs_at_level = next_level
 
     return root
@@ -301,17 +359,7 @@ def discover_wells(plate_path, mag_setting='all'):
     (may be plate_path itself or a child directory).
     """
     resolved = _resolve_tif_dir(plate_path, max_depth=2)
-    tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
-
-    # Keep only raw single-frame BF images, deduplicated by filename
-    # (SMB mounts can return the same file multiple times in directory listings)
-    seen = set()
-    raw_tifs = []
-    for f in tif_files:
-        name = os.path.basename(f)
-        if name not in seen and _is_raw_frame(name):
-            seen.add(name)
-            raw_tifs.append(f)
+    raw_tifs = _list_raw_tifs(resolved)
 
     bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
     candidates = bf_files if bf_files else raw_tifs
@@ -344,6 +392,29 @@ def discover_wells(plate_path, mag_setting='all'):
     return resolved, wells
 
 
+def _compute_outdir(plate_path, resolved_plate, output_root):
+    """Compute the processedImages/ path for a plate.
+
+    Drawer given:  <root>/<drawer>/processedImages/  (sibling of plate)
+    Plate given:   <root>/<plate>/processedImages/   (inside plate)
+    No output root: same logic but relative to source location.
+    """
+    is_drawer = (resolved_plate != plate_path)
+    plate_name = os.path.basename(resolved_plate) if is_drawer else os.path.basename(plate_path)
+    drawer_name = os.path.basename(plate_path) if is_drawer else None
+
+    if output_root:
+        if is_drawer:
+            return os.path.join(output_root, drawer_name, 'processedImages')
+        else:
+            return os.path.join(output_root, plate_name, 'processedImages')
+    else:
+        if is_drawer:
+            return os.path.join(plate_path, 'processedImages')
+        else:
+            return os.path.join(resolved_plate, 'processedImages')
+
+
 # ── Qt Worker ──
 
 class ProcessingWorker(QObject):
@@ -353,10 +424,11 @@ class ProcessingWorker(QObject):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, state_dict, stop_event):
+    def __init__(self, state_dict, stop_event, resume=False):
         super().__init__()
         self._state = state_dict
         self._stop = stop_event
+        self._resume = resume
 
     def run(self):
         try:
@@ -378,39 +450,54 @@ class ProcessingWorker(QObject):
                 self.log.emit('Cancelled by user.')
                 return
 
-            plate_name = os.path.basename(plate_path)
-            self.log.emit(f'\n{"="*60}')
-            self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {plate_name}')
-            self.log.emit(f'{"="*60}')
-
             mag_setting = s.get('magnification', 'all')
             resolved_plate, wells = discover_wells(plate_path, mag_setting)
-            if resolved_plate != plate_path:
-                self.log.emit(f'  Resolved plate dir: {os.path.basename(resolved_plate)}')
+            is_drawer = (resolved_plate != plate_path)
+
+            # plate_name = actual plate dir name (used in index CSV / feature files)
+            # drawer_name = parent dir name when user selected a drawer
+            plate_name = os.path.basename(resolved_plate) if is_drawer else os.path.basename(plate_path)
+            drawer_name = os.path.basename(plate_path) if is_drawer else None
+
+            self.log.emit(f'\n{"="*60}')
+            if drawer_name:
+                self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {drawer_name} / {plate_name}')
+            else:
+                self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {plate_name}')
+            self.log.emit(f'{"="*60}')
+
             self.log.emit(f'  Found {len(wells)} wells (mag={mag_setting})')
             if not wells:
                 self.log.emit(f'  No wells found, skipping.')
                 continue
 
-            # Output goes under the user-specified output directory,
-            # mirroring the source structure (drawer/plate/), and
-            # falling back to the resolved plate dir if none was set.
-            if output_root:
-                # Preserve the relative path from the user-selected dir
-                # to the resolved plate dir (e.g. "Plate 1" inside a drawer)
-                if resolved_plate != plate_path:
-                    rel = os.path.relpath(resolved_plate, plate_path)
-                    plate_outdir = os.path.join(output_root, plate_name, rel)
-                else:
-                    plate_outdir = os.path.join(output_root, plate_name)
-            else:
-                plate_outdir = resolved_plate
-            outdir = os.path.join(plate_outdir, 'processedImages')
+            outdir = _compute_outdir(plate_path, resolved_plate, output_root)
+            # If drawer, also create the plate subdir in output for structure
+            if is_drawer and output_root:
+                os.makedirs(os.path.join(
+                    output_root, drawer_name, plate_name), exist_ok=True)
             os.makedirs(outdir, exist_ok=True)
             self.log.emit(f'  Output dir: {outdir}')
 
-            index = {}
+            # Save run params so future runs can detect changes
+            run_params = _extract_run_params(s)
+            _save_run_params(outdir, run_params)
+
+            # Resume: skip wells that already have output from a previous run
             well_items = list(wells.items())
+            if self._resume:
+                skipped = []
+                remaining = []
+                for well_id, files in well_items:
+                    if _well_already_processed(outdir, well_id):
+                        skipped.append(well_id)
+                    else:
+                        remaining.append((well_id, files))
+                if skipped:
+                    self.log.emit(f'  Resuming: skipping {len(skipped)} already-processed wells')
+                well_items = remaining
+
+            index = {}
             total_wells = len(well_items)
 
             # ── Stage 1: Processing (parallel) ──
@@ -610,16 +697,63 @@ class RunTab(QWidget):
             self.log_text.append('ERROR: No plates selected. Go to Setup tab.')
             return
 
+        state_dict = self.state.to_dict()
+        output_root = state_dict.get('outputDir', '')
+        run_params = _extract_run_params(state_dict)
+        resume = False
+
+        # Check each plate for existing output
+        plates_with_output = []
+        for plate_path in plates:
+            resolved = _resolve_tif_dir(plate_path, max_depth=2)
+            outdir = _compute_outdir(plate_path, resolved, output_root)
+            saved = _load_run_params(outdir)
+            has_files = os.path.isdir(outdir) and any(
+                f.endswith('.tif') for f in os.listdir(outdir))
+            if has_files:
+                plates_with_output.append((plate_path, saved))
+
+        if plates_with_output:
+            # Check if params match for all plates that have output
+            all_match = all(saved == run_params for _, saved in plates_with_output
+                           if saved is not None)
+            any_saved = any(saved is not None for _, saved in plates_with_output)
+
+            if any_saved and all_match:
+                reply = QMessageBox.question(
+                    self, 'Resume previous run?',
+                    f'{len(plates_with_output)} plate(s) already have processed '
+                    f'output with the same parameters.\n\n'
+                    f'Resume and skip already-processed wells?',
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                )
+                if reply == QMessageBox.Cancel:
+                    return
+                resume = (reply == QMessageBox.Yes)
+            else:
+                if any_saved:
+                    msg = (f'{len(plates_with_output)} plate(s) already have '
+                           f'processed output with DIFFERENT parameters.\n\n'
+                           f'Continuing will overwrite existing results.')
+                else:
+                    msg = (f'{len(plates_with_output)} plate(s) already have '
+                           f'processed output.\n\n'
+                           f'Continuing will overwrite existing results.')
+                reply = QMessageBox.warning(
+                    self, 'Overwrite existing output?', msg,
+                    QMessageBox.Ok | QMessageBox.Cancel,
+                )
+                if reply == QMessageBox.Cancel:
+                    return
+
         self.log_text.clear()
         self._stop_event.clear()
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
-        state_dict = self.state.to_dict()
-
         self._thread = QThread()
-        self._worker = ProcessingWorker(state_dict, self._stop_event)
+        self._worker = ProcessingWorker(state_dict, self._stop_event, resume=resume)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)

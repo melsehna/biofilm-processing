@@ -66,21 +66,6 @@ class ParametersTab(QWidget):
         self.fixed_thresh.setValue(self.state.get('fixedThresh', 0.04))
         preproc_form.addRow('Fixed threshold:', self.fixed_thresh)
 
-        self.shift_thresh = QSpinBox()
-        self.shift_thresh.setRange(1, 500)
-        self.shift_thresh.setValue(self.state.get('shiftThresh', 50))
-        preproc_form.addRow('Shift threshold (px):', self.shift_thresh)
-
-        self.fft_stride = QSpinBox()
-        self.fft_stride.setRange(1, 20)
-        self.fft_stride.setValue(self.state.get('fftStride', 6))
-        preproc_form.addRow('FFT stride:', self.fft_stride)
-
-        self.downsample = QSpinBox()
-        self.downsample.setRange(1, 16)
-        self.downsample.setValue(self.state.get('downsample', 4))
-        preproc_form.addRow('Downsample factor:', self.downsample)
-
         self.dust_correction = QCheckBox('Dust correction')
         self.dust_correction.setChecked(self.state.get('dustCorrection', True))
         preproc_form.addRow(self.dust_correction)
@@ -203,12 +188,6 @@ class ParametersTab(QWidget):
         self.block_diam.valueChanged.connect(self._on_block_diam)
         self.fixed_thresh.valueChanged.connect(
             lambda v: self.state.set('fixedThresh', v))
-        self.shift_thresh.valueChanged.connect(
-            lambda v: self.state.set('shiftThresh', v))
-        self.fft_stride.valueChanged.connect(
-            lambda v: self.state.set('fftStride', v))
-        self.downsample.valueChanged.connect(
-            lambda v: self.state.set('downsample', v))
         self.dust_correction.toggled.connect(
             lambda v: self.state.set('dustCorrection', v))
 
