@@ -29,19 +29,9 @@ def discover_wells_with_mag(plate_dir):
     if not plate_dir or not os.path.isdir(plate_dir):
         return []
 
-    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir, _is_raw_frame
+    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir, _list_raw_tifs
     resolved = _resolve_tif_dir(plate_dir, max_depth=2)
-    tif_files = sorted(glob.glob(os.path.join(resolved, '*.tif')))
-
-    # Keep only raw single-frame BF images, deduplicated by filename
-    # (SMB mounts can return the same file multiple times in directory listings)
-    seen = set()
-    raw_tifs = []
-    for f in tif_files:
-        name = os.path.basename(f)
-        if name not in seen and _is_raw_frame(name):
-            seen.add(name)
-            raw_tifs.append(f)
+    raw_tifs = _list_raw_tifs(resolved)
 
     bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
 

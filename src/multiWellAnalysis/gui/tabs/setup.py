@@ -23,6 +23,7 @@ def _detect_mag_suffixes_from_tifs(root, suffixes, max_depth=2):
     For each suffix in *suffixes* (e.g. {'_02', '_03', '_04', '_05'}), scans
     directories up to *max_depth* levels deep and stops checking a suffix as
     soon as one matching file is found.  Skips output directories.
+    Uses os.listdir to avoid incomplete results from macOS SMB caching.
     Returns the set of suffixes found.
     """
     remaining = set(suffixes)
@@ -31,28 +32,30 @@ def _detect_mag_suffixes_from_tifs(root, suffixes, max_depth=2):
     def _scan_dir(directory, depth):
         nonlocal remaining
         try:
-            entries = list(os.scandir(directory))
+            names = os.listdir(directory)
         except (PermissionError, OSError):
             return
         # Check files at this level
-        for entry in entries:
+        for name in names:
             if not remaining:
                 return
-            if entry.is_file() and entry.name.lower().endswith('.tif'):
+            if name.lower().endswith('.tif'):
                 for suffix in list(remaining):
-                    if suffix in entry.name:
+                    if suffix in name:
                         found.add(suffix)
                         remaining.discard(suffix)
                         if not remaining:
                             return
         # Recurse into subdirectories (skip output dirs)
         if depth < max_depth:
-            for entry in entries:
+            for name in names:
                 if not remaining:
                     return
-                if entry.is_dir() and not entry.name.startswith('.') \
-                        and entry.name.lower() not in _OUTPUT_DIR_NAMES:
-                    _scan_dir(entry.path, depth + 1)
+                child = os.path.join(directory, name)
+                if not name.startswith('.') \
+                        and name.lower() not in _OUTPUT_DIR_NAMES \
+                        and os.path.isdir(child):
+                    _scan_dir(child, depth + 1)
 
     _scan_dir(root, 0)
     return found
