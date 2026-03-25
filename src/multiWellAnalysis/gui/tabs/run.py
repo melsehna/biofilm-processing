@@ -485,6 +485,9 @@ class ProcessingWorker(QObject):
         self._total_tasks = max(total_tasks, 1)
         self.overall_progress.emit(0, self._total_tasks, 'Starting…')
 
+        plate_outdirs = []   # processedImages/ paths, one per plate — for master CSV
+        drawer_map = {}      # plate_name → drawer_name (or plate_name if no drawer)
+
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
                 self.log.emit('Cancelled by user.')
@@ -517,6 +520,9 @@ class ProcessingWorker(QObject):
                     output_root, drawer_name, plate_name), exist_ok=True)
             os.makedirs(outdir, exist_ok=True)
             self.log.emit(f'  Output dir: {outdir}')
+
+            plate_outdirs.append(outdir)
+            drawer_map[plate_name] = drawer_name if drawer_name else plate_name
 
             # Save run params so future runs can detect changes
             run_params = _extract_run_params(s)
@@ -578,6 +584,18 @@ class ProcessingWorker(QObject):
 
             # ── Save index.csv ──
             self._save_index(index, outdir, plate_name, resolved_plate)
+
+        # ── Assemble master CSVs across all plates ──
+        if output_root and plate_outdirs and not self._stop.is_set():
+            self.log.emit(f'\n{"="*60}\nAssembling master CSVs…')
+            try:
+                from multiWellAnalysis.processing.master_csv import assemble_master_csvs
+                assemble_master_csvs(
+                    plate_outdirs, drawer_map, output_root,
+                    log_fn=self.log.emit,
+                )
+            except Exception as e:
+                self.log.emit(f'  [master CSV] ERROR: {e}')
 
     def _run_stage_parallel(self, plate_name, plate_idx, total_plates, stage_name,
                             items, index, outdir, n_workers, submit_fn, *submit_args):
