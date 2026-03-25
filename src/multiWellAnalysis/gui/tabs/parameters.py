@@ -349,3 +349,38 @@ class ParametersTab(QWidget):
         mag_params.pop(mag, None)
         self.state.set('magParams', mag_params)
         self._refresh_mag_overrides_list()
+
+    def refresh_from_state(self):
+        """Sync all widgets to current state (call after loading a config)."""
+        widgets = [
+            self.save_overlays, self.whole_image, self.colony_tracking,
+            self.colony_feats, self.dust_correction, self.save_registered,
+            self.save_processed, self.save_masks,
+            self.block_diam, self.fixed_thresh,
+            self.min_colony_area, self.prop_radius, self.workers,
+        ]
+        for w in widgets:
+            w.blockSignals(True)
+
+        self.save_overlays.setChecked(self.state.get('saveOverlays', True))
+        self.whole_image.setChecked(self.state.get('wholeImageFeats', False))
+        self.colony_tracking.setChecked(self.state.get('colonyTracking', False))
+        self.colony_feats.setChecked(self.state.get('colonyFeats', False))
+        self.dust_correction.setChecked(self.state.get('dustCorrection', True))
+        self.save_registered.setChecked(self.state.get('saveRegistered', True))
+        self.save_processed.setChecked(self.state.get('saveProcessed', True))
+        self.save_masks.setChecked(self.state.get('saveMasks', True))
+        self.block_diam.setValue(self.state.get('blockDiam', 101))
+        self.fixed_thresh.setValue(self.state.get('fixedThresh', 0.04))
+        self.min_colony_area.setValue(self.state.get('minColonyAreaPx', 200))
+        self.prop_radius.setValue(self.state.get('propRadiusPx', 25))
+        self.workers.setValue(min(self.state.get('workers', 4), _max_workers()))
+
+        for w in widgets:
+            w.blockSignals(False)
+
+        self.colony_params_group.setVisible(
+            self.state.get('colonyTracking', False) or self.state.get('colonyFeats', False)
+        )
+        self._refresh_mag_combo()
+        self._refresh_mag_overrides_list()

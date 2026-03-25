@@ -33,8 +33,10 @@ class PhenotyprApp(QMainWindow):
 
         # tabs
         self.tabs = QTabWidget()
-        self.tabs.addTab(SetupTab(self.state), 'Setup')
-        self.tabs.addTab(ParametersTab(self.state), 'Parameters')
+        self._setup_tab = SetupTab(self.state)
+        self._params_tab = ParametersTab(self.state)
+        self.tabs.addTab(self._setup_tab, 'Setup')
+        self.tabs.addTab(self._params_tab, 'Parameters')
         self.tabs.addTab(PreviewTab(self.state), 'Preview')
         self.tabs.addTab(ConditionsTab(self.state), 'Conditions')
         self.tabs.addTab(TestWellTab(self.state), 'Test Well')
@@ -91,6 +93,8 @@ class PhenotyprApp(QMainWindow):
             return
         try:
             self.state.load(path)
+            self._setup_tab.refresh_from_state()
+            self._params_tab.refresh_from_state()
             QMessageBox.information(self, 'Loaded', f'Configuration loaded from {path}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', str(e))

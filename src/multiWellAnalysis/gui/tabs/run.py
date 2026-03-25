@@ -9,6 +9,19 @@ import csv as csv_mod
 import threading
 import traceback
 
+
+def _fmt_time(seconds):
+    """Format a duration in seconds as a human-readable string."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f'{seconds}s'
+    elif seconds < 3600:
+        return f'{seconds // 60}m{seconds % 60:02d}s'
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f'{h}h{m:02d}m'
+
 import numpy as np
 import pandas as pd
 import tifffile
@@ -422,8 +435,7 @@ def _compute_outdir(plate_path, resolved_plate, output_root):
 # ── Qt Worker ──
 
 class ProcessingWorker(QObject):
-    progress = Signal(str, int, int, str, str)
-    well_progress = Signal(int, int)
+    overall_progress = Signal(int, int, str)  # done, total, description
     log = Signal(str)
     finished = Signal()
     error = Signal(str)
@@ -433,6 +445,8 @@ class ProcessingWorker(QObject):
         self._state = state_dict
         self._stop = stop_event
         self._resume = resume
+        self._overall_done = 0
+        self._total_tasks = 0
 
     def run(self):
         try:
@@ -448,13 +462,34 @@ class ProcessingWorker(QObject):
         total_plates = len(plates)
         n_workers = s.get('workers', 4)
         output_root = s.get('outputDir', '')
+        mag_setting = s.get('magnification', 'all')
+
+        # Pre-scan all plates to compute total task count for the progress bar
+        do_whole = s.get('wholeImageFeats', False)
+        do_tracking = s.get('colonyTracking', False) or s.get('colonyFeats', False)
+        do_colony_feats = s.get('colonyFeats', False)
+        n_stages = 1 + int(do_whole) + int(do_tracking) + int(do_colony_feats)
+
+        total_tasks = 0
+        for plate_path in plates:
+            resolved, pre_wells = discover_wells(plate_path, mag_setting)
+            pre_outdir = _compute_outdir(plate_path, resolved, output_root)
+            if self._resume:
+                n = sum(1 for wid in pre_wells
+                        if not _well_already_processed(pre_outdir, wid))
+            else:
+                n = len(pre_wells)
+            total_tasks += n * n_stages
+
+        self._overall_done = 0
+        self._total_tasks = max(total_tasks, 1)
+        self.overall_progress.emit(0, self._total_tasks, 'Starting…')
 
         for plate_idx, plate_path in enumerate(plates):
             if self._stop.is_set():
                 self.log.emit('Cancelled by user.')
                 return
 
-            mag_setting = s.get('magnification', 'all')
             resolved_plate, wells = discover_wells(plate_path, mag_setting)
             is_drawer = (resolved_plate != plate_path)
 
@@ -543,7 +578,6 @@ class ProcessingWorker(QObject):
 
             # ── Save index.csv ──
             self._save_index(index, outdir, plate_name, resolved_plate)
-            self.progress.emit(plate_name, plate_idx + 1, total_plates, '', 'Done')
 
     def _run_stage_parallel(self, plate_name, plate_idx, total_plates, stage_name,
                             items, index, outdir, n_workers, submit_fn, *submit_args):
@@ -564,8 +598,10 @@ class ProcessingWorker(QObject):
             for fut in as_completed(futures):
                 well_id = futures[fut]
                 done_count += 1
-                self.progress.emit(plate_name, plate_idx, total_plates, well_id, stage_name)
-                self.well_progress.emit(done_count, total)
+                self._overall_done += 1
+                desc = (f'{stage_name} · Plate {plate_idx+1}/{total_plates} · {plate_name}'
+                        f' · {well_id} ({done_count}/{total})')
+                self.overall_progress.emit(self._overall_done, self._total_tasks, desc)
 
                 try:
                     result = fut.result()
@@ -586,8 +622,6 @@ class ProcessingWorker(QObject):
                     self.log.emit(f'  {well_id} ERROR: {result.get("error", "unknown")}')
                 else:
                     self.log.emit(f'  {well_id} {result["status"]}: {result.get("reason", "")}')
-
-        self.well_progress.emit(total, total)
 
     # ── Submit helpers (create futures) ──
 
@@ -672,6 +706,7 @@ class RunTab(QWidget):
         self._thread = None
         self._worker = None
         self._stop_event = threading.Event()
+        self._run_start_time = None
         self._build_ui()
 
     def _build_ui(self):
@@ -689,22 +724,17 @@ class RunTab(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        self.plate_label = QLabel('Plate: \u2014')
-        layout.addWidget(self.plate_label)
+        self.status_label = QLabel('Ready')
+        layout.addWidget(self.status_label)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat('%v / %m  (%p%)')
         layout.addWidget(self.progress_bar)
 
-        self.well_label = QLabel('Well: \u2014')
-        layout.addWidget(self.well_label)
-
-        self.well_progress_bar = QProgressBar()
-        self.well_progress_bar.setValue(0)
-        layout.addWidget(self.well_progress_bar)
-
-        self.stage_label = QLabel('Stage: \u2014')
-        layout.addWidget(self.stage_label)
+        self.eta_label = QLabel('')
+        self.eta_label.setStyleSheet('color: gray; font-size: 11px;')
+        layout.addWidget(self.eta_label)
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
@@ -767,17 +797,20 @@ class RunTab(QWidget):
 
         self.log_text.clear()
         self._stop_event.clear()
+        self._run_start_time = time.perf_counter()
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.eta_label.setText('')
+        self.status_label.setText('Starting…')
+        self.progress_bar.setValue(0)
 
         self._thread = QThread()
         self._worker = ProcessingWorker(state_dict, self._stop_event, resume=resume)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.well_progress.connect(self._on_well_progress)
+        self._worker.overall_progress.connect(self._on_overall_progress)
         self._worker.log.connect(self._on_log)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
@@ -789,16 +822,16 @@ class RunTab(QWidget):
         self.log_text.append('Stopping...')
         self.stop_btn.setEnabled(False)
 
-    def _on_progress(self, plate, plate_idx, total, well, stage):
-        self.plate_label.setText(f'Plate: {plate}  ({plate_idx + 1} / {total})')
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(plate_idx)
-        self.well_label.setText(f'Well: {well}' if well else 'Well: \u2014')
-        self.stage_label.setText(f'Stage: {stage}')
-
-    def _on_well_progress(self, well_idx, total_wells):
-        self.well_progress_bar.setMaximum(total_wells)
-        self.well_progress_bar.setValue(well_idx)
+    def _on_overall_progress(self, done, total, desc):
+        self.progress_bar.setMaximum(max(total, 1))
+        self.progress_bar.setValue(done)
+        self.status_label.setText(desc)
+        if done > 0 and self._run_start_time is not None:
+            elapsed = time.perf_counter() - self._run_start_time
+            eta_secs = elapsed / done * (total - done) if done < total else 0
+            self.eta_label.setText(
+                f'Elapsed: {_fmt_time(elapsed)}  ·  ETA: {_fmt_time(eta_secs)}'
+            )
 
     def _on_log(self, msg):
         self.log_text.append(msg)
@@ -813,8 +846,10 @@ class RunTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.log_text.append('\nDone.')
         self.progress_bar.setValue(self.progress_bar.maximum())
-        self.well_progress_bar.setValue(self.well_progress_bar.maximum())
-        self.stage_label.setText('Stage: Complete')
+        self.status_label.setText('Complete')
+        if self._run_start_time is not None:
+            elapsed = time.perf_counter() - self._run_start_time
+            self.eta_label.setText(f'Total time: {_fmt_time(elapsed)}')
 
         if self._thread:
             self._thread.quit()

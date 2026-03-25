@@ -380,6 +380,53 @@ class SetupTab(QWidget):
 
         self._run_in_background('magnifications', _scan, _done)
 
+    def refresh_from_state(self):
+        """Sync all widgets to current state (call after loading a config)."""
+        # Plate list
+        self.plate_list.blockSignals(True)
+        self.plate_list.clear()
+        for p in self.state.get('plates', []):
+            self._add_plate_item(p)
+        self.plate_list.blockSignals(False)
+        self.clear_btn.setEnabled(self.plate_list.count() > 0)
+
+        # Output dir
+        self.outdir_edit.blockSignals(True)
+        self.outdir_edit.setText(self.state.get('outputDir', ''))
+        self.outdir_edit.blockSignals(False)
+
+        # Notes
+        self.notes_edit.blockSignals(True)
+        self.notes_edit.setPlainText(self.state.get('notes', ''))
+        self.notes_edit.blockSignals(False)
+
+        # Mag list: populate from saved magnification + magParams keys
+        mag_setting = self.state.get('magnification', 'all')
+        if isinstance(mag_setting, list):
+            selected_mags = set(mag_setting)
+        elif isinstance(mag_setting, str) and mag_setting != 'all':
+            selected_mags = {mag_setting}
+        else:
+            selected_mags = set()
+
+        all_mags = set(selected_mags)
+        for m in self.state.get('magParams', {}):
+            all_mags.add(m)
+
+        if all_mags:
+            self.mag_list.blockSignals(True)
+            self.mag_list.clear()
+            for mag in sorted(all_mags):
+                mag_label = self.MAG_SUFFIXES.get(mag, mag)
+                item = QListWidgetItem(f'{mag_label} ({mag})')
+                item.setData(Qt.UserRole, mag)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                is_checked = mag in selected_mags or mag_setting == 'all'
+                item.setCheckState(Qt.Checked if is_checked else Qt.Unchecked)
+                self.mag_list.addItem(item)
+            self.mag_list.blockSignals(False)
+            self.mag_status.setText('loaded from config')
+
     def _on_bg_result(self, task_name, result):
         """Main-thread handler for background task results."""
         cb = self._bg_callbacks.pop(task_name, None)
