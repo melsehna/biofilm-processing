@@ -252,8 +252,15 @@ class PreviewTab(QWidget):
         self.well_combo.setEnabled(True)
         self.mag_combo.setEnabled(True)
 
-        # Extract unique magnifications
-        mags = sorted({mag for _, _, mag, _ in self._well_entries if mag})
+        # Extract unique magnifications, filtered to those enabled in Setup tab
+        all_mags = sorted({mag for _, _, mag, _ in self._well_entries if mag})
+        mag_setting = self.state.get('magnification', 'all')
+        if mag_setting == 'all':
+            mags = all_mags
+        elif isinstance(mag_setting, list):
+            mags = [m for m in all_mags if m in mag_setting]
+        else:
+            mags = [m for m in all_mags if m == mag_setting]
 
         prev_mag = self.mag_combo.currentData()
         self.mag_combo.blockSignals(True)
@@ -402,16 +409,16 @@ class PreviewTab(QWidget):
         self.ax_raw.imshow(raw, cmap='gray')
         self.ax_raw.set_title('Raw')
 
-        # display preprocessed
-        self.ax_proc.imshow(processed, cmap='gray')
+        # display preprocessed (inverted so biofilms appear dark, matching raw)
+        self.ax_proc.imshow(processed, cmap='gray_r')
         self.ax_proc.set_title(
             f'Preprocessed\nblockDiam={block_diam}',
             fontsize=9,
         )
 
-        # mask overlay on preprocessed
+        # mask overlay on preprocessed (inverted background so biofilms are dark)
         if processed.max() > 0:
-            display = processed / processed.max()
+            display = 1.0 - processed / processed.max()
         else:
             display = processed
         overlay = np.stack([display, display, display], axis=-1)
