@@ -9,19 +9,6 @@ import csv as csv_mod
 import threading
 import traceback
 
-
-def _fmt_time(seconds):
-    """Format a duration in seconds as a human-readable string."""
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f'{seconds}s'
-    elif seconds < 3600:
-        return f'{seconds // 60}m{seconds % 60:02d}s'
-    else:
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        return f'{h}h{m:02d}m'
-
 import numpy as np
 import pandas as pd
 import tifffile
@@ -36,30 +23,39 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, QThread, Signal
 
 
-# ── Run params (for resume / overwrite detection) ──
+def _fmtTime(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f'{seconds}s'
+    elif seconds < 3600:
+        return f'{seconds // 60}m{seconds % 60:02d}s'
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f'{h}h{m:02d}m'
 
-_PARAM_KEYS = [
+
+_paramKeys = [
     'blockDiam', 'fixedThresh', 'dustCorrection',
     'shiftThresh', 'fftStride', 'downsample',
     'magnification', 'magParams', 'copyRaw',
 ]
 
-_RUN_PARAMS_FILE = 'run_params.json'
+_runParamsFile = 'run_params.json'
 
 
-def _extract_run_params(state):
-    """Extract the processing-relevant params from the state dict."""
-    return {k: state.get(k) for k in _PARAM_KEYS}
+def _extractRunParams(state):
+    return {k: state.get(k) for k in _paramKeys}
 
 
-def _save_run_params(outdir, params):
-    path = os.path.join(outdir, _RUN_PARAMS_FILE)
+def _saveRunParams(outdir, params):
+    path = os.path.join(outdir, _runParamsFile)
     with open(path, 'w') as f:
         json.dump(params, f, indent=2)
 
 
-def _load_run_params(outdir):
-    path = os.path.join(outdir, _RUN_PARAMS_FILE)
+def _loadRunParams(outdir):
+    path = os.path.join(outdir, _runParamsFile)
     if not os.path.exists(path):
         return None
     try:
@@ -69,249 +65,226 @@ def _load_run_params(outdir):
         return None
 
 
-def _well_already_processed(outdir, well_id):
-    """Check if a well has existing output files from a previous run."""
-    return os.path.exists(os.path.join(outdir, f'{well_id}_processed.tif'))
+def _wellAlreadyProcessed(outdir, wellId):
+    return os.path.exists(os.path.join(outdir, f'{wellId}_processed.tif'))
 
 
-# ── Top-level worker functions (picklable for multiprocessing) ──
-
-def _process_one_well(plate_path, outdir, well_id, well_files, params):
+def _processOneWell(platePath, outdir, wellId, wellFiles, params):
     """Run timelapse processing on a single well. Returns index row dict."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
 
-    from multiWellAnalysis.processing.analysis_main import timelapse_processing
+    from multiWellAnalysis.processing.analysis_main import timelapseProcessing
 
     try:
         t0 = time.perf_counter()
 
-        # Load stack
-        if isinstance(well_files, str):
-            raw = tifffile.imread(well_files)
+        if isinstance(wellFiles, str):
+            raw = tifffile.imread(wellFiles)
             stack = raw[np.newaxis].astype(np.float32) if raw.ndim == 2 else raw.astype(np.float32)
             del raw
         else:
-            first = tifffile.imread(well_files[0])
+            first = tifffile.imread(wellFiles[0])
             h, w = first.shape[:2]
-            stack = np.empty((len(well_files), h, w), dtype=np.float32)
+            stack = np.empty((len(wellFiles), h, w), dtype=np.float32)
             stack[0] = first.astype(np.float32)
             del first
-            for fi in range(1, len(well_files)):
-                stack[fi] = tifffile.imread(well_files[fi]).astype(np.float32)
+            for fi in range(1, len(wellFiles)):
+                stack[fi] = tifffile.imread(wellFiles[fi]).astype(np.float32)
 
         if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
             stack = np.transpose(stack, (1, 2, 0))
 
-        # outdir already points to <plate_outdir>/processedImages;
-        # timelapse_processing expects the *parent* and creates
-        # processedImages/ inside it.
-        plate_outdir = os.path.dirname(outdir)
-        masks, biomass, od_mean = timelapse_processing(
+        plateOutdir = os.path.dirname(outdir)
+        masks, biomass, odMean = timelapseProcessing(
             images=stack,
-            block_diameter=params['blockDiam'],
+            blockDiameter=params['blockDiam'],
             ntimepoints=stack.shape[2],
-            shift_thresh=params['shiftThresh'],
-            fixed_thresh=params['fixedThresh'],
-            dust_correction=params['dustCorrection'],
-            outdir=plate_outdir,
-            filename=well_id,
-            image_records=None,
+            shiftThresh=params['shiftThresh'],
+            fixedThresh=params['fixedThresh'],
+            dustCorrection=params['dustCorrection'],
+            outdir=plateOutdir,
+            filename=wellId,
+            imageRecords=None,
             fftStride=params.get('fftStride', 6),
             downsample=params.get('downsample', 4),
-            skip_overlay=not params.get('saveOverlays', True),
-            workers=1,  # parallelism is at the well level, not frame level
+            skipOverlay=not params.get('saveOverlays', True),
+            workers=1,
         )
         del stack
 
-        # Save biomass CSV
-        biomass_path = os.path.join(outdir, f'{well_id}_biomass.csv')
+        biomassPath = os.path.join(outdir, f'{wellId}_biomass.csv')
         pd.DataFrame({'frame': range(len(biomass)), 'biomass': biomass}).to_csv(
-            biomass_path, index=False
+            biomassPath, index=False
         )
 
         elapsed = time.perf_counter() - t0
         return {
-            'well': well_id,
+            'well': wellId,
             'status': 'done',
             'elapsed': elapsed,
-            'registered_raw': os.path.join(outdir, f'{well_id}_registered_raw.tif'),
-            'processed': os.path.join(outdir, f'{well_id}_processed.tif'),
-            'masks': os.path.join(outdir, f'{well_id}_masks.npz'),
-            'biomass': biomass_path,
+            'registered_raw': os.path.join(outdir, f'{wellId}_registered_raw.tif'),
+            'processed': os.path.join(outdir, f'{wellId}_processed.tif'),
+            'masks': os.path.join(outdir, f'{wellId}_masks.npz'),
+            'biomass': biomassPath,
         }
     except Exception as e:
-        return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
+        return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
 
-def _track_one_well(plate_name, row, tracking_params=None):
+def _trackOneWell(plateName, row, trackingParams=None):
     """Run colony tracking on a single well using trackAndSave."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
 
-    well_id = row['well']
-    raw_path = row['registered_raw']
-    mask_path = row['masks']
-    biomass_path = row.get('biomass', '')
-    if tracking_params is None:
-        tracking_params = {}
+    wellId = row['well']
+    rawPath = row['registered_raw']
+    maskPath = row['masks']
+    biomassPath = row.get('biomass', '')
+    if trackingParams is None:
+        trackingParams = {}
 
     try:
-        if not os.path.exists(raw_path) or not os.path.exists(mask_path):
-            return {'well': well_id, 'status': 'skipped', 'reason': 'missing files'}
+        if not os.path.exists(rawPath) or not os.path.exists(maskPath):
+            return {'well': wellId, 'status': 'skipped', 'reason': 'missing files'}
 
         t0 = time.perf_counter()
 
-        # Load raw stack: tifffile returns (T, H, W), convert to (H, W, T)
-        raw_stack = tifffile.imread(raw_path)
-        if raw_stack.ndim == 3 and raw_stack.shape[0] < raw_stack.shape[1]:
-            raw_stack = np.transpose(raw_stack, (1, 2, 0))
+        rawStack = tifffile.imread(rawPath)
+        if rawStack.ndim == 3 and rawStack.shape[0] < rawStack.shape[1]:
+            rawStack = np.transpose(rawStack, (1, 2, 0))
 
-        mask_data = np.load(mask_path)
-        mask_key = 'masks' if 'masks' in mask_data else list(mask_data.keys())[0]
-        mask_stack = mask_data[mask_key]
+        maskData = np.load(maskPath)
+        maskKey = 'masks' if 'masks' in maskData else list(maskData.keys())[0]
+        maskStack = maskData[maskKey]
 
-        # Load biomass for seed frame detection
         biomass = None
-        if biomass_path and os.path.exists(biomass_path):
-            bdf = pd.read_csv(biomass_path)
+        if biomassPath and os.path.exists(biomassPath):
+            bdf = pd.read_csv(biomassPath)
             if 'biomass' in bdf.columns:
                 biomass = bdf['biomass'].values
 
-        outdir = os.path.dirname(raw_path)
+        outdir = os.path.dirname(rawPath)
 
         from multiWellAnalysis.colony.runTrackingGUI import trackAndSave
-        npz_path = trackAndSave(
-            raw_stack, mask_stack, outdir,
-            plate_name, well_id,
+        npzPath = trackAndSave(
+            rawStack, maskStack, outdir,
+            plateName, wellId,
             biomass=biomass,
-            min_colony_area=tracking_params.get('minColonyAreaPx'),
-            prop_radius=tracking_params.get('propRadiusPx'),
+            minColonyArea=trackingParams.get('minColonyAreaPx'),
+            propRadius=trackingParams.get('propRadiusPx'),
         )
 
         elapsed = time.perf_counter() - t0
 
-        if npz_path:
+        if npzPath:
             return {
-                'well': well_id,
+                'well': wellId,
                 'status': 'done',
                 'elapsed': elapsed,
-                'tracked_labels': npz_path,
+                'tracked_labels': npzPath,
             }
         else:
-            return {'well': well_id, 'status': 'skipped', 'reason': 'no tracking output'}
+            return {'well': wellId, 'status': 'skipped', 'reason': 'no tracking output'}
 
     except Exception as e:
-        return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
+        return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
 
-def _whole_image_one_well(plate_name, row):
+def _wholeImageOneWell(plateName, row):
     """Run whole-image feature extraction on a single well."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
 
-    well_id = row['well']
+    wellId = row['well']
     try:
         from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
         outdir = os.path.dirname(row['processed'])
         t0 = time.perf_counter()
         status = extractWholeImageFeatures(
-            row['processed'], plate_name, well_id, outdir
+            row['processed'], plateName, wellId, outdir
         )
         elapsed = time.perf_counter() - t0
-        # Find the actual output file (has version string in name)
-        feats_files = glob.glob(os.path.join(outdir, f'{well_id}_wholeImage_*.csv'))
-        feats_path = feats_files[0] if feats_files else ''
+        featsFiles = glob.glob(os.path.join(outdir, f'{wellId}_wholeImage_*.csv'))
+        featsPath = featsFiles[0] if featsFiles else ''
         return {
-            'well': well_id,
-            'status': 'done' if feats_path else status,
+            'well': wellId,
+            'status': 'done' if featsPath else status,
             'elapsed': elapsed,
-            'whole_image_feats': feats_path,
+            'whole_image_feats': featsPath,
         }
     except Exception as e:
-        return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
+        return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
 
-def _colony_feats_one_well(plate_name, row):
+def _colonyFeatsOneWell(plateName, row):
     """Run colony feature extraction on a single well."""
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
 
-    well_id = row['well']
+    wellId = row['well']
     try:
         from multiWellAnalysis.colony.runColonyFeatsGUI import extractAndSave
 
-        labels_path = row['tracked_labels']
-        raw_path = row['registered_raw']
-        outdir = os.path.dirname(raw_path)
+        labelsPath = row['tracked_labels']
+        rawPath = row['registered_raw']
+        outdir = os.path.dirname(rawPath)
 
-        data = np.load(labels_path)
-        # Load raw: tifffile returns (T, H, W), convert to (H, W, T)
-        raw_stack = tifffile.imread(raw_path)
-        if raw_stack.ndim == 3 and raw_stack.shape[0] < raw_stack.shape[1]:
-            raw_stack = np.transpose(raw_stack, (1, 2, 0))
+        data = np.load(labelsPath)
+        rawStack = tifffile.imread(rawPath)
+        if rawStack.ndim == 3 and rawStack.shape[0] < rawStack.shape[1]:
+            rawStack = np.transpose(rawStack, (1, 2, 0))
 
         labels = data['labels']
         frames = data['frames']
-        was_tracked = bool(data['wasTracked']) if 'wasTracked' in data else True
+        wasTracked = bool(data['wasTracked']) if 'wasTracked' in data else True
 
         t0 = time.perf_counter()
-        colony_df, well_df = extractAndSave(
-            raw_stack, labels, frames,
-            plate_name, well_id, was_tracked,
-            labels_path, raw_path,
+        colonyDf, wellDf = extractAndSave(
+            rawStack, labels, frames,
+            plateName, wellId, wasTracked,
+            labelsPath, rawPath,
             outdir=outdir,
         )
         elapsed = time.perf_counter() - t0
 
-        # Find actual output files (have version string in name)
-        colony_files = glob.glob(os.path.join(outdir, f'{well_id}_colonyFeatures_*.csv'))
-        agg_files = glob.glob(os.path.join(outdir, f'{well_id}_wellColonyFeatures_*.csv'))
+        colonyFiles = glob.glob(os.path.join(outdir, f'{wellId}_colonyFeatures_*.csv'))
+        aggFiles = glob.glob(os.path.join(outdir, f'{wellId}_wellColonyFeatures_*.csv'))
 
         return {
-            'well': well_id,
+            'well': wellId,
             'status': 'done',
             'elapsed': elapsed,
-            'colony_feats': colony_files[0] if colony_files else '',
-            'well_colony_feats': agg_files[0] if agg_files else '',
+            'colony_feats': colonyFiles[0] if colonyFiles else '',
+            'well_colony_feats': aggFiles[0] if aggFiles else '',
         }
     except Exception as e:
-        return {'well': well_id, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
+        return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
 
 
-# ── Well discovery ──
-
-# Directories that contain pipeline outputs, never raw images.
-_OUTPUT_DIR_NAMES = {
+_outputDirNames = {
     'processedimages', 'processed_images', 'processed_images_py',
     'numerical_data', 'numerical_data_py',
     'results_images', 'results_data',
 }
 
-# Raw BF frame: WELL_MAG_..._FRAMENUM.tif  (e.g. A1_03_1_1_Bright Field_001.tif)
-# Frame number is always _NNN at the end before .tif
-_RAW_FRAME_RE = re.compile(r'^[A-P]\d+_\d+_.+_\d{3}\.tif$', re.IGNORECASE)
+_rawFrameRe = re.compile(r'^[A-P]\d+_\d+_.+_\d{3}\.tif$', re.IGNORECASE)
 
 
-def _is_output_dir(name):
-    return name.lower() in _OUTPUT_DIR_NAMES
+def _isOutputDir(name):
+    return name.lower() in _outputDirNames
 
 
-def _is_raw_frame(filename):
-    """True if *filename* looks like a raw single-frame BF image."""
-    return bool(_RAW_FRAME_RE.match(filename))
+def _isRawFrame(filename):
+    return bool(_rawFrameRe.match(filename))
 
 
-def _list_raw_tifs(directory):
-    """Return sorted, deduplicated list of raw BF frame paths in *directory*.
-
-    Uses os.listdir (single syscall, full listing) instead of os.scandir
-    or glob to avoid partial results from macOS SMB directory caching.
-    """
+def _listRawTifs(directory):
+    """Return sorted, deduplicated list of raw BF frame paths in directory."""
     try:
         names = os.listdir(directory)
     except (PermissionError, OSError):
@@ -319,67 +292,57 @@ def _list_raw_tifs(directory):
     seen = set()
     result = []
     for name in sorted(names):
-        if name not in seen and _is_raw_frame(name):
+        if name not in seen and _isRawFrame(name):
             seen.add(name)
             result.append(os.path.join(directory, name))
     return result
 
 
-def _resolve_tif_dir(root, max_depth=2):
-    """Find the directory containing raw TIF images, up to *max_depth* levels below *root*.
-
-    Skips known output directories (processedImages, Numerical_data_py, etc.)
-    and ignores processed/registered stacks.  Uses os.listdir to avoid
-    incomplete results from macOS SMB directory caching.
-    Returns the resolved directory path, or *root* if nothing is found.
-    """
+def _resolveTifDir(root, maxDepth=2):
+    """Find the directory containing raw TIF images, up to maxDepth levels below root."""
     try:
         names = os.listdir(root)
     except (PermissionError, OSError):
         return root
 
-    # Check if root itself has raw TIFs
-    if any(_is_raw_frame(n) for n in names):
+    if any(_isRawFrame(n) for n in names):
         return root
 
-    # Walk one level at a time up to max_depth
-    dirs_at_level = [root]
-    for _ in range(max_depth):
-        next_level = []
-        for d in dirs_at_level:
+    dirsAtLevel = [root]
+    for _ in range(maxDepth):
+        nextLevel = []
+        for d in dirsAtLevel:
             try:
                 entries = os.listdir(d)
             except (PermissionError, OSError):
                 continue
             for name in entries:
-                if name.startswith('.') or _is_output_dir(name):
+                if name.startswith('.') or _isOutputDir(name):
                     continue
                 child = os.path.join(d, name)
                 if os.path.isdir(child):
-                    next_level.append(child)
-        for d in next_level:
+                    nextLevel.append(child)
+        for d in nextLevel:
             try:
-                if any(_is_raw_frame(n) for n in os.listdir(d)):
+                if any(_isRawFrame(n) for n in os.listdir(d)):
                     return d
             except (PermissionError, OSError):
                 continue
-        dirs_at_level = next_level
+        dirsAtLevel = nextLevel
 
     return root
 
 
-def discover_wells(plate_path, mag_setting='all'):
+def discoverWells(platePath, magSetting='all'):
     """Find wells and their BF image files, filtered by selected magnifications.
 
-    Returns (resolved_plate_path, wells_dict).
-    resolved_plate_path is the directory that actually contains the TIF files
-    (may be plate_path itself or a child directory).
+    Returns (resolvedPlatePath, wellsDict).
     """
-    resolved = _resolve_tif_dir(plate_path, max_depth=2)
-    raw_tifs = _list_raw_tifs(resolved)
+    resolved = _resolveTifDir(platePath, maxDepth=2)
+    rawTifs = _listRawTifs(resolved)
 
-    bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
-    candidates = bf_files if bf_files else raw_tifs
+    bfFiles = [f for f in rawTifs if 'Bright Field' in f or 'Bright_Field' in f]
+    candidates = bfFiles if bfFiles else rawTifs
 
     groups = defaultdict(list)
     for f in candidates:
@@ -392,16 +355,16 @@ def discover_wells(plate_path, mag_setting='all'):
             if m2:
                 groups[(m2.group(1), '')].append(f)
 
-    if mag_setting == 'all':
-        selected_mags = None
-    elif isinstance(mag_setting, str):
-        selected_mags = {mag_setting}
+    if magSetting == 'all':
+        selectedMags = None
+    elif isinstance(magSetting, str):
+        selectedMags = {magSetting}
     else:
-        selected_mags = set(mag_setting)
+        selectedMags = set(magSetting)
 
     wells = {}
     for (well, mag), files in sorted(groups.items()):
-        if selected_mags is not None and mag not in selected_mags:
+        if selectedMags is not None and mag not in selectedMags:
             continue
         key = f'{well}{mag}' if mag else well
         wells[key] = sorted(files)
@@ -409,249 +372,228 @@ def discover_wells(plate_path, mag_setting='all'):
     return resolved, wells
 
 
-def _compute_outdir(plate_path, resolved_plate, output_root):
+def _computeOutdir(platePath, resolvedPlate, outputRoot):
     """Compute the processedImages/ path for a plate.
 
     Drawer given:  <root>/<drawer>/processedImages/  (sibling of plate)
     Plate given:   <root>/<plate>/processedImages/   (inside plate)
     No output root: same logic but relative to source location.
     """
-    is_drawer = (resolved_plate != plate_path)
-    plate_name = os.path.basename(resolved_plate) if is_drawer else os.path.basename(plate_path)
-    drawer_name = os.path.basename(plate_path) if is_drawer else None
+    isDrawer = (resolvedPlate != platePath)
+    plateName = os.path.basename(resolvedPlate) if isDrawer else os.path.basename(platePath)
+    drawerName = os.path.basename(platePath) if isDrawer else None
 
-    if output_root:
-        if is_drawer:
-            return os.path.join(output_root, drawer_name, 'processedImages')
+    if outputRoot:
+        if isDrawer:
+            return os.path.join(outputRoot, drawerName, 'processedImages')
         else:
-            return os.path.join(output_root, plate_name, 'processedImages')
+            return os.path.join(outputRoot, plateName, 'processedImages')
     else:
-        if is_drawer:
-            return os.path.join(plate_path, 'processedImages')
+        if isDrawer:
+            return os.path.join(platePath, 'processedImages')
         else:
-            return os.path.join(resolved_plate, 'processedImages')
+            return os.path.join(resolvedPlate, 'processedImages')
 
-
-# ── Qt Worker ──
 
 class ProcessingWorker(QObject):
-    overall_progress = Signal(int, int, str)  # done, total, description
+    overallProgress = Signal(int, int, str)
     log = Signal(str)
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, state_dict, stop_event, resume=False):
+    def __init__(self, stateDict, stopEvent, resume=False):
         super().__init__()
-        self._state = state_dict
-        self._stop = stop_event
+        self._state = stateDict
+        self._stop = stopEvent
         self._resume = resume
-        self._overall_done = 0
-        self._total_tasks = 0
+        self._overallDone = 0
+        self._totalTasks = 1
 
     def run(self):
         try:
-            self._run_pipeline()
+            self._runPipeline()
         except Exception as e:
             self.error.emit(f'{e}\n{traceback.format_exc()}')
         finally:
             self.finished.emit()
 
-    def _run_pipeline(self):
+    def _runPipeline(self):
         s = self._state
         plates = s['plates']
-        total_plates = len(plates)
-        n_workers = s.get('workers', 4)
-        output_root = s.get('outputDir', '')
-        mag_setting = s.get('magnification', 'all')
+        totalPlates = len(plates)
+        nWorkers = s.get('workers', 4)
+        outputRoot = s.get('outputDir', '')
+        magSetting = s.get('magnification', 'all')
 
-        # Pre-scan all plates to compute total task count for the progress bar
-        do_whole = s.get('wholeImageFeats', False)
-        do_tracking = s.get('colonyTracking', False) or s.get('colonyFeats', False)
-        do_colony_feats = s.get('colonyFeats', False)
-        n_stages = 1 + int(do_whole) + int(do_tracking) + int(do_colony_feats)
+        doWhole = s.get('wholeImageFeats', False)
+        doTracking = s.get('colonyTracking', False) or s.get('colonyFeats', False)
+        doColonyFeats = s.get('colonyFeats', False)
+        nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
-        total_tasks = 0
-        for plate_path in plates:
-            resolved, pre_wells = discover_wells(plate_path, mag_setting)
-            pre_outdir = _compute_outdir(plate_path, resolved, output_root)
+        totalTasks = 0
+        for platePath in plates:
+            resolved, preWells = discoverWells(platePath, magSetting)
+            preOutdir = _computeOutdir(platePath, resolved, outputRoot)
             if self._resume:
-                n = sum(1 for wid in pre_wells
-                        if not _well_already_processed(pre_outdir, wid))
+                n = sum(1 for wid in preWells if not _wellAlreadyProcessed(preOutdir, wid))
             else:
-                n = len(pre_wells)
-            total_tasks += n * n_stages
+                n = len(preWells)
+            totalTasks += n * nStages
 
-        self._overall_done = 0
-        self._total_tasks = max(total_tasks, 1)
-        self.overall_progress.emit(0, self._total_tasks, 'Starting…')
+        self._overallDone = 0
+        self._totalTasks = max(totalTasks, 1)
+        self.overallProgress.emit(0, self._totalTasks, 'Starting…')
 
-        plate_outdirs = []   # processedImages/ paths, one per plate — for master CSV
-        drawer_map = {}      # plate_name → drawer_name (or plate_name if no drawer)
+        plateOutdirs = []
+        drawerMap = {}
 
-        for plate_idx, plate_path in enumerate(plates):
+        for plateIdx, platePath in enumerate(plates):
             if self._stop.is_set():
                 self.log.emit('Cancelled by user.')
                 return
 
-            resolved_plate, wells = discover_wells(plate_path, mag_setting)
-            is_drawer = (resolved_plate != plate_path)
+            resolvedPlate, wells = discoverWells(platePath, magSetting)
+            isDrawer = (resolvedPlate != platePath)
 
-            # plate_name = actual plate dir name (used in index CSV / feature files)
-            # drawer_name = parent dir name when user selected a drawer
-            plate_name = os.path.basename(resolved_plate) if is_drawer else os.path.basename(plate_path)
-            drawer_name = os.path.basename(plate_path) if is_drawer else None
+            plateName = os.path.basename(resolvedPlate) if isDrawer else os.path.basename(platePath)
+            drawerName = os.path.basename(platePath) if isDrawer else None
 
             self.log.emit(f'\n{"="*60}')
-            if drawer_name:
-                self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {drawer_name} / {plate_name}')
+            if drawerName:
+                self.log.emit(f'Plate {plateIdx+1}/{totalPlates}: {drawerName} / {plateName}')
             else:
-                self.log.emit(f'Plate {plate_idx+1}/{total_plates}: {plate_name}')
+                self.log.emit(f'Plate {plateIdx+1}/{totalPlates}: {plateName}')
             self.log.emit(f'{"="*60}')
 
-            self.log.emit(f'  Found {len(wells)} wells (mag={mag_setting})')
+            self.log.emit(f'  Found {len(wells)} wells (mag={magSetting})')
             if not wells:
                 self.log.emit(f'  No wells found, skipping.')
                 continue
 
-            outdir = _compute_outdir(plate_path, resolved_plate, output_root)
-            # If drawer, also create the plate subdir in output for structure
-            if is_drawer and output_root:
-                os.makedirs(os.path.join(
-                    output_root, drawer_name, plate_name), exist_ok=True)
+            outdir = _computeOutdir(platePath, resolvedPlate, outputRoot)
+            if isDrawer and outputRoot:
+                os.makedirs(os.path.join(outputRoot, drawerName, plateName), exist_ok=True)
             os.makedirs(outdir, exist_ok=True)
             self.log.emit(f'  Output dir: {outdir}')
 
-            plate_outdirs.append(outdir)
-            drawer_map[plate_name] = drawer_name if drawer_name else plate_name
+            plateOutdirs.append(outdir)
+            drawerMap[plateName] = drawerName if drawerName else plateName
 
-            # Save run params so future runs can detect changes
-            run_params = _extract_run_params(s)
-            _save_run_params(outdir, run_params)
+            runParams = _extractRunParams(s)
+            _saveRunParams(outdir, runParams)
 
-            # Resume: skip wells that already have output from a previous run
-            well_items = list(wells.items())
+            wellItems = list(wells.items())
             if self._resume:
                 skipped = []
                 remaining = []
-                for well_id, files in well_items:
-                    if _well_already_processed(outdir, well_id):
-                        skipped.append(well_id)
+                for wellId, files in wellItems:
+                    if _wellAlreadyProcessed(outdir, wellId):
+                        skipped.append(wellId)
                     else:
-                        remaining.append((well_id, files))
+                        remaining.append((wellId, files))
                 if skipped:
                     self.log.emit(f'  Resuming: skipping {len(skipped)} already-processed wells')
-                well_items = remaining
+                wellItems = remaining
 
             index = {}
-            total_wells = len(well_items)
+            totalWells = len(wellItems)
 
-            # ── Stage 1: Processing (parallel) ──
-            self.log.emit(f'\n  --- Stage 1: Processing ({total_wells} wells, {n_workers} workers) ---')
-            self._run_stage_parallel(
-                plate_name, plate_idx, total_plates, 'Processing',
-                well_items, index, outdir, n_workers,
-                self._submit_processing, resolved_plate, s
+            self.log.emit(f'\n  --- Stage 1: Processing ({totalWells} wells, {nWorkers} workers) ---')
+            self._runStageParallel(
+                plateName, plateIdx, totalPlates, 'Processing',
+                wellItems, index, outdir, nWorkers,
+                self._submitProcessing, resolvedPlate, s
             )
 
-            # ── Stage 2: Whole-image features (parallel) ──
             if s.get('wholeImageFeats') and index:
                 self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
-                self._run_stage_parallel(
-                    plate_name, plate_idx, total_plates, 'Whole-image',
-                    list(index.items()), index, outdir, n_workers,
-                    self._submit_whole_image, plate_name
+                self._runStageParallel(
+                    plateName, plateIdx, totalPlates, 'Whole-image',
+                    list(index.items()), index, outdir, nWorkers,
+                    self._submitWholeImage, plateName
                 )
 
-            # ── Stage 3: Colony tracking (parallel) ──
             if (s.get('colonyTracking') or s.get('colonyFeats')) and index:
                 self.log.emit(f'\n  --- Stage 3: Colony tracking ({len(index)} wells) ---')
-                self._run_stage_parallel(
-                    plate_name, plate_idx, total_plates, 'Tracking',
-                    list(index.items()), index, outdir, n_workers,
-                    self._submit_tracking, plate_name, s
+                self._runStageParallel(
+                    plateName, plateIdx, totalPlates, 'Tracking',
+                    list(index.items()), index, outdir, nWorkers,
+                    self._submitTracking, plateName, s
                 )
 
-            # ── Stage 4: Colony features (parallel) ──
             if s.get('colonyFeats') and index:
                 trackable = [(k, v) for k, v in index.items() if 'tracked_labels' in v]
                 if trackable:
                     self.log.emit(f'\n  --- Stage 4: Colony features ({len(trackable)} wells) ---')
-                    self._run_stage_parallel(
-                        plate_name, plate_idx, total_plates, 'Colony feats',
-                        trackable, index, outdir, n_workers,
-                        self._submit_colony_feats, plate_name
+                    self._runStageParallel(
+                        plateName, plateIdx, totalPlates, 'Colony feats',
+                        trackable, index, outdir, nWorkers,
+                        self._submitColonyFeats, plateName
                     )
 
-            # ── Save index.csv ──
-            self._save_index(index, outdir, plate_name, resolved_plate)
+            self._saveIndex(index, outdir, plateName, resolvedPlate)
 
-            # ── Per-plate numericalData/ CSVs ──
             try:
-                from multiWellAnalysis.processing.master_csv import assemble_plate_numerical_data
-                assemble_plate_numerical_data(outdir, log_fn=self.log.emit)
+                from multiWellAnalysis.processing.master_csv import assemblePlateNumericalData
+                assemblePlateNumericalData(outdir, logFn=self.log.emit)
             except Exception as e:
                 self.log.emit(f'  [numericalData] ERROR: {e}')
 
-        # ── Assemble master CSVs across all plates ──
-        if output_root and plate_outdirs and not self._stop.is_set():
+        if outputRoot and plateOutdirs and not self._stop.is_set():
             self.log.emit(f'\n{"="*60}\nAssembling master CSVs…')
             try:
-                from multiWellAnalysis.processing.master_csv import assemble_master_csvs
-                assemble_master_csvs(
-                    plate_outdirs, drawer_map, output_root,
-                    log_fn=self.log.emit,
+                from multiWellAnalysis.processing.master_csv import assembleMasterCsvs
+                assembleMasterCsvs(
+                    plateOutdirs, drawerMap, outputRoot,
+                    logFn=self.log.emit,
                 )
             except Exception as e:
                 self.log.emit(f'  [master CSV] ERROR: {e}')
 
-    def _run_stage_parallel(self, plate_name, plate_idx, total_plates, stage_name,
-                            items, index, outdir, n_workers, submit_fn, *submit_args):
-        """Run a stage in parallel using ProcessPoolExecutor."""
+    def _runStageParallel(self, plateName, plateIdx, totalPlates, stageName,
+                          items, index, outdir, nWorkers, submitFn, *submitArgs):
         total = len(items)
 
-        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        with ProcessPoolExecutor(max_workers=nWorkers) as pool:
             futures = {}
-            for well_id, data in items:
+            for wellId, data in items:
                 if self._stop.is_set():
                     self.log.emit('Cancelled by user.')
                     return
-                fut = submit_fn(pool, well_id, data, outdir, *submit_args)
+                fut = submitFn(pool, wellId, data, outdir, *submitArgs)
                 if fut is not None:
-                    futures[fut] = well_id
+                    futures[fut] = wellId
 
-            done_count = 0
+            doneCount = 0
             for fut in as_completed(futures):
-                well_id = futures[fut]
-                done_count += 1
-                self._overall_done += 1
-                desc = (f'{stage_name} · Plate {plate_idx+1}/{total_plates} · {plate_name}'
-                        f' · {well_id} ({done_count}/{total})')
-                self.overall_progress.emit(self._overall_done, self._total_tasks, desc)
+                wellId = futures[fut]
+                doneCount += 1
+                self._overallDone += 1
+                desc = (f'{stageName} · Plate {plateIdx+1}/{totalPlates} · {plateName}'
+                        f' · {wellId} ({doneCount}/{total})')
+                self.overallProgress.emit(self._overallDone, self._totalTasks, desc)
 
                 try:
                     result = fut.result()
                 except Exception as e:
-                    self.log.emit(f'  {well_id} {stage_name} EXCEPTION: {e}')
+                    self.log.emit(f'  {wellId} {stageName} EXCEPTION: {e}')
                     continue
 
                 if result['status'] == 'done':
                     elapsed = result.get('elapsed', 0)
-                    self.log.emit(f'  {well_id} done ({elapsed:.1f}s)')
-                    # Merge result into index
-                    if well_id not in index:
-                        index[well_id] = {}
+                    self.log.emit(f'  {wellId} done ({elapsed:.1f}s)')
+                    if wellId not in index:
+                        index[wellId] = {}
                     for k, v in result.items():
                         if k not in ('well', 'status', 'elapsed'):
-                            index[well_id][k] = v
+                            index[wellId][k] = v
                 elif result['status'] == 'error':
-                    self.log.emit(f'  {well_id} ERROR: {result.get("error", "unknown")}')
+                    self.log.emit(f'  {wellId} ERROR: {result.get("error", "unknown")}')
                 else:
-                    self.log.emit(f'  {well_id} {result["status"]}: {result.get("reason", "")}')
+                    self.log.emit(f'  {wellId} {result["status"]}: {result.get("reason", "")}')
 
-    # ── Submit helpers (create futures) ──
-
-    def _submit_processing(self, pool, well_id, well_files, outdir, plate_path, state):
-        m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+    def _submitProcessing(self, pool, wellId, wellFiles, outdir, platePath, state):
+        m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
         mag = m.group(1) if m else ''
 
         params = {
@@ -663,86 +605,82 @@ class ProcessingWorker(QObject):
             'downsample': state.get('downsample', 4),
             'saveOverlays': state.get('saveOverlays', True),
         }
-        mag_params = state.get('magParams', {})
-        if mag and mag in mag_params:
-            params.update(mag_params[mag])
+        magParams = state.get('magParams', {})
+        if mag and mag in magParams:
+            params.update(magParams[mag])
 
-        return pool.submit(_process_one_well, plate_path, outdir, well_id, well_files, params)
+        return pool.submit(_processOneWell, platePath, outdir, wellId, wellFiles, params)
 
-    def _submit_whole_image(self, pool, well_id, row, outdir, plate_name):
+    def _submitWholeImage(self, pool, wellId, row, outdir, plateName):
         if 'registered_raw' not in row:
             return None
-        return pool.submit(_whole_image_one_well, plate_name, {**row, 'well': well_id})
+        return pool.submit(_wholeImageOneWell, plateName, {**row, 'well': wellId})
 
-    def _submit_tracking(self, pool, well_id, row, outdir, plate_name, state):
+    def _submitTracking(self, pool, wellId, row, outdir, plateName, state):
         if 'registered_raw' not in row:
             return None
-        m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+        m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
         mag = m.group(1) if m else ''
 
-        tracking_params = {
+        trackingParams = {
             'minColonyAreaPx': state.get('minColonyAreaPx', 200),
             'propRadiusPx': state.get('propRadiusPx', 25),
         }
-        mag_params = state.get('magParams', {})
-        if mag and mag in mag_params:
-            mp = mag_params[mag]
+        magParams = state.get('magParams', {})
+        if mag and mag in magParams:
+            mp = magParams[mag]
             if 'minColonyAreaPx' in mp:
-                tracking_params['minColonyAreaPx'] = mp['minColonyAreaPx']
+                trackingParams['minColonyAreaPx'] = mp['minColonyAreaPx']
             if 'propRadiusPx' in mp:
-                tracking_params['propRadiusPx'] = mp['propRadiusPx']
+                trackingParams['propRadiusPx'] = mp['propRadiusPx']
 
-        return pool.submit(_track_one_well, plate_name, {**row, 'well': well_id}, tracking_params)
+        return pool.submit(_trackOneWell, plateName, {**row, 'well': wellId}, trackingParams)
 
-    def _submit_colony_feats(self, pool, well_id, row, outdir, plate_name):
+    def _submitColonyFeats(self, pool, wellId, row, outdir, plateName):
         if 'tracked_labels' not in row:
             return None
-        return pool.submit(_colony_feats_one_well, plate_name, {**row, 'well': well_id})
+        return pool.submit(_colonyFeatsOneWell, plateName, {**row, 'well': wellId})
 
-    def _save_index(self, index, outdir, plate_name, plate_path):
+    def _saveIndex(self, index, outdir, plateName, platePath):
         if not index:
             return
-        index_path = os.path.join(outdir, 'index.csv')
+        indexPath = os.path.join(outdir, 'index.csv')
 
-        # Merge with any existing index rows (from a prior resumed run)
         existing = {}
-        if os.path.exists(index_path):
+        if os.path.exists(indexPath):
             try:
                 import csv as _csv
-                with open(index_path, newline='') as f:
+                with open(indexPath, newline='') as f:
                     for row in _csv.DictReader(f):
                         existing[row['well']] = row
             except Exception:
                 pass
 
-        # Build new rows, overwriting existing entries for re-processed wells
-        new_rows = {}
-        for well_id, row in index.items():
-            m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+        newRows = {}
+        for wellId, row in index.items():
+            m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
             mag = m.group(1) if m else ''
-            full_row = {'plate': plate_name, 'plate_path': plate_path, 'well': well_id, 'mag': mag}
-            full_row.update(row)
-            new_rows[well_id] = full_row
+            fullRow = {'plate': plateName, 'plate_path': platePath, 'well': wellId, 'mag': mag}
+            fullRow.update(row)
+            newRows[wellId] = fullRow
 
-        merged = {**existing, **new_rows}
+        merged = {**existing, **newRows}
 
-        all_keys = ['plate', 'plate_path', 'well', 'mag']
-        extra_keys = set()
+        allKeys = ['plate', 'plate_path', 'well', 'mag']
+        extraKeys = set()
         for row in merged.values():
-            extra_keys.update(row.keys())
-        extra_keys -= set(all_keys)
-        all_keys.extend(sorted(extra_keys))
+            extraKeys.update(row.keys())
+        extraKeys -= set(allKeys)
+        allKeys.extend(sorted(extraKeys))
 
-        with open(index_path, 'w', newline='') as f:
-            writer = csv_mod.DictWriter(f, fieldnames=all_keys, extrasaction='ignore')
+        with open(indexPath, 'w', newline='') as f:
+            writer = csv_mod.DictWriter(f, fieldnames=allKeys, extrasaction='ignore')
             writer.writeheader()
-            for well_id in sorted(merged):
-                writer.writerow(merged[well_id])
+            for wellId in sorted(merged):
+                writer.writerow(merged[wellId])
 
-        self.log.emit(f'\n  Index saved: {index_path}')
+        self.log.emit(f'\n  Index saved: {indexPath}')
 
-
-# ── Qt Tab ──
 
 class RunTab(QWidget):
     def __init__(self, state, parent=None):
@@ -750,73 +688,70 @@ class RunTab(QWidget):
         self.state = state
         self._thread = None
         self._worker = None
-        self._stop_event = threading.Event()
-        self._run_start_time = None
-        self._build_ui()
+        self._stopEvent = threading.Event()
+        self._runStartTime = None
+        self._buildUi()
 
-    def _build_ui(self):
+    def _buildUi(self):
         layout = QVBoxLayout(self)
 
-        btn_row = QHBoxLayout()
-        self.start_btn = QPushButton('Start')
-        self.start_btn.clicked.connect(self._start)
-        btn_row.addWidget(self.start_btn)
+        btnRow = QHBoxLayout()
+        self.startBtn = QPushButton('Start')
+        self.startBtn.clicked.connect(self._start)
+        btnRow.addWidget(self.startBtn)
 
-        self.stop_btn = QPushButton('Stop')
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
-        btn_row.addWidget(self.stop_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        self.stopBtn = QPushButton('Stop')
+        self.stopBtn.setEnabled(False)
+        self.stopBtn.clicked.connect(self._stop)
+        btnRow.addWidget(self.stopBtn)
+        btnRow.addStretch()
+        layout.addLayout(btnRow)
 
-        self.status_label = QLabel('Ready')
-        layout.addWidget(self.status_label)
+        self.statusLabel = QLabel('Ready')
+        layout.addWidget(self.statusLabel)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat('%v / %m  (%p%)')
-        layout.addWidget(self.progress_bar)
+        self.progressBar = QProgressBar()
+        self.progressBar.setValue(0)
+        self.progressBar.setFormat('%v / %m  (%p%)')
+        layout.addWidget(self.progressBar)
 
-        self.eta_label = QLabel('')
-        self.eta_label.setStyleSheet('color: gray; font-size: 11px;')
-        layout.addWidget(self.eta_label)
+        self.etaLabel = QLabel('')
+        self.etaLabel.setStyleSheet('color: gray; font-size: 11px;')
+        layout.addWidget(self.etaLabel)
 
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        layout.addWidget(self.log_text, stretch=1)
+        self.logText = QTextEdit()
+        self.logText.setReadOnly(True)
+        layout.addWidget(self.logText, stretch=1)
 
     def _start(self):
         plates = self.state.get('plates', [])
         if not plates:
-            self.log_text.append('ERROR: No plates selected. Go to Setup tab.')
+            self.logText.append('ERROR: No plates selected. Go to Setup tab.')
             return
 
-        state_dict = self.state.to_dict()
-        output_root = state_dict.get('outputDir', '')
-        run_params = _extract_run_params(state_dict)
+        stateDict = self.state.to_dict()
+        outputRoot = stateDict.get('outputDir', '')
+        runParams = _extractRunParams(stateDict)
         resume = False
 
-        # Check each plate for existing output
-        plates_with_output = []
-        for plate_path in plates:
-            resolved = _resolve_tif_dir(plate_path, max_depth=2)
-            outdir = _compute_outdir(plate_path, resolved, output_root)
-            saved = _load_run_params(outdir)
-            has_files = os.path.isdir(outdir) and any(
+        platesWithOutput = []
+        for platePath in plates:
+            resolved = _resolveTifDir(platePath, maxDepth=2)
+            outdir = _computeOutdir(platePath, resolved, outputRoot)
+            saved = _loadRunParams(outdir)
+            hasFiles = os.path.isdir(outdir) and any(
                 f.endswith('.tif') for f in os.listdir(outdir))
-            if has_files:
-                plates_with_output.append((plate_path, saved))
+            if hasFiles:
+                platesWithOutput.append((platePath, saved))
 
-        if plates_with_output:
-            # Check if params match for all plates that have output
-            all_match = all(saved == run_params for _, saved in plates_with_output
-                           if saved is not None)
-            any_saved = any(saved is not None for _, saved in plates_with_output)
+        if platesWithOutput:
+            allMatch = all(saved == runParams for _, saved in platesWithOutput if saved is not None)
+            anySaved = any(saved is not None for _, saved in platesWithOutput)
 
-            if any_saved and all_match:
+            if anySaved and allMatch:
                 reply = QMessageBox.question(
                     self, 'Resume previous run?',
-                    f'{len(plates_with_output)} plate(s) already have processed '
+                    f'{len(platesWithOutput)} plate(s) already have processed '
                     f'output with the same parameters.\n\n'
                     f'Resume and skip already-processed wells?',
                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
@@ -825,12 +760,12 @@ class RunTab(QWidget):
                     return
                 resume = (reply == QMessageBox.Yes)
             else:
-                if any_saved:
-                    msg = (f'{len(plates_with_output)} plate(s) already have '
+                if anySaved:
+                    msg = (f'{len(platesWithOutput)} plate(s) already have '
                            f'processed output with DIFFERENT parameters.\n\n'
                            f'Continuing will overwrite existing results.')
                 else:
-                    msg = (f'{len(plates_with_output)} plate(s) already have '
+                    msg = (f'{len(platesWithOutput)} plate(s) already have '
                            f'processed output.\n\n'
                            f'Continuing will overwrite existing results.')
                 reply = QMessageBox.warning(
@@ -840,61 +775,61 @@ class RunTab(QWidget):
                 if reply == QMessageBox.Cancel:
                     return
 
-        self.log_text.clear()
-        self._stop_event.clear()
-        self._run_start_time = time.perf_counter()
+        self.logText.clear()
+        self._stopEvent.clear()
+        self._runStartTime = time.perf_counter()
 
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.eta_label.setText('')
-        self.status_label.setText('Starting…')
-        self.progress_bar.setValue(0)
+        self.startBtn.setEnabled(False)
+        self.stopBtn.setEnabled(True)
+        self.etaLabel.setText('')
+        self.statusLabel.setText('Starting…')
+        self.progressBar.setValue(0)
 
         self._thread = QThread()
-        self._worker = ProcessingWorker(state_dict, self._stop_event, resume=resume)
+        self._worker = ProcessingWorker(stateDict, self._stopEvent, resume=resume)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        self._worker.overall_progress.connect(self._on_overall_progress)
-        self._worker.log.connect(self._on_log)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.error.connect(self._on_error)
+        self._worker.overallProgress.connect(self._onOverallProgress)
+        self._worker.log.connect(self._onLog)
+        self._worker.finished.connect(self._onFinished)
+        self._worker.error.connect(self._onError)
 
         self._thread.start()
 
     def _stop(self):
-        self._stop_event.set()
-        self.log_text.append('Stopping...')
-        self.stop_btn.setEnabled(False)
+        self._stopEvent.set()
+        self.logText.append('Stopping...')
+        self.stopBtn.setEnabled(False)
 
-    def _on_overall_progress(self, done, total, desc):
-        self.progress_bar.setMaximum(max(total, 1))
-        self.progress_bar.setValue(done)
-        self.status_label.setText(desc)
-        if done > 0 and self._run_start_time is not None:
-            elapsed = time.perf_counter() - self._run_start_time
-            eta_secs = elapsed / done * (total - done) if done < total else 0
-            self.eta_label.setText(
-                f'Elapsed: {_fmt_time(elapsed)}  ·  ETA: {_fmt_time(eta_secs)}'
+    def _onOverallProgress(self, done, total, desc):
+        self.progressBar.setMaximum(max(total, 1))
+        self.progressBar.setValue(done)
+        self.statusLabel.setText(desc)
+        if done > 0 and self._runStartTime is not None:
+            elapsed = time.perf_counter() - self._runStartTime
+            etaSecs = elapsed / done * (total - done) if done < total else 0
+            self.etaLabel.setText(
+                f'Elapsed: {_fmtTime(elapsed)}  ·  ETA: {_fmtTime(etaSecs)}'
             )
 
-    def _on_log(self, msg):
-        self.log_text.append(msg)
-        sb = self.log_text.verticalScrollBar()
+    def _onLog(self, msg):
+        self.logText.append(msg)
+        sb = self.logText.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def _on_error(self, msg):
-        self.log_text.append(f'ERROR: {msg}')
+    def _onError(self, msg):
+        self.logText.append(f'ERROR: {msg}')
 
-    def _on_finished(self):
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.log_text.append('\nDone.')
-        self.progress_bar.setValue(self.progress_bar.maximum())
-        self.status_label.setText('Complete')
-        if self._run_start_time is not None:
-            elapsed = time.perf_counter() - self._run_start_time
-            self.eta_label.setText(f'Total time: {_fmt_time(elapsed)}')
+    def _onFinished(self):
+        self.startBtn.setEnabled(True)
+        self.stopBtn.setEnabled(False)
+        self.logText.append('\nDone.')
+        self.progressBar.setValue(self.progressBar.maximum())
+        self.statusLabel.setText('Complete')
+        if self._runStartTime is not None:
+            elapsed = time.perf_counter() - self._runStartTime
+            self.etaLabel.setText(f'Total time: {_fmtTime(elapsed)}')
 
         if self._thread:
             self._thread.quit()
