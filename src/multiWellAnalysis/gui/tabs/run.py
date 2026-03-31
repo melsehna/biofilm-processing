@@ -173,8 +173,8 @@ def _trackOneWell(plateName, row, trackingParams=None):
             rawStack, maskStack, outdir,
             plateName, wellId,
             biomass=biomass,
-            minColonyArea=trackingParams.get('minColonyAreaPx'),
-            propRadius=trackingParams.get('propRadiusPx'),
+            min_colony_area=trackingParams.get('minColonyAreaPx'),
+            prop_radius=trackingParams.get('propRadiusPx'),
         )
 
         elapsed = time.perf_counter() - t0
@@ -474,6 +474,11 @@ class ProcessingWorker(QObject):
         if doTracking: enabled.append('tracking')
         if doColonyFeats: enabled.append('colony-feats')
         self.log.emit(f'Enabled stages: {", ".join(enabled)} ({nStages} total)')
+        self.log.emit(f'  wholeImageFeats={s.get("wholeImageFeats")}, '
+                      f'colonyTracking={s.get("colonyTracking")}, '
+                      f'colonyFeats={s.get("colonyFeats")}, '
+                      f'copyRaw={s.get("copyRaw")}, '
+                      f'saveOverlays={s.get("saveOverlays")}')
 
         self._overallDone = 0
         self._totalTasks = 1
