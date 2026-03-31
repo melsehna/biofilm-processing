@@ -325,19 +325,25 @@ class SetupTab(QWidget):
             if not plates:
                 return all_mags, 'no plates'
 
-            # --- Fast path: parse directory names ---
-            # e.g. "241010_..._4x_10x_20x_40x_Discontinuous_Drawer1 ..."
+            # --- Fast path: parse directory names, filenames, and subdir names ---
             for plate_path in plates[:3]:
                 dirname = os.path.basename(plate_path)
                 for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
-                    # Match standalone magnification labels (word boundary)
                     if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', dirname):
                         all_mags.add(suffix)
+                # also check names of files/subdirs inside (CSV names, plate subdir names)
+                try:
+                    for name in os.listdir(plate_path):
+                        for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
+                            if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', name):
+                                all_mags.add(suffix)
+                except (PermissionError, OSError):
+                    pass
             if all_mags:
                 return all_mags, 'from directory names'
 
-            # --- Slow path: check for one TIF per suffix ---
-            for plate_path in plates[:3]:
+            # --- Slow path: check first TIF filename per suffix ---
+            for plate_path in plates[:1]:  # only scan first plate over SMB
                 found = _detect_mag_suffixes_from_tifs(
                     plate_path, set(self.MAG_SUFFIXES), max_depth=2,
                 )
