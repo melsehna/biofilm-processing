@@ -1,7 +1,7 @@
 import os
 import json
 import glob
-from .batch_runner import batch_run
+from .batch_runner import batchRun
 from .plotting import plotting_main
 
 def Pipeline(
@@ -37,7 +37,7 @@ def Pipeline(
 
     # Run the main batch analysis once for all plates
     # ---------------------------------------------------
-    batch_run(config_path=config_path, replicate_csv=replicate_csv, force=False)
+    batchRun(configPath=config_path, replicateCsv=replicate_csv, force=False)
 
     # Generate all plotting summaries automatically
     # ---------------------------------------------------
