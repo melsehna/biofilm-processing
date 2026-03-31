@@ -380,7 +380,7 @@ class SetupTab(QWidget):
 
         self._run_in_background('magnifications', _scan, _done)
 
-    def refresh_from_state(self):
+    def refreshFromState(self):
         """Sync all widgets to current state (call after loading a config)."""
         # Plate list
         self.plate_list.blockSignals(True)

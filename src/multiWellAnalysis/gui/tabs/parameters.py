@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 
-def _max_workers():
+def _maxWorkers():
     cpus = os.cpu_count() or 4
     return max(1, int(cpus * 0.75))
 
@@ -15,379 +15,357 @@ class ParametersTab(QWidget):
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
-        self._build_ui()
-        self._connect_signals()
+        self._buildUi()
+        self._connectSignals()
 
-    def _build_ui(self):
+    def _buildUi(self):
         layout = QVBoxLayout(self)
 
-        # ── Analysis ─────────────────────────────────────────────
-        analysis_group = QGroupBox('Analysis')
-        analysis_form = QFormLayout()
+        analysisGroup = QGroupBox('Analysis')
+        analysisForm = QFormLayout()
 
-        self.do_biomass = QCheckBox('Biofilm biomass (preprocessing + registration + masking)')
-        self.do_biomass.setChecked(True)
-        self.do_biomass.setEnabled(False)  # always on — base pipeline
-        analysis_form.addRow(self.do_biomass)
+        self.doBiomass = QCheckBox('Biofilm biomass (preprocessing + registration + masking)')
+        self.doBiomass.setChecked(True)
+        self.doBiomass.setEnabled(False)  # always on — base pipeline
+        analysisForm.addRow(self.doBiomass)
 
-        self.save_overlays = QCheckBox('Mask overlay videos (.mp4)')
-        self.save_overlays.setChecked(self.state.get('saveOverlays', True))
-        analysis_form.addRow(self.save_overlays)
+        self.saveOverlays = QCheckBox('Mask overlay videos (.mp4)')
+        self.saveOverlays.setChecked(self.state.get('saveOverlays', True))
+        analysisForm.addRow(self.saveOverlays)
 
-        self.whole_image = QCheckBox('Whole-image texture features')
-        self.whole_image.setChecked(self.state.get('wholeImageFeats', False))
-        analysis_form.addRow(self.whole_image)
+        self.wholeImage = QCheckBox('Whole-image texture features')
+        self.wholeImage.setChecked(self.state.get('wholeImageFeats', False))
+        analysisForm.addRow(self.wholeImage)
 
-        self.colony_tracking = QCheckBox('Colony tracking')
-        self.colony_tracking.setChecked(self.state.get('colonyTracking', False))
-        analysis_form.addRow(self.colony_tracking)
+        self.colonyTracking = QCheckBox('Colony tracking')
+        self.colonyTracking.setChecked(self.state.get('colonyTracking', False))
+        analysisForm.addRow(self.colonyTracking)
 
-        self.colony_feats = QCheckBox('Colony-level feature extraction (requires tracking)')
-        self.colony_feats.setChecked(self.state.get('colonyFeats', False))
-        analysis_form.addRow(self.colony_feats)
+        self.colonyFeats = QCheckBox('Colony-level feature extraction (requires tracking)')
+        self.colonyFeats.setChecked(self.state.get('colonyFeats', False))
+        analysisForm.addRow(self.colonyFeats)
 
-        analysis_group.setLayout(analysis_form)
-        layout.addWidget(analysis_group)
+        analysisGroup.setLayout(analysisForm)
+        layout.addWidget(analysisGroup)
 
-        # ── Preprocessing Parameters ────────────────────────────
-        preproc_group = QGroupBox('Preprocessing Parameters')
-        preproc_form = QFormLayout()
+        preprocGroup = QGroupBox('Preprocessing Parameters')
+        preprocForm = QFormLayout()
 
-        self.block_diam = QSpinBox()
-        self.block_diam.setRange(11, 501)
-        self.block_diam.setSingleStep(2)
-        self.block_diam.setValue(self.state.get('blockDiam', 101))
-        preproc_form.addRow('Block diameter (odd):', self.block_diam)
+        self.blockDiam = QSpinBox()
+        self.blockDiam.setRange(11, 501)
+        self.blockDiam.setSingleStep(2)
+        self.blockDiam.setValue(self.state.get('blockDiam', 101))
+        preprocForm.addRow('Block diameter (odd):', self.blockDiam)
 
-        self.fixed_thresh = QDoubleSpinBox()
-        self.fixed_thresh.setRange(0.0, 1.0)
-        self.fixed_thresh.setDecimals(4)
-        self.fixed_thresh.setSingleStep(0.001)
-        self.fixed_thresh.setValue(self.state.get('fixedThresh', 0.04))
-        preproc_form.addRow('Fixed threshold:', self.fixed_thresh)
+        self.fixedThresh = QDoubleSpinBox()
+        self.fixedThresh.setRange(0.0, 1.0)
+        self.fixedThresh.setDecimals(4)
+        self.fixedThresh.setSingleStep(0.001)
+        self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
+        preprocForm.addRow('Fixed threshold:', self.fixedThresh)
 
-        self.dust_correction = QCheckBox('Dust correction')
-        self.dust_correction.setChecked(self.state.get('dustCorrection', True))
-        preproc_form.addRow(self.dust_correction)
+        self.dustCorrection = QCheckBox('Dust correction')
+        self.dustCorrection.setChecked(self.state.get('dustCorrection', True))
+        preprocForm.addRow(self.dustCorrection)
 
-        preproc_group.setLayout(preproc_form)
-        layout.addWidget(preproc_group)
+        preprocGroup.setLayout(preprocForm)
+        layout.addWidget(preprocGroup)
 
-        # ── Per-Magnification Overrides ──────────────────────────
-        mag_group = QGroupBox('Per-Magnification Overrides')
-        mag_layout = QVBoxLayout()
+        magGroup = QGroupBox('Per-Magnification Overrides')
+        magLayout = QVBoxLayout()
 
-        mag_hint = QLabel(
+        magHint = QLabel(
             'Save current preprocessing values as overrides for a specific magnification. '
             'Magnifications without overrides use the global values above.'
         )
-        mag_hint.setWordWrap(True)
-        mag_hint.setStyleSheet('color: gray; font-size: 11px;')
-        mag_layout.addWidget(mag_hint)
+        magHint.setWordWrap(True)
+        magHint.setStyleSheet('color: gray; font-size: 11px;')
+        magLayout.addWidget(magHint)
 
-        mag_btn_row = QHBoxLayout()
-        self.mag_override_combo = QComboBox()
-        self.mag_override_combo.setMinimumWidth(150)
-        mag_btn_row.addWidget(QLabel('Magnification:'))
-        mag_btn_row.addWidget(self.mag_override_combo)
+        magBtnRow = QHBoxLayout()
+        self.magOverrideCombo = QComboBox()
+        self.magOverrideCombo.setMinimumWidth(150)
+        magBtnRow.addWidget(QLabel('Magnification:'))
+        magBtnRow.addWidget(self.magOverrideCombo)
 
-        save_override_btn = QPushButton('Save override')
-        save_override_btn.clicked.connect(self._save_mag_override)
-        mag_btn_row.addWidget(save_override_btn)
+        saveOverrideBtn = QPushButton('Save override')
+        saveOverrideBtn.clicked.connect(self._saveMagOverride)
+        magBtnRow.addWidget(saveOverrideBtn)
 
-        load_override_btn = QPushButton('Load override')
-        load_override_btn.clicked.connect(self._load_mag_override)
-        mag_btn_row.addWidget(load_override_btn)
+        loadOverrideBtn = QPushButton('Load override')
+        loadOverrideBtn.clicked.connect(self._loadMagOverride)
+        magBtnRow.addWidget(loadOverrideBtn)
 
-        del_override_btn = QPushButton('Delete')
-        del_override_btn.clicked.connect(self._delete_mag_override)
-        mag_btn_row.addWidget(del_override_btn)
-        mag_btn_row.addStretch()
-        mag_layout.addLayout(mag_btn_row)
+        delOverrideBtn = QPushButton('Delete')
+        delOverrideBtn.clicked.connect(self._deleteMagOverride)
+        magBtnRow.addWidget(delOverrideBtn)
+        magBtnRow.addStretch()
+        magLayout.addLayout(magBtnRow)
 
-        self.mag_overrides_list = QListWidget()
-        self.mag_overrides_list.setMaximumHeight(80)
-        mag_layout.addWidget(self.mag_overrides_list)
+        self.magOverridesList = QListWidget()
+        self.magOverridesList.setMaximumHeight(80)
+        magLayout.addWidget(self.magOverridesList)
 
-        mag_group.setLayout(mag_layout)
-        layout.addWidget(mag_group)
+        magGroup.setLayout(magLayout)
+        layout.addWidget(magGroup)
 
-        # populate mag combo from state
-        self._refresh_mag_combo()
-        self._refresh_mag_overrides_list()
-        self.state.changed.connect(self._on_state_changed_mag)
+        self._refreshMagCombo()
+        self._refreshMagOverridesList()
+        self.state.changed.connect(self._onStateChangedMag)
 
-        # ── Colony Tracking Parameters ───────────────────────────
-        self.colony_params_group = QGroupBox('Colony Tracking Parameters')
-        colony_form = QFormLayout()
+        self.colonyParamsGroup = QGroupBox('Colony Tracking Parameters')
+        colonyForm = QFormLayout()
 
-        self.min_colony_area = QSpinBox()
-        self.min_colony_area.setRange(10, 5000)
-        self.min_colony_area.setValue(self.state.get('minColonyAreaPx', 200))
-        colony_form.addRow('Min colony area (px):', self.min_colony_area)
+        self.minColonyArea = QSpinBox()
+        self.minColonyArea.setRange(10, 5000)
+        self.minColonyArea.setValue(self.state.get('minColonyAreaPx', 200))
+        colonyForm.addRow('Min colony area (px):', self.minColonyArea)
 
-        self.prop_radius = QSpinBox()
-        self.prop_radius.setRange(1, 200)
-        self.prop_radius.setValue(self.state.get('propRadiusPx', 25))
-        colony_form.addRow('Propagation radius (px):', self.prop_radius)
+        self.propRadius = QSpinBox()
+        self.propRadius.setRange(1, 200)
+        self.propRadius.setValue(self.state.get('propRadiusPx', 25))
+        colonyForm.addRow('Propagation radius (px):', self.propRadius)
 
-        self.colony_params_group.setLayout(colony_form)
-        self.colony_params_group.setVisible(
+        self.colonyParamsGroup.setLayout(colonyForm)
+        self.colonyParamsGroup.setVisible(
             self.state.get('colonyTracking', False)
             or self.state.get('colonyFeats', False)
         )
-        layout.addWidget(self.colony_params_group)
+        layout.addWidget(self.colonyParamsGroup)
 
-        # ── Performance ──────────────────────────────────────────
-        perf_group = QGroupBox('Performance')
-        perf_form = QFormLayout()
+        perfGroup = QGroupBox('Performance')
+        perfForm = QFormLayout()
 
-        cap = _max_workers()
+        cap = _maxWorkers()
         self.workers = QSpinBox()
         self.workers.setRange(1, cap)
         self.workers.setValue(min(self.state.get('workers', 4), cap))
-        perf_form.addRow('Workers:', self.workers)
+        perfForm.addRow('Workers:', self.workers)
 
-        cores_label = QLabel(f'(max {cap}, from {os.cpu_count()} cores)')
-        cores_label.setStyleSheet('color: gray; font-size: 11px;')
-        perf_form.addRow('', cores_label)
+        coresLabel = QLabel(f'(max {cap}, from {os.cpu_count()} cores)')
+        coresLabel.setStyleSheet('color: gray; font-size: 11px;')
+        perfForm.addRow('', coresLabel)
 
-        perf_group.setLayout(perf_form)
-        layout.addWidget(perf_group)
+        perfGroup.setLayout(perfForm)
+        layout.addWidget(perfGroup)
 
-        # ── Saved Outputs (Advanced) ─────────────────────────────
-        output_group = QGroupBox('Saved Outputs (Advanced)')
-        output_form = QFormLayout()
+        outputGroup = QGroupBox('Saved Outputs (Advanced)')
+        outputForm = QFormLayout()
 
-        self.save_registered = QCheckBox('Keep registered raw stacks (.tif)')
-        self.save_registered.setChecked(self.state.get('saveRegistered', True))
-        output_form.addRow(self.save_registered)
+        self.saveRegistered = QCheckBox('Keep registered raw stacks (.tif)')
+        self.saveRegistered.setChecked(self.state.get('saveRegistered', True))
+        outputForm.addRow(self.saveRegistered)
 
-        self.save_processed = QCheckBox('Keep processed images (.tif)')
-        self.save_processed.setChecked(self.state.get('saveProcessed', True))
-        output_form.addRow(self.save_processed)
+        self.saveProcessed = QCheckBox('Keep processed images (.tif)')
+        self.saveProcessed.setChecked(self.state.get('saveProcessed', True))
+        outputForm.addRow(self.saveProcessed)
 
-        self.save_masks = QCheckBox('Keep binary masks (.npz)')
-        self.save_masks.setChecked(self.state.get('saveMasks', True))
-        output_form.addRow(self.save_masks)
+        self.saveMasks = QCheckBox('Keep binary masks (.npz)')
+        self.saveMasks.setChecked(self.state.get('saveMasks', True))
+        outputForm.addRow(self.saveMasks)
 
-        self.copy_raw = QCheckBox('Copy raw frames as stacked TIFF (.tif)')
-        self.copy_raw.setChecked(self.state.get('copyRaw', False))
-        output_form.addRow(self.copy_raw)
+        self.copyRaw = QCheckBox('Copy raw frames as stacked TIFF (.tif)')
+        self.copyRaw.setChecked(self.state.get('copyRaw', False))
+        outputForm.addRow(self.copyRaw)
 
-        output_group.setLayout(output_form)
-        layout.addWidget(output_group)
+        outputGroup.setLayout(outputForm)
+        layout.addWidget(outputGroup)
 
         layout.addStretch()
 
-    def _connect_signals(self):
-        # analysis
-        self.save_overlays.toggled.connect(
+    def _connectSignals(self):
+        self.saveOverlays.toggled.connect(
             lambda v: self.state.set('saveOverlays', v))
-        self.whole_image.toggled.connect(self._on_whole_image)
-        self.colony_tracking.toggled.connect(self._on_colony_tracking)
-        self.colony_feats.toggled.connect(self._on_colony_feats)
+        self.wholeImage.toggled.connect(self._onWholeImage)
+        self.colonyTracking.toggled.connect(self._onColonyTracking)
+        self.colonyFeats.toggled.connect(self._onColonyFeats)
 
-        # preprocessing
-        self.block_diam.valueChanged.connect(self._on_block_diam)
-        self.fixed_thresh.valueChanged.connect(
+        self.blockDiam.valueChanged.connect(self._onBlockDiam)
+        self.fixedThresh.valueChanged.connect(
             lambda v: self.state.set('fixedThresh', v))
-        self.dust_correction.toggled.connect(
+        self.dustCorrection.toggled.connect(
             lambda v: self.state.set('dustCorrection', v))
 
-        # colony params
-        self.min_colony_area.valueChanged.connect(
+        self.minColonyArea.valueChanged.connect(
             lambda v: self.state.set('minColonyAreaPx', v))
-        self.prop_radius.valueChanged.connect(
+        self.propRadius.valueChanged.connect(
             lambda v: self.state.set('propRadiusPx', v))
 
-        # performance
         self.workers.valueChanged.connect(
             lambda v: self.state.set('workers', v))
 
-        # saved outputs
-        self.save_registered.toggled.connect(
+        self.saveRegistered.toggled.connect(
             lambda v: self.state.set('saveRegistered', v))
-        self.save_processed.toggled.connect(
+        self.saveProcessed.toggled.connect(
             lambda v: self.state.set('saveProcessed', v))
-        self.save_masks.toggled.connect(
+        self.saveMasks.toggled.connect(
             lambda v: self.state.set('saveMasks', v))
-        self.copy_raw.toggled.connect(
+        self.copyRaw.toggled.connect(
             lambda v: self.state.set('copyRaw', v))
 
-        # re-check deps when user unchecks saved outputs
-        self.save_processed.toggled.connect(self._enforce_output_deps)
-        self.save_registered.toggled.connect(self._enforce_output_deps)
+        self.saveProcessed.toggled.connect(self._enforceOutputDeps)
+        self.saveRegistered.toggled.connect(self._enforceOutputDeps)
 
-    def _on_block_diam(self, val):
+    def _onBlockDiam(self, val):
         if val % 2 == 0:
-            self.block_diam.setValue(val + 1)
+            self.blockDiam.setValue(val + 1)
             return
         self.state.set('blockDiam', val)
 
-    def _on_whole_image(self, checked):
+    def _onWholeImage(self, checked):
         self.state.set('wholeImageFeats', checked)
-        if checked and not self.save_processed.isChecked():
-            self.save_processed.setChecked(True)
+        if checked and not self.saveProcessed.isChecked():
+            self.saveProcessed.setChecked(True)
 
-    def _on_colony_tracking(self, checked):
+    def _onColonyTracking(self, checked):
         self.state.set('colonyTracking', checked)
-        # If unchecking tracking while colony feats is on, re-enable
-        if not checked and self.colony_feats.isChecked():
-            self.colony_tracking.setChecked(True)
+        if not checked and self.colonyFeats.isChecked():
+            self.colonyTracking.setChecked(True)
             return
         if checked:
-            if not self.save_registered.isChecked():
-                self.save_registered.setChecked(True)
-            if not self.save_masks.isChecked():
-                self.save_masks.setChecked(True)
-        self.colony_params_group.setVisible(
-            checked or self.colony_feats.isChecked()
+            if not self.saveRegistered.isChecked():
+                self.saveRegistered.setChecked(True)
+            if not self.saveMasks.isChecked():
+                self.saveMasks.setChecked(True)
+        self.colonyParamsGroup.setVisible(
+            checked or self.colonyFeats.isChecked()
         )
 
-    def _on_colony_feats(self, checked):
+    def _onColonyFeats(self, checked):
         self.state.set('colonyFeats', checked)
         if checked:
-            # Colony feats requires tracking, which requires registered + masks
-            if not self.colony_tracking.isChecked():
-                self.colony_tracking.setChecked(True)
-            if not self.save_registered.isChecked():
-                self.save_registered.setChecked(True)
-            if not self.save_masks.isChecked():
-                self.save_masks.setChecked(True)
-        self.colony_params_group.setVisible(
-            checked or self.colony_tracking.isChecked()
+            if not self.colonyTracking.isChecked():
+                self.colonyTracking.setChecked(True)
+            if not self.saveRegistered.isChecked():
+                self.saveRegistered.setChecked(True)
+            if not self.saveMasks.isChecked():
+                self.saveMasks.setChecked(True)
+        self.colonyParamsGroup.setVisible(
+            checked or self.colonyTracking.isChecked()
         )
 
-    def _enforce_output_deps(self):
+    def _enforceOutputDeps(self):
         """Prevent unchecking outputs that active features depend on."""
-        if self.whole_image.isChecked() and not self.save_processed.isChecked():
-            self.save_processed.setChecked(True)
-        if self.colony_feats.isChecked() or self.colony_tracking.isChecked():
-            if not self.save_registered.isChecked():
-                self.save_registered.setChecked(True)
-            if not self.save_masks.isChecked():
-                self.save_masks.setChecked(True)
-        if self.colony_feats.isChecked() and not self.colony_tracking.isChecked():
-            self.colony_tracking.setChecked(True)
+        if self.wholeImage.isChecked() and not self.saveProcessed.isChecked():
+            self.saveProcessed.setChecked(True)
+        if self.colonyFeats.isChecked() or self.colonyTracking.isChecked():
+            if not self.saveRegistered.isChecked():
+                self.saveRegistered.setChecked(True)
+            if not self.saveMasks.isChecked():
+                self.saveMasks.setChecked(True)
+        if self.colonyFeats.isChecked() and not self.colonyTracking.isChecked():
+            self.colonyTracking.setChecked(True)
 
-    # ── Per-magnification override methods ───────────────────
-    def _on_state_changed_mag(self):
+    def _onStateChangedMag(self):
         """Refresh mag combo when magnifications change in Setup tab."""
-        self._refresh_mag_combo()
+        self._refreshMagCombo()
 
-    def _refresh_mag_combo(self):
-        mag_setting = self.state.get('magnification', 'all')
+    def _refreshMagCombo(self):
+        magSetting = self.state.get('magnification', 'all')
         mags = []
-        if isinstance(mag_setting, list):
-            mags = mag_setting
-        elif isinstance(mag_setting, str) and mag_setting != 'all':
-            mags = [mag_setting]
+        if isinstance(magSetting, list):
+            mags = magSetting
+        elif isinstance(magSetting, str) and magSetting != 'all':
+            mags = [magSetting]
 
-        # Also check magParams for mags that were saved but may not be selected
         for m in self.state.get('magParams', {}):
             if m not in mags:
                 mags.append(m)
 
-        prev = self.mag_override_combo.currentText()
-        self.mag_override_combo.blockSignals(True)
-        self.mag_override_combo.clear()
+        prev = self.magOverrideCombo.currentText()
+        self.magOverrideCombo.blockSignals(True)
+        self.magOverrideCombo.clear()
         for m in sorted(set(mags)):
-            self.mag_override_combo.addItem(m)
-        # restore
-        idx = self.mag_override_combo.findText(prev)
+            self.magOverrideCombo.addItem(m)
+        idx = self.magOverrideCombo.findText(prev)
         if idx >= 0:
-            self.mag_override_combo.setCurrentIndex(idx)
-        self.mag_override_combo.blockSignals(False)
+            self.magOverrideCombo.setCurrentIndex(idx)
+        self.magOverrideCombo.blockSignals(False)
 
-    def _refresh_mag_overrides_list(self):
-        self.mag_overrides_list.clear()
-        mag_params = self.state.get('magParams', {})
-        for mag, params in sorted(mag_params.items()):
+    def _refreshMagOverridesList(self):
+        self.magOverridesList.clear()
+        magParams = self.state.get('magParams', {})
+        for mag, params in sorted(magParams.items()):
             parts = [f'{k}={v}' for k, v in sorted(params.items())]
-            self.mag_overrides_list.addItem(f'{mag}: {", ".join(parts)}')
+            self.magOverridesList.addItem(f'{mag}: {", ".join(parts)}')
 
-    def _save_mag_override(self):
-        mag = self.mag_override_combo.currentText()
+    def _saveMagOverride(self):
+        mag = self.magOverrideCombo.currentText()
         if not mag:
             return
-        mag_params = self.state.get('magParams', {})
-        mag_params[mag] = {
-            'blockDiam': self.block_diam.value(),
-            'fixedThresh': self.fixed_thresh.value(),
-            'dustCorrection': self.dust_correction.isChecked(),
-            'minColonyAreaPx': self.min_colony_area.value(),
-            'propRadiusPx': self.prop_radius.value(),
+        magParams = self.state.get('magParams', {})
+        magParams[mag] = {
+            'blockDiam': self.blockDiam.value(),
+            'fixedThresh': self.fixedThresh.value(),
+            'dustCorrection': self.dustCorrection.isChecked(),
+            'minColonyAreaPx': self.minColonyArea.value(),
+            'propRadiusPx': self.propRadius.value(),
         }
-        self.state.set('magParams', mag_params)
-        self._refresh_mag_overrides_list()
+        self.state.set('magParams', magParams)
+        self._refreshMagOverridesList()
 
-    def _load_mag_override(self):
+    def _loadMagOverride(self):
         """Load a saved override's values into the parameter widgets for editing."""
-        mag = self.mag_override_combo.currentText()
+        mag = self.magOverrideCombo.currentText()
         if not mag:
             return
-        mag_params = self.state.get('magParams', {})
-        if mag not in mag_params:
+        magParams = self.state.get('magParams', {})
+        if mag not in magParams:
             return
-        p = mag_params[mag]
-        self.block_diam.blockSignals(True)
-        self.fixed_thresh.blockSignals(True)
-        self.dust_correction.blockSignals(True)
-        self.min_colony_area.blockSignals(True)
-        self.prop_radius.blockSignals(True)
-        self.block_diam.setValue(p.get('blockDiam', self.state.get('blockDiam', 101)))
-        self.fixed_thresh.setValue(p.get('fixedThresh', self.state.get('fixedThresh', 0.04)))
-        self.dust_correction.setChecked(p.get('dustCorrection', self.state.get('dustCorrection', True)))
-        self.min_colony_area.setValue(p.get('minColonyAreaPx', self.state.get('minColonyAreaPx', 200)))
-        self.prop_radius.setValue(p.get('propRadiusPx', self.state.get('propRadiusPx', 25)))
-        self.block_diam.blockSignals(False)
-        self.fixed_thresh.blockSignals(False)
-        self.dust_correction.blockSignals(False)
-        self.min_colony_area.blockSignals(False)
-        self.prop_radius.blockSignals(False)
+        p = magParams[mag]
+        for w in [self.blockDiam, self.fixedThresh, self.dustCorrection,
+                  self.minColonyArea, self.propRadius]:
+            w.blockSignals(True)
+        self.blockDiam.setValue(p.get('blockDiam', self.state.get('blockDiam', 101)))
+        self.fixedThresh.setValue(p.get('fixedThresh', self.state.get('fixedThresh', 0.04)))
+        self.dustCorrection.setChecked(p.get('dustCorrection', self.state.get('dustCorrection', True)))
+        self.minColonyArea.setValue(p.get('minColonyAreaPx', self.state.get('minColonyAreaPx', 200)))
+        self.propRadius.setValue(p.get('propRadiusPx', self.state.get('propRadiusPx', 25)))
+        for w in [self.blockDiam, self.fixedThresh, self.dustCorrection,
+                  self.minColonyArea, self.propRadius]:
+            w.blockSignals(False)
 
-    def _delete_mag_override(self):
-        mag = self.mag_override_combo.currentText()
+    def _deleteMagOverride(self):
+        mag = self.magOverrideCombo.currentText()
         if not mag:
             return
-        mag_params = self.state.get('magParams', {})
-        mag_params.pop(mag, None)
-        self.state.set('magParams', mag_params)
-        self._refresh_mag_overrides_list()
+        magParams = self.state.get('magParams', {})
+        magParams.pop(mag, None)
+        self.state.set('magParams', magParams)
+        self._refreshMagOverridesList()
 
-    def refresh_from_state(self):
+    def refreshFromState(self):
         """Sync all widgets to current state (call after loading a config)."""
         widgets = [
-            self.save_overlays, self.whole_image, self.colony_tracking,
-            self.colony_feats, self.dust_correction, self.save_registered,
-            self.save_processed, self.save_masks, self.copy_raw,
-            self.block_diam, self.fixed_thresh,
-            self.min_colony_area, self.prop_radius, self.workers,
+            self.saveOverlays, self.wholeImage, self.colonyTracking,
+            self.colonyFeats, self.dustCorrection, self.saveRegistered,
+            self.saveProcessed, self.saveMasks, self.copyRaw,
+            self.blockDiam, self.fixedThresh,
+            self.minColonyArea, self.propRadius, self.workers,
         ]
         for w in widgets:
             w.blockSignals(True)
 
-        self.save_overlays.setChecked(self.state.get('saveOverlays', True))
-        self.whole_image.setChecked(self.state.get('wholeImageFeats', False))
-        self.colony_tracking.setChecked(self.state.get('colonyTracking', False))
-        self.colony_feats.setChecked(self.state.get('colonyFeats', False))
-        self.dust_correction.setChecked(self.state.get('dustCorrection', True))
-        self.save_registered.setChecked(self.state.get('saveRegistered', True))
-        self.save_processed.setChecked(self.state.get('saveProcessed', True))
-        self.save_masks.setChecked(self.state.get('saveMasks', True))
-        self.copy_raw.setChecked(self.state.get('copyRaw', False))
-        self.block_diam.setValue(self.state.get('blockDiam', 101))
-        self.fixed_thresh.setValue(self.state.get('fixedThresh', 0.04))
-        self.min_colony_area.setValue(self.state.get('minColonyAreaPx', 200))
-        self.prop_radius.setValue(self.state.get('propRadiusPx', 25))
-        self.workers.setValue(min(self.state.get('workers', 4), _max_workers()))
+        self.saveOverlays.setChecked(self.state.get('saveOverlays', True))
+        self.wholeImage.setChecked(self.state.get('wholeImageFeats', False))
+        self.colonyTracking.setChecked(self.state.get('colonyTracking', False))
+        self.colonyFeats.setChecked(self.state.get('colonyFeats', False))
+        self.dustCorrection.setChecked(self.state.get('dustCorrection', True))
+        self.saveRegistered.setChecked(self.state.get('saveRegistered', True))
+        self.saveProcessed.setChecked(self.state.get('saveProcessed', True))
+        self.saveMasks.setChecked(self.state.get('saveMasks', True))
+        self.copyRaw.setChecked(self.state.get('copyRaw', False))
+        self.blockDiam.setValue(self.state.get('blockDiam', 101))
+        self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
+        self.minColonyArea.setValue(self.state.get('minColonyAreaPx', 200))
+        self.propRadius.setValue(self.state.get('propRadiusPx', 25))
+        self.workers.setValue(min(self.state.get('workers', 4), _maxWorkers()))
 
         for w in widgets:
             w.blockSignals(False)
 
-        self.colony_params_group.setVisible(
+        self.colonyParamsGroup.setVisible(
             self.state.get('colonyTracking', False) or self.state.get('colonyFeats', False)
         )
-        self._refresh_mag_combo()
-        self._refresh_mag_overrides_list()
+        self._refreshMagCombo()
+        self._refreshMagOverridesList()

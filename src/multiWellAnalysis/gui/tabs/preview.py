@@ -15,28 +15,27 @@ from matplotlib.figure import Figure
 import cv2
 import tifffile
 
-from multiWellAnalysis.processing.preprocessing import normalize_local_contrast
+from multiWellAnalysis.processing.preprocessing import normalizeLocalContrast
 
 MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
 
 
-def discover_wells_with_mag(plate_dir):
+def discoverWellsWithMag(plateDir):
     """Find well+mag combinations from TIF filenames.
 
     Returns list of (display_label, well_id, mag_suffix, file_list_or_path) tuples.
     For plates without magnification suffixes, mag_suffix is ''.
     """
-    if not plate_dir or not os.path.isdir(plate_dir):
+    if not plateDir or not os.path.isdir(plateDir):
         return []
 
-    from multiWellAnalysis.gui.tabs.run import _resolve_tif_dir, _list_raw_tifs
-    resolved = _resolve_tif_dir(plate_dir, max_depth=2)
-    raw_tifs = _list_raw_tifs(resolved)
+    from multiWellAnalysis.gui.tabs.run import _resolveTifDir, _listRawTifs
+    resolved = _resolveTifDir(plateDir, max_depth=2)
+    rawTifs = _listRawTifs(resolved)
 
-    bf_files = [f for f in raw_tifs if 'Bright Field' in f or 'Bright_Field' in f]
+    bfFiles = [f for f in rawTifs if 'Bright Field' in f or 'Bright_Field' in f]
 
-    # Try magnification-aware grouping
-    candidates = bf_files if bf_files else raw_tifs
+    candidates = bfFiles if bfFiles else rawTifs
     if candidates:
         groups = defaultdict(lambda: defaultdict(list))
         for f in candidates:
@@ -51,14 +50,14 @@ def discover_wells_with_mag(plate_dir):
             for mag in sorted(groups):
                 for well in sorted(groups[mag]):
                     files = sorted(groups[mag][well])
-                    mag_label = MAG_SUFFIXES.get(mag, mag)
-                    label = f'{well} ({mag_label})'
+                    magLabel = MAG_SUFFIXES.get(mag, mag)
+                    label = f'{well} ({magLabel})'
                     result.append((label, well, mag, files))
             return result
 
     # Fallback: no magnification suffixes — group raw TIFs by well
     wells = defaultdict(list)
-    for f in raw_tifs:
+    for f in rawTifs:
         name = os.path.basename(f)
         m = re.match(r'^([A-P]\d{1,2})[_.]', name)
         if m:
@@ -70,91 +69,88 @@ def discover_wells_with_mag(plate_dir):
     return result
 
 
-def load_frame(source, frame_idx):
+def loadFrame(source, frameIdx):
     """Load a single frame from a TIFF stack or list of files."""
     if isinstance(source, str):
         img = tifffile.imread(source)
         if img.ndim == 3:
             if img.shape[0] < img.shape[1] and img.shape[0] < img.shape[2]:
-                n_frames = img.shape[0]
-                frame_idx = min(frame_idx, n_frames - 1)
-                return img[frame_idx].astype(np.float64), n_frames
+                nFrames = img.shape[0]
+                frameIdx = min(frameIdx, nFrames - 1)
+                return img[frameIdx].astype(np.float64), nFrames
             elif img.shape[2] < img.shape[0] and img.shape[2] < img.shape[1]:
-                n_frames = img.shape[2]
-                frame_idx = min(frame_idx, n_frames - 1)
-                return img[:, :, frame_idx].astype(np.float64), n_frames
+                nFrames = img.shape[2]
+                frameIdx = min(frameIdx, nFrames - 1)
+                return img[:, :, frameIdx].astype(np.float64), nFrames
             else:
-                n_frames = img.shape[0]
-                frame_idx = min(frame_idx, n_frames - 1)
-                return img[frame_idx].astype(np.float64), n_frames
+                nFrames = img.shape[0]
+                frameIdx = min(frameIdx, nFrames - 1)
+                return img[frameIdx].astype(np.float64), nFrames
         return img.astype(np.float64), 1
     elif isinstance(source, list):
-        frame_idx = min(frame_idx, len(source) - 1)
-        img = tifffile.imread(source[frame_idx])
+        frameIdx = min(frameIdx, len(source) - 1)
+        img = tifffile.imread(source[frameIdx])
         return img.astype(np.float64), len(source)
     return None, 0
 
 
 class PreviewTab(QWidget):
-    _well_result = Signal(object)  # delivers well entries from background thread
+    _wellResult = Signal(object)
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
-        self._well_result.connect(self._on_wells_discovered)
-        self._debounce_timer = QTimer()
-        self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.setInterval(300)
-        self._debounce_timer.timeout.connect(self._render)
-        self._current_source = None
-        self._current_mag = ''
-        self._current_well = ''
-        self._n_frames = 0
-        self._well_entries = []  # list of (label, well_id, mag, source)
-        self._last_mag_setting = None
-        self._build_ui()
-        self._connect_signals()
+        self._wellResult.connect(self._onWellsDiscovered)
+        self._debounceTimer = QTimer()
+        self._debounceTimer.setSingleShot(True)
+        self._debounceTimer.setInterval(300)
+        self._debounceTimer.timeout.connect(self._render)
+        self._currentSource = None
+        self._currentMag = ''
+        self._currentWell = ''
+        self._nFrames = 0
+        self._wellEntries = []
+        self._filteredEntries = []
+        self._lastMagSetting = None
+        self._buildUi()
+        self._connectSignals()
 
-    def _build_ui(self):
+    def _buildUi(self):
         layout = QVBoxLayout(self)
 
-        # selectors row
-        sel_row = QHBoxLayout()
-        sel_row.addWidget(QLabel('Plate:'))
-        self.plate_combo = QComboBox()
-        sel_row.addWidget(self.plate_combo, stretch=1)
+        selRow = QHBoxLayout()
+        selRow.addWidget(QLabel('Plate:'))
+        self.plateCombo = QComboBox()
+        selRow.addWidget(self.plateCombo, stretch=1)
 
-        sel_row.addWidget(QLabel('Mag:'))
-        self.mag_combo = QComboBox()
-        sel_row.addWidget(self.mag_combo)
+        selRow.addWidget(QLabel('Mag:'))
+        self.magCombo = QComboBox()
+        selRow.addWidget(self.magCombo)
 
-        sel_row.addWidget(QLabel('Well:'))
-        self.well_combo = QComboBox()
-        sel_row.addWidget(self.well_combo, stretch=1)
-        layout.addLayout(sel_row)
+        selRow.addWidget(QLabel('Well:'))
+        self.wellCombo = QComboBox()
+        selRow.addWidget(self.wellCombo, stretch=1)
+        layout.addLayout(selRow)
 
-        # frame slider row
-        frame_row = QHBoxLayout()
-        frame_row.addWidget(QLabel('Frame:'))
-        self.frame_slider = QSlider(Qt.Horizontal)
-        self.frame_slider.setRange(0, 0)
-        frame_row.addWidget(self.frame_slider, stretch=1)
-        self.frame_label = QLabel('0 / 0')
-        frame_row.addWidget(self.frame_label)
-        layout.addLayout(frame_row)
+        frameRow = QHBoxLayout()
+        frameRow.addWidget(QLabel('Frame:'))
+        self.frameSlider = QSlider(Qt.Horizontal)
+        self.frameSlider.setRange(0, 0)
+        frameRow.addWidget(self.frameSlider, stretch=1)
+        self.frameLabel = QLabel('0 / 0')
+        frameRow.addWidget(self.frameLabel)
+        layout.addLayout(frameRow)
 
-        # params display
-        self.params_label = QLabel('')
-        self.params_label.setStyleSheet('color: gray; font-size: 11px;')
-        layout.addWidget(self.params_label)
+        self.paramsLabel = QLabel('')
+        self.paramsLabel.setStyleSheet('color: gray; font-size: 11px;')
+        layout.addWidget(self.paramsLabel)
 
-        # matplotlib canvas: 1 row x 3 columns
         self.figure = Figure(figsize=(12, 4))
         self.canvas = FigureCanvasQTAgg(self.figure)
 
-        self.ax_raw = self.figure.add_subplot(1, 3, 1)
-        self.ax_proc = self.figure.add_subplot(1, 3, 2)
-        self.ax_mask = self.figure.add_subplot(1, 3, 3)
+        self.axRaw = self.figure.add_subplot(1, 3, 1)
+        self.axProc = self.figure.add_subplot(1, 3, 2)
+        self.axMask = self.figure.add_subplot(1, 3, 3)
 
         for ax in self.figure.axes:
             ax.set_xticks([])
@@ -163,204 +159,201 @@ class PreviewTab(QWidget):
         self.figure.tight_layout()
         layout.addWidget(self.canvas, stretch=1)
 
-        self.refresh_btn = QPushButton('Refresh')
-        layout.addWidget(self.refresh_btn)
+        self.refreshBtn = QPushButton('Refresh')
+        layout.addWidget(self.refreshBtn)
 
-    def _connect_signals(self):
-        self.plate_combo.currentIndexChanged.connect(self._on_plate_changed)
-        self.mag_combo.currentIndexChanged.connect(self._on_mag_changed)
-        self.well_combo.currentIndexChanged.connect(self._on_well_changed)
-        self.frame_slider.valueChanged.connect(self._on_frame_changed)
-        self.refresh_btn.clicked.connect(self._refresh_all)
-        self.state.changed.connect(self._on_state_changed)
+    def _connectSignals(self):
+        self.plateCombo.currentIndexChanged.connect(self._onPlateChanged)
+        self.magCombo.currentIndexChanged.connect(self._onMagChanged)
+        self.wellCombo.currentIndexChanged.connect(self._onWellChanged)
+        self.frameSlider.valueChanged.connect(self._onFrameChanged)
+        self.refreshBtn.clicked.connect(self._refreshAll)
+        self.state.changed.connect(self._onStateChanged)
 
-    def _get_params_for_mag(self, mag):
+    def _getParamsForMag(self, mag):
         """Get parameters with per-magnification overrides applied."""
-        block_diam = self.state.get('blockDiam', 101)
-        fixed_thresh = self.state.get('fixedThresh', 0.04)
-        dust_correction = self.state.get('dustCorrection', True)
-        min_colony_area = self.state.get('minColonyAreaPx', 200)
+        blockDiam = self.state.get('blockDiam', 101)
+        fixedThresh = self.state.get('fixedThresh', 0.04)
+        dustCorrection = self.state.get('dustCorrection', True)
+        minColonyArea = self.state.get('minColonyAreaPx', 200)
 
-        mag_params = self.state.get('magParams', {})
-        if mag and mag in mag_params:
-            overrides = mag_params[mag]
-            block_diam = overrides.get('blockDiam', block_diam)
-            fixed_thresh = overrides.get('fixedThresh', fixed_thresh)
-            dust_correction = overrides.get('dustCorrection', dust_correction)
-            min_colony_area = overrides.get('minColonyAreaPx', min_colony_area)
+        magParams = self.state.get('magParams', {})
+        if mag and mag in magParams:
+            overrides = magParams[mag]
+            blockDiam = overrides.get('blockDiam', blockDiam)
+            fixedThresh = overrides.get('fixedThresh', fixedThresh)
+            dustCorrection = overrides.get('dustCorrection', dustCorrection)
+            minColonyArea = overrides.get('minColonyAreaPx', minColonyArea)
 
-        return block_diam, fixed_thresh, dust_correction, min_colony_area
+        return blockDiam, fixedThresh, dustCorrection, minColonyArea
 
-    def _on_state_changed(self):
+    def _onStateChanged(self):
         if not self.isVisible():
             self._stale = True
             return
         self._stale = False
         plates = self.state.get('plates', [])
-        current_plates = [
-            self.plate_combo.itemData(i) for i in range(self.plate_combo.count())
+        currentPlates = [
+            self.plateCombo.itemData(i) for i in range(self.plateCombo.count())
         ]
-        if plates != current_plates:
-            self._populate_plates()
+        if plates != currentPlates:
+            self._populatePlates()
         else:
-            mag_setting = self.state.get('magnification', 'all')
-            if mag_setting != self._last_mag_setting:
-                # Magnification selection changed — re-filter mag combo without re-scanning
-                self._on_wells_discovered(self._well_entries)
+            magSetting = self.state.get('magnification', 'all')
+            if magSetting != self._lastMagSetting:
+                self._onWellsDiscovered(self._wellEntries)
             else:
-                self._schedule_render()
+                self._scheduleRender()
 
     def showEvent(self, event):
         super().showEvent(event)
         if getattr(self, '_stale', False):
             self._stale = False
-            self._on_state_changed()
+            self._onStateChanged()
 
-    def _populate_plates(self):
-        prev_plate = self.plate_combo.currentData()
-        self.plate_combo.blockSignals(True)
-        self.plate_combo.clear()
-        restore_idx = 0
+    def _populatePlates(self):
+        prevPlate = self.plateCombo.currentData()
+        self.plateCombo.blockSignals(True)
+        self.plateCombo.clear()
+        restoreIdx = 0
         for i, p in enumerate(self.state.get('plates', [])):
-            self.plate_combo.addItem(os.path.basename(p), p)
-            if p == prev_plate:
-                restore_idx = i
-        self.plate_combo.blockSignals(False)
-        if self.plate_combo.count() > 0:
-            self.plate_combo.setCurrentIndex(restore_idx)
-            self._on_plate_changed(restore_idx)
+            self.plateCombo.addItem(os.path.basename(p), p)
+            if p == prevPlate:
+                restoreIdx = i
+        self.plateCombo.blockSignals(False)
+        if self.plateCombo.count() > 0:
+            self.plateCombo.setCurrentIndex(restoreIdx)
+            self._onPlateChanged(restoreIdx)
 
-    def _on_plate_changed(self, idx):
-        plate_path = self.plate_combo.currentData()
-        if not plate_path:
-            self._well_entries = []
-            self.well_combo.clear()
-            self._load_source()
-            self._schedule_render()
+    def _onPlateChanged(self, idx):
+        platePath = self.plateCombo.currentData()
+        if not platePath:
+            self._wellEntries = []
+            self.wellCombo.clear()
+            self._loadSource()
+            self._scheduleRender()
             return
 
-        self.mag_combo.clear()
-        self.mag_combo.setEnabled(False)
-        self.well_combo.clear()
-        self.well_combo.addItem('Scanning...')
-        self.well_combo.setEnabled(False)
+        self.magCombo.clear()
+        self.magCombo.setEnabled(False)
+        self.wellCombo.clear()
+        self.wellCombo.addItem('Scanning...')
+        self.wellCombo.setEnabled(False)
 
         def _scan():
             try:
-                return discover_wells_with_mag(plate_path)
+                return discoverWellsWithMag(platePath)
             except Exception:
                 return []
 
-        threading.Thread(target=lambda: self._well_result.emit(_scan()), daemon=True).start()
+        threading.Thread(target=lambda: self._wellResult.emit(_scan()), daemon=True).start()
 
-    def _on_wells_discovered(self, entries):
-        self._well_entries = entries or []
-        self.well_combo.setEnabled(True)
-        self.mag_combo.setEnabled(True)
+    def _onWellsDiscovered(self, entries):
+        self._wellEntries = entries or []
+        self.wellCombo.setEnabled(True)
+        self.magCombo.setEnabled(True)
 
-        # Extract unique magnifications, filtered to those enabled in Setup tab
-        all_mags = sorted({mag for _, _, mag, _ in self._well_entries if mag})
-        mag_setting = self.state.get('magnification', 'all')
-        if mag_setting == 'all':
-            mags = all_mags
-        elif isinstance(mag_setting, list):
-            mags = [m for m in all_mags if m in mag_setting]
+        allMags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
+        magSetting = self.state.get('magnification', 'all')
+        if magSetting == 'all':
+            mags = allMags
+        elif isinstance(magSetting, list):
+            mags = [m for m in allMags if m in magSetting]
         else:
-            mags = [m for m in all_mags if m == mag_setting]
+            mags = [m for m in allMags if m == magSetting]
 
-        prev_mag = self.mag_combo.currentData()
-        self.mag_combo.blockSignals(True)
-        self.mag_combo.clear()
+        prevMag = self.magCombo.currentData()
+        self.magCombo.blockSignals(True)
+        self.magCombo.clear()
         if not mags:
-            self.mag_combo.addItem('(none)', '')
+            self.magCombo.addItem('(none)', '')
         else:
-            restore_idx = 0
+            restoreIdx = 0
             for i, mag in enumerate(mags):
-                mag_label = MAG_SUFFIXES.get(mag, mag)
-                self.mag_combo.addItem(mag_label, mag)
-                if mag == prev_mag:
-                    restore_idx = i
-            self.mag_combo.setCurrentIndex(restore_idx)
-        self.mag_combo.blockSignals(False)
+                magLabel = MAG_SUFFIXES.get(mag, mag)
+                self.magCombo.addItem(magLabel, mag)
+                if mag == prevMag:
+                    restoreIdx = i
+            self.magCombo.setCurrentIndex(restoreIdx)
+        self.magCombo.blockSignals(False)
 
-        self._last_mag_setting = self.state.get('magnification', 'all')
-        self._populate_wells_for_mag()
+        self._lastMagSetting = self.state.get('magnification', 'all')
+        self._populateWellsForMag()
 
-    def _on_mag_changed(self, idx):
-        self._populate_wells_for_mag()
+    def _onMagChanged(self, idx):
+        self._populateWellsForMag()
 
-    def _populate_wells_for_mag(self):
+    def _populateWellsForMag(self):
         """Filter well combo to show only wells for the selected magnification."""
-        selected_mag = self.mag_combo.currentData() or ''
+        selectedMag = self.magCombo.currentData() or ''
         filtered = [(label, well, mag, source)
-                     for label, well, mag, source in self._well_entries
-                     if mag == selected_mag]
+                     for label, well, mag, source in self._wellEntries
+                     if mag == selectedMag]
 
-        prev_well = self.well_combo.currentData()
-        self.well_combo.blockSignals(True)
-        self.well_combo.clear()
-        restore_idx = 0
+        prevWell = self.wellCombo.currentData()
+        self.wellCombo.blockSignals(True)
+        self.wellCombo.clear()
+        restoreIdx = 0
         for i, (label, well, mag, source) in enumerate(filtered):
-            self.well_combo.addItem(well, i)  # store index into filtered
-            if well == prev_well:
-                restore_idx = i
-        self.well_combo.blockSignals(False)
+            self.wellCombo.addItem(well, i)
+            if well == prevWell:
+                restoreIdx = i
+        self.wellCombo.blockSignals(False)
 
-        # Store filtered list for _load_source
-        self._filtered_entries = filtered
+        self._filteredEntries = filtered
 
-        if self.well_combo.count() > 0:
-            self.well_combo.setCurrentIndex(restore_idx)
-        self._load_source()
-        self._schedule_render()
+        if self.wellCombo.count() > 0:
+            self.wellCombo.setCurrentIndex(restoreIdx)
+        self._loadSource()
+        self._scheduleRender()
 
-    def _on_well_changed(self, idx):
-        self._load_source()
-        self._schedule_render()
+    def _onWellChanged(self, idx):
+        self._loadSource()
+        self._scheduleRender()
 
-    def _load_source(self):
-        idx = self.well_combo.currentIndex()
-        plate_path = self.plate_combo.currentData()
-        filtered = getattr(self, '_filtered_entries', [])
+    def _loadSource(self):
+        idx = self.wellCombo.currentIndex()
+        platePath = self.plateCombo.currentData()
+        filtered = self._filteredEntries
 
-        if idx < 0 or idx >= len(filtered) or not plate_path:
-            self._current_source = None
-            self._current_mag = ''
-            self._current_well = ''
-            self._n_frames = 0
+        if idx < 0 or idx >= len(filtered) or not platePath:
+            self._currentSource = None
+            self._currentMag = ''
+            self._currentWell = ''
+            self._nFrames = 0
             return
 
         label, well, mag, source = filtered[idx]
-        self._current_source = source
-        self._current_mag = mag
-        self._current_well = well
+        self._currentSource = source
+        self._currentMag = mag
+        self._currentWell = well
 
-        if self._current_source is not None:
-            _, self._n_frames = load_frame(self._current_source, 0)
-            old_val = self.frame_slider.value()
-            self.frame_slider.blockSignals(True)
-            self.frame_slider.setRange(0, max(0, self._n_frames - 1))
-            if old_val <= self._n_frames - 1:
-                self.frame_slider.setValue(old_val)
+        if self._currentSource is not None:
+            _, self._nFrames = loadFrame(self._currentSource, 0)
+            oldVal = self.frameSlider.value()
+            self.frameSlider.blockSignals(True)
+            self.frameSlider.setRange(0, max(0, self._nFrames - 1))
+            if oldVal <= self._nFrames - 1:
+                self.frameSlider.setValue(oldVal)
             else:
-                self.frame_slider.setValue(0)
-            self.frame_slider.blockSignals(False)
-            self.frame_label.setText(
-                f'{self.frame_slider.value()} / {max(0, self._n_frames - 1)}'
+                self.frameSlider.setValue(0)
+            self.frameSlider.blockSignals(False)
+            self.frameLabel.setText(
+                f'{self.frameSlider.value()} / {max(0, self._nFrames - 1)}'
             )
         else:
-            self._n_frames = 0
-            self.frame_slider.setRange(0, 0)
+            self._nFrames = 0
+            self.frameSlider.setRange(0, 0)
 
-    def _on_frame_changed(self, val):
-        self.frame_label.setText(f'{val} / {max(0, self._n_frames - 1)}')
-        self._schedule_render()
+    def _onFrameChanged(self, val):
+        self.frameLabel.setText(f'{val} / {max(0, self._nFrames - 1)}')
+        self._scheduleRender()
 
-    def _schedule_render(self):
-        self._debounce_timer.start()
+    def _scheduleRender(self):
+        self._debounceTimer.start()
 
-    def _refresh_all(self):
-        self._populate_plates()
+    def _refreshAll(self):
+        self._populatePlates()
 
     def _render(self):
         for ax in self.figure.axes:
@@ -368,71 +361,65 @@ class PreviewTab(QWidget):
             ax.set_xticks([])
             ax.set_yticks([])
 
-        if self._current_source is None:
-            self.ax_raw.set_title('No image')
-            self.params_label.setText('')
+        if self._currentSource is None:
+            self.axRaw.set_title('No image')
+            self.paramsLabel.setText('')
             self.canvas.draw()
             return
 
-        frame_idx = self.frame_slider.value()
-        raw, _ = load_frame(self._current_source, frame_idx)
+        frameIdx = self.frameSlider.value()
+        raw, _ = loadFrame(self._currentSource, frameIdx)
         if raw is None:
-            self.ax_raw.set_title('Could not load')
-            self.params_label.setText('')
+            self.axRaw.set_title('Could not load')
+            self.paramsLabel.setText('')
             self.canvas.draw()
             return
 
-        mag = self._current_mag
-        block_diam, fixed_thresh, dust_correction, min_colony_area = self._get_params_for_mag(mag)
+        mag = self._currentMag
+        blockDiam, fixedThresh, dustCorrection, minColonyArea = self._getParamsForMag(mag)
 
-        mag_params = self.state.get('magParams', {})
-        if mag and mag in mag_params:
-            self.params_label.setText(
-                f'Using per-mag overrides for {mag}: {mag_params[mag]}'
+        magParams = self.state.get('magParams', {})
+        if mag and mag in magParams:
+            self.paramsLabel.setText(
+                f'Using per-mag overrides for {mag}: {magParams[mag]}'
             )
         else:
-            self.params_label.setText(
+            self.paramsLabel.setText(
                 f'Using global parameters'
                 + (f' (mag {mag})' if mag else '')
             )
 
-        # --- Top row: processing preview ---
-        # Match pipeline exactly: scale to [0,1], normalize, blur with sigma=2.0
-
-        raw_scaled = raw.astype(np.float32)
-        rmax = raw_scaled.max()
+        rawScaled = raw.astype(np.float32)
+        rmax = rawScaled.max()
         if rmax > 0:
-            raw_scaled /= rmax
+            rawScaled /= rmax
 
-        processed = normalize_local_contrast(raw_scaled, block_diam)
-        sigma = 2.0  # matches pipeline hardcoded sigma
+        processed = normalizeLocalContrast(rawScaled, blockDiam)
+        sigma = 2.0
         blurred = cv2.GaussianBlur(
             processed, (0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT
         )
 
-        mask_live = blurred > fixed_thresh
+        maskLive = blurred > fixedThresh
 
-        # display raw
-        self.ax_raw.imshow(raw, cmap='gray')
-        self.ax_raw.set_title('Raw')
+        self.axRaw.imshow(raw, cmap='gray')
+        self.axRaw.set_title('Raw')
 
-        # display preprocessed (inverted so biofilms appear dark, matching raw)
-        self.ax_proc.imshow(processed, cmap='gray_r')
-        self.ax_proc.set_title(
-            f'Preprocessed\nblockDiam={block_diam}',
+        self.axProc.imshow(processed, cmap='gray_r')
+        self.axProc.set_title(
+            f'Preprocessed\nblockDiam={blockDiam}',
             fontsize=9,
         )
 
-        # mask overlay on preprocessed (inverted background so biofilms are dark)
         if processed.max() > 0:
             display = 1.0 - processed / processed.max()
         else:
             display = processed
         overlay = np.stack([display, display, display], axis=-1)
-        overlay[mask_live] = [0, 1, 1]
-        self.ax_mask.imshow(overlay)
-        self.ax_mask.set_title(
-            f'Mask Overlay\nthresh={fixed_thresh}  dust={dust_correction}',
+        overlay[maskLive] = [0, 1, 1]
+        self.axMask.imshow(overlay)
+        self.axMask.set_title(
+            f'Mask Overlay\nthresh={fixedThresh}  dust={dustCorrection}',
             fontsize=9,
         )
 

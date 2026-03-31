@@ -93,8 +93,8 @@ class PhenotyprApp(QMainWindow):
             return
         try:
             self.state.load(path)
-            self._setup_tab.refresh_from_state()
-            self._params_tab.refresh_from_state()
+            self._setup_tab.refreshFromState()
+            self._params_tab.refreshFromState()
             QMessageBox.information(self, 'Loaded', f'Configuration loaded from {path}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', str(e))

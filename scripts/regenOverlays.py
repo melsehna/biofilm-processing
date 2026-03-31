@@ -23,69 +23,69 @@ import imageio.v3 as iio
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
-from multiWellAnalysis.processing.preprocessing import normalize_local_contrast_output
-from multiWellAnalysis.processing.overlay import write_overlay_video
+from multiWellAnalysis.processing.preprocessing import normalizeLocalContrastOutput
+from multiWellAnalysis.processing.overlay import writeOverlayVideo
 
 
-def find_wells(proc_dir):
-    """Discover wells from *_registered_raw.tif files in proc_dir."""
+def findWells(procDir):
+    """Discover wells from *_registered_raw.tif files in procDir."""
     wells = []
-    for f in sorted(os.listdir(proc_dir)):
+    for f in sorted(os.listdir(procDir)):
         if f.endswith('_registered_raw.tif'):
             well = f.replace('_registered_raw.tif', '')
             wells.append(well)
     return wells
 
 
-def load_mutant_map(index_path):
+def loadMutantMap(indexPath):
     """Load mutant labels from an index CSV. Returns {wellId: mutant} dict."""
-    if not index_path or not os.path.exists(index_path):
+    if not indexPath or not os.path.exists(indexPath):
         return {}
-    df = pd.read_csv(index_path)
+    df = pd.read_csv(indexPath)
 
-    mutant_map = {}
-    well_col = 'wellId' if 'wellId' in df.columns else 'well'
-    if well_col not in df.columns:
+    mutantMap = {}
+    wellCol = 'wellId' if 'wellId' in df.columns else 'well'
+    if wellCol not in df.columns:
         return {}
 
     for col in ['geneName', 'mutant']:
         if col in df.columns:
             for _, row in df.iterrows():
-                w = str(row[well_col]).strip()
+                w = str(row[wellCol]).strip()
                 m = str(row[col]).strip()
                 if m and m != 'nan':
-                    mutant_map[w] = m
+                    mutantMap[w] = m
             break
 
-    return mutant_map
+    return mutantMap
 
 
-def regen_overlay(proc_dir, well, block_diam, fps, label=None):
+def regenOverlay(procDir, well, blockDiam, fps, label=None):
     """Regenerate a single overlay MP4."""
-    raw_path = os.path.join(proc_dir, f'{well}_registered_raw.tif')
-    mask_path = os.path.join(proc_dir, f'{well}_masks.npz')
-    out_path = os.path.join(proc_dir, f'{well}_overlay.mp4')
+    rawPath = os.path.join(procDir, f'{well}_registered_raw.tif')
+    maskPath = os.path.join(procDir, f'{well}_masks.npz')
+    outPath = os.path.join(procDir, f'{well}_overlay.mp4')
 
-    if not os.path.exists(raw_path) or not os.path.exists(mask_path):
+    if not os.path.exists(rawPath) or not os.path.exists(maskPath):
         print(f'{well}: missing files, skipping')
         return
 
-    raw = iio.imread(raw_path).astype(np.float32)
+    raw = iio.imread(rawPath).astype(np.float32)
     imax = raw.max()
     if imax > 0:
         raw /= imax
 
-    masks = np.load(mask_path)['masks']
+    masks = np.load(maskPath)['masks']
 
     fpMean = 0.5 * (np.nanmax(raw) + np.nanmin(raw))
-    display_stack = normalize_local_contrast_output(raw, block_diam, fpMean)
-    proc_vis = np.clip(display_stack, 0.0, 1.0)
+    displayStack = normalizeLocalContrastOutput(raw, blockDiam, fpMean)
+    procVis = np.clip(displayStack, 0.0, 1.0)
 
-    write_overlay_video(proc_vis, masks, out_path, fps=fps, label=label)
+    writeOverlayVideo(procVis, masks, outPath, fps=fps, label=label)
 
-    size_mb = os.path.getsize(out_path) / 1e6
+    sizeMb = os.path.getsize(outPath) / 1e6
     nframes = raw.shape[2]
-    print(f'{well}: {nframes} frames, {size_mb:.1f} MB -> {out_path}')
+    print(f'{well}: {nframes} frames, {sizeMb:.1f} MB -> {outPath}')
 
 
 def main():
@@ -97,36 +97,36 @@ def main():
     parser.add_argument('--fps', type=int, default=2, help='Output video FPS (default: 2)')
     args = parser.parse_args()
 
-    proc_dir = None
+    procDir = None
     for subdir in ['processedImages', 'Processed_images_py']:
         candidate = os.path.join(args.plate_dir, subdir)
         if os.path.isdir(candidate):
-            proc_dir = candidate
+            procDir = candidate
             break
 
-    if proc_dir is None:
+    if procDir is None:
         print(f'No processedImages/ or Processed_images_py/ found in {args.plate_dir}')
         sys.exit(1)
 
-    wells = args.wells if args.wells else find_wells(proc_dir)
+    wells = args.wells if args.wells else findWells(procDir)
     if not wells:
-        print(f'No wells found in {proc_dir}')
+        print(f'No wells found in {procDir}')
         sys.exit(1)
 
-    mutant_map = load_mutant_map(args.index)
-    plate_name = os.path.basename(os.path.normpath(args.plate_dir))
+    mutantMap = loadMutantMap(args.index)
+    plateName = os.path.basename(os.path.normpath(args.plate_dir))
 
-    print(f'Regenerating overlays for {len(wells)} well(s) in {proc_dir}')
+    print(f'Regenerating overlays for {len(wells)} well(s) in {procDir}')
 
     for well in wells:
-        well_base = well.split('_')[0]
-        mutant = mutant_map.get(well_base) or mutant_map.get(well)
+        wellBase = well.split('_')[0]
+        mutant = mutantMap.get(wellBase) or mutantMap.get(well)
         if mutant:
-            label = f'{mutant}  {plate_name}-{well_base}'
+            label = f'{mutant}  {plateName}-{wellBase}'
         else:
-            label = f'{plate_name}-{well}'
+            label = f'{plateName}-{well}'
 
-        regen_overlay(proc_dir, well, args.block_diam, args.fps, label=label)
+        regenOverlay(procDir, well, args.block_diam, args.fps, label=label)
 
     print('Done.')
 
