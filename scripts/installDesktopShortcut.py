@@ -99,6 +99,10 @@ def getIconPath(fmt='png'):
         icon = repoDir / 'assets' / 'phenotypr-icon.icns'
         if icon.exists():
             return str(icon)
+    if fmt == 'ico':
+        icon = repoDir / 'assets' / 'phenotypr-icon.ico'
+        if icon.exists():
+            return str(icon)
     icon = repoDir / 'assets' / 'phenotypr-icon.png'
     if icon.exists():
         return str(icon)
@@ -276,7 +280,7 @@ def installWindows(guiBin):
     print(f'Created: {batPath}')
 
     lnkPath = os.path.join(desktopDir, 'Phenotypr.lnk')
-    iconPath = getIconPath('png')
+    iconPath = getIconPath('ico')  # Windows .lnk requires .ico format
     iconArg = f'$s.IconLocation = "{iconPath}"; ' if iconPath else ''
     psScript = (
         f'$ws = New-Object -ComObject WScript.Shell; '
