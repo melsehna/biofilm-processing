@@ -122,7 +122,7 @@ class ParametersTab(QWidget):
         colonyForm.addRow('Min colony area (px):', self.minColonyArea)
 
         self.propRadius = QSpinBox()
-        self.propRadius.setRange(1, 200)
+        self.propRadius.setRange(1, 99999)
         self.propRadius.setValue(self.state.get('propRadiusPx', 25))
         colonyForm.addRow('Propagation radius (px):', self.propRadius)
 
