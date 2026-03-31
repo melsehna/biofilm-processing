@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 from .io_utils import save_stack
-from .preprocessing import normalize_local_contrast, normalize_local_contrast_output
+from .preprocessing import normalize_local_contrast
 from .segmentation import compute_mask_inplace, dust_correct_inplace
 from .registration import registerStackNormblur
 from .overlay import write_overlay_video
@@ -154,9 +154,13 @@ def timelapse_processing(
 
     _progress('Saving outputs...')
 
-    # 6) save stacks 
-    save_stack(processed_stack, processed_dir, f"{filename}_processed") # normalized+blurred, registered, cropped
-    
+    # 6) save stacks
+    # Invert processed stack before saving so biofilms appear dark (background bright).
+    # normalize_local_contrast returns blurred-img, making biofilm pixels positive/bright;
+    # inverting gives the visually expected brightfield appearance for external viewers.
+    processed_to_save = np.clip(1.0 - processed_stack, 0.0, 1.0)
+    save_stack(processed_to_save, processed_dir, f"{filename}_processed")
+
     save_stack(
         raw_cropped,
         processed_dir,
@@ -171,21 +175,14 @@ def timelapse_processing(
     register_image('masks', npz_path)
 
     # 8) overlay video (optional)
+    # Uses the same inverted processed stack as the saved _processed.tif so the
+    # overlay background is visually consistent with what is saved to disk.
     if not skip_overlay:
-        fpMax = np.nanmax(raw_cropped)
-        fpMin = np.nanmin(raw_cropped)
-        fpMean = 0.5 * (fpMax + fpMin)
-
-        display_stack = normalize_local_contrast_output(
-            raw_cropped, block_diameter, fpMean
-        )
-        procVis = np.clip(display_stack, 0.0, 1.0)
-
         overlay_mp4_path = os.path.join(
             processed_dir, f'{filename}_overlay.mp4'
         )
 
-        write_overlay_video(procVis, masks, overlay_mp4_path, label=label)
+        write_overlay_video(processed_to_save, masks, overlay_mp4_path, label=label)
         register_image('overlay_mp4', overlay_mp4_path)
 
     return masks, biomass, odMean

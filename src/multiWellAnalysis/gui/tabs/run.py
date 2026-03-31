@@ -41,7 +41,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 _PARAM_KEYS = [
     'blockDiam', 'fixedThresh', 'dustCorrection',
     'shiftThresh', 'fftStride', 'downsample',
-    'magnification', 'magParams',
+    'magnification', 'magParams', 'copyRaw',
 ]
 
 _RUN_PARAMS_FILE = 'run_params.json'
@@ -120,7 +120,7 @@ def _process_one_well(plate_path, outdir, well_id, well_files, params):
             image_records=None,
             fftStride=params.get('fftStride', 6),
             downsample=params.get('downsample', 4),
-            skip_overlay=True,
+            skip_overlay=not params.get('saveOverlays', True),
             workers=1,  # parallelism is at the well level, not frame level
         )
         del stack
@@ -585,6 +585,13 @@ class ProcessingWorker(QObject):
             # ── Save index.csv ──
             self._save_index(index, outdir, plate_name, resolved_plate)
 
+            # ── Per-plate numericalData/ CSVs ──
+            try:
+                from multiWellAnalysis.processing.master_csv import assemble_plate_numerical_data
+                assemble_plate_numerical_data(outdir, index, log_fn=self.log.emit)
+            except Exception as e:
+                self.log.emit(f'  [numericalData] ERROR: {e}')
+
         # ── Assemble master CSVs across all plates ──
         if output_root and plate_outdirs and not self._stop.is_set():
             self.log.emit(f'\n{"="*60}\nAssembling master CSVs…')
@@ -654,6 +661,7 @@ class ProcessingWorker(QObject):
             'shiftThresh': state['shiftThresh'],
             'fftStride': state.get('fftStride', 6),
             'downsample': state.get('downsample', 4),
+            'saveOverlays': state.get('saveOverlays', True),
         }
         mag_params = state.get('magParams', {})
         if mag and mag in mag_params:
