@@ -10,10 +10,28 @@ into two flat tables:
 
   master_frame_features.csv   — one row per (drawerID, plateID, wellID, mag, frame)
   master_colony_features.csv  — one row per (drawerID, plateID, wellID, mag, frame, colonyId)
+
+It also provides assemble_plate_numerical_data() which writes per-plate,
+per-magnification CSVs into a numericalData/ folder next to processedImages/:
+
+  numericalData/<mag>X_BF.csv              — biomass timeseries, all wells
+  numericalData/<mag>X_wholeImage.csv      — whole-image features, all wells (if run)
+  numericalData/<mag>X_colonyFeatures.csv  — per-colony features, all wells (if run)
+  numericalData/<mag>X_colonyAgg.csv       — well-level colony aggregates, all wells (if run)
 """
 
 import os
+import re
 import pandas as pd
+
+
+# Magnification suffix → objective label used in output filenames
+_MAG_SUFFIX_TO_OBJ = {
+    '_02': '4X',
+    '_03': '10X',
+    '_04': '20X',
+    '_05': '40X',
+}
 
 
 # Identity columns to drop from each source before joining.
@@ -133,3 +151,95 @@ def assemble_master_csvs(plate_outdirs, drawer_map, output_root, log_fn=None):
         log(f'  Master CSV (colony): {path}  ({len(master):,} rows, {len(master.columns)} cols)')
 
     return results
+
+
+def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
+    """Write per-magnification CSVs into <plate_dir>/numericalData/.
+
+    Parameters
+    ----------
+    processed_images_dir : str
+        Path to the plate's processedImages/ directory.
+    index : dict
+        Well-keyed dict of output file paths (as built by ProcessingWorker).
+        Keys per well may include: 'biomass', 'whole_image_feats',
+        'colony_feats', 'well_colony_feats'.
+    log_fn : callable, optional
+        Called with progress strings.
+    """
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+
+    numerical_dir = os.path.join(os.path.dirname(processed_images_dir), 'numericalData')
+    os.makedirs(numerical_dir, exist_ok=True)
+
+    # Group wells by magnification suffix (e.g. '_03')
+    groups = {}
+    for well_id, row in index.items():
+        m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+        mag_suffix = m.group(1) if m else ''
+        groups.setdefault(mag_suffix, []).append((well_id, row))
+
+    for mag_suffix, well_rows in sorted(groups.items()):
+        obj_label = _MAG_SUFFIX_TO_OBJ.get(mag_suffix, mag_suffix.lstrip('_') + 'X') if mag_suffix else 'unknownX'
+
+        # ── BF biomass ──────────────────────────────────────────────
+        bf_dfs = []
+        for well_id, row in well_rows:
+            p = row.get('biomass', '')
+            if p and os.path.exists(p):
+                df = pd.read_csv(p)[['frame', 'biomass']]
+                df.insert(0, 'well', well_id)
+                bf_dfs.append(df)
+        if bf_dfs:
+            out = os.path.join(numerical_dir, f'{obj_label}_BF.csv')
+            (pd.concat(bf_dfs, ignore_index=True)
+               .sort_values(['well', 'frame'])
+               .to_csv(out, index=False))
+            log(f'  [numericalData] {obj_label}_BF.csv  ({len(bf_dfs)} wells)')
+
+        # ── Whole-image features ────────────────────────────────────
+        wi_dfs = []
+        for well_id, row in well_rows:
+            p = row.get('whole_image_feats', '')
+            if p and os.path.exists(p):
+                df = pd.read_csv(p)
+                df.insert(0, 'well', well_id)
+                wi_dfs.append(df)
+        if wi_dfs:
+            out = os.path.join(numerical_dir, f'{obj_label}_wholeImage.csv')
+            (pd.concat(wi_dfs, ignore_index=True)
+               .sort_values(['well', 'frame'])
+               .to_csv(out, index=False))
+            log(f'  [numericalData] {obj_label}_wholeImage.csv  ({len(wi_dfs)} wells)')
+
+        # ── Per-colony features ─────────────────────────────────────
+        cf_dfs = []
+        for well_id, row in well_rows:
+            p = row.get('colony_feats', '')
+            if p and os.path.exists(p):
+                df = pd.read_csv(p)
+                df.insert(0, 'well', well_id)
+                cf_dfs.append(df)
+        if cf_dfs:
+            out = os.path.join(numerical_dir, f'{obj_label}_colonyFeatures.csv')
+            (pd.concat(cf_dfs, ignore_index=True)
+               .sort_values(['well', 'frame'])
+               .to_csv(out, index=False))
+            log(f'  [numericalData] {obj_label}_colonyFeatures.csv  ({len(cf_dfs)} wells)')
+
+        # ── Well-level colony aggregates ────────────────────────────
+        wca_dfs = []
+        for well_id, row in well_rows:
+            p = row.get('well_colony_feats', '')
+            if p and os.path.exists(p):
+                df = pd.read_csv(p)
+                df.insert(0, 'well', well_id)
+                wca_dfs.append(df)
+        if wca_dfs:
+            out = os.path.join(numerical_dir, f'{obj_label}_colonyAgg.csv')
+            (pd.concat(wca_dfs, ignore_index=True)
+               .sort_values(['well', 'frame'])
+               .to_csv(out, index=False))
+            log(f'  [numericalData] {obj_label}_colonyAgg.csv  ({len(wca_dfs)} wells)')
