@@ -210,7 +210,7 @@ class PreviewTab(QWidget):
             self._populatePlates()
         else:
             magSetting = self.state.get('magnification', 'all')
-            if magSetting != self._lastMagSetting:
+            if magSetting != self._lastMagSetting and self._wellEntries:
                 self._onWellsDiscovered(self._wellEntries)
             else:
                 self._scheduleRender()
