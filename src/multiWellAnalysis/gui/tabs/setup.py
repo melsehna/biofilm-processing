@@ -17,6 +17,44 @@ _OUTPUT_DIR_NAMES = {
 }
 
 
+def _firstTifDir(root, maxDepth=2):
+    """Return (directory, firstName) for the first .tif found under root, or (None, None)."""
+    try:
+        for name in os.listdir(root):
+            if name.lower().endswith('.tif') and not name.startswith('.'):
+                return root, name
+    except (PermissionError, OSError):
+        pass
+    if maxDepth > 0:
+        try:
+            for name in sorted(os.listdir(root)):
+                child = os.path.join(root, name)
+                if not name.startswith('.') and name.lower() not in _OUTPUT_DIR_NAMES and os.path.isdir(child):
+                    result = _firstTifDir(child, maxDepth - 1)
+                    if result[0] is not None:
+                        return result
+        except (PermissionError, OSError):
+            pass
+    return None, None
+
+
+def _magSuffixesFromDir(directory, suffixSet, limit=200):
+    """Scan up to `limit` filenames in directory for mag suffixes."""
+    found = set()
+    try:
+        for i, name in enumerate(os.listdir(directory)):
+            if i >= limit:
+                break
+            m = re.match(r'^[A-P]\d+(_\d+)_', name)
+            if m and m.group(1) in suffixSet:
+                found.add(m.group(1))
+                if found == suffixSet:
+                    break
+    except (PermissionError, OSError):
+        pass
+    return found
+
+
 def _detect_mag_suffixes_from_tifs(root, suffixes, max_depth=2):
     """Check which magnification suffixes appear in TIF filenames under *root*.
 
@@ -321,36 +359,32 @@ class SetupTab(QWidget):
         filenames if directory names don't contain magnification labels.
         """
         def _scan():
-            all_mags = set()
             if not plates:
-                return all_mags, 'no plates'
+                return set(), 'no plates'
 
-            # --- Fast path: parse directory names, filenames, and subdir names ---
-            for plate_path in plates[:3]:
-                dirname = os.path.basename(plate_path)
+            allMags = set()
+            suffixSet = set(self.MAG_SUFFIXES)  # {'_02', '_03', '_04', '_05'}
+
+            # 1) check drawer/plate dir names for human labels like "4x", "10x"
+            for platePath in plates[:3]:
+                dirname = os.path.basename(platePath)
                 for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
                     if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', dirname):
-                        all_mags.add(suffix)
-                # also check names of files/subdirs inside (CSV names, plate subdir names)
-                try:
-                    for name in os.listdir(plate_path):
-                        for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
-                            if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', name):
-                                all_mags.add(suffix)
-                except (PermissionError, OSError):
-                    pass
-            if all_mags:
-                return all_mags, 'from directory names'
+                        allMags.add(suffix)
+            if allMags:
+                return allMags, 'from directory names'
 
-            # --- Slow path: check first TIF filename per suffix ---
-            for plate_path in plates[:1]:  # only scan first plate over SMB
-                found = _detect_mag_suffixes_from_tifs(
-                    plate_path, set(self.MAG_SUFFIXES), max_depth=2,
-                )
-                if found:
-                    return found, f'from filenames in {os.path.basename(plate_path)}'
+            # 2) peek at first TIF filename to extract mag suffixes
+            for platePath in plates[:1]:
+                tifDir, firstName = _firstTifDir(platePath, maxDepth=2)
+                if tifDir and firstName:
+                    m = re.match(r'^[A-P]\d+(_\d+)_', firstName)
+                    if m and m.group(1) in suffixSet:
+                        allMags.add(m.group(1))
+                        allMags |= _magSuffixesFromDir(tifDir, suffixSet, limit=200)
+                        return allMags, 'from filenames'
 
-            return all_mags, 'no magnifications found'
+            return allMags, 'no magnifications found'
 
         def _done(result):
             self.detect_mag_btn.setEnabled(True)
