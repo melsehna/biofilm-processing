@@ -377,10 +377,15 @@ def _resolveAllTifDirs(root, maxDepth=2):
 def discoverWells(platePath, magSetting='all'):
     """Find wells and their BF image files, filtered by selected magnifications.
 
+    platePath should be the directory containing TIF files (already resolved).
     Returns (resolvedPlatePath, wellsDict).
     """
-    resolved = _resolveTifDir(platePath, maxDepth=2)
-    rawTifs = _listRawTifs(resolved)
+    rawTifs = _listRawTifs(platePath)
+    if rawTifs:
+        resolved = platePath
+    else:
+        resolved = _resolveTifDir(platePath, maxDepth=2)
+        rawTifs = _listRawTifs(resolved)
 
     bfFiles = [f for f in rawTifs if 'Bright Field' in f or 'Bright_Field' in f]
     candidates = bfFiles if bfFiles else rawTifs
@@ -438,20 +443,12 @@ class ProcessingWorker(QObject):
     log = Signal(str)
     finished = Signal()
     error = Signal(str)
-    resumeQuery = Signal(int, bool)  # (nPlatesWithOutput, paramsMatch)
-
     def __init__(self, stateDict, stopEvent):
         super().__init__()
         self._state = stateDict
         self._stop = stopEvent
-        self._resume = False
-        self._resumeDecision = None  # set by main thread via setResumeDecision
         self._overallDone = 0
         self._totalTasks = 1
-
-    def setResumeDecision(self, resume):
-        """Called from main thread after user answers the resume dialog."""
-        self._resumeDecision = resume
 
     def run(self):
         try:
@@ -472,150 +469,117 @@ class ProcessingWorker(QObject):
         doColonyFeats = s.get('colonyFeats', False)
         nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
-        self.log.emit('Scanning plates...')
-
-        # expand drawer entries into individual plate entries: (userPath, resolvedDir)
-        expandedPlates = []
-        for platePath in s['plates']:
-            expandedPlates.extend(_resolveAllTifDirs(platePath, maxDepth=2))
-        totalPlates = len(expandedPlates)
-
-        # resume detection (runs in worker thread, not main thread)
-        runParams = _extractRunParams(s)
-        nWithOutput = 0
-        allMatch = True
-        anySaved = False
-        for userPath, resolved in expandedPlates:
-            outdir = _computeOutdir(userPath, resolved, outputRoot)
-            saved = _loadRunParams(outdir)
-            try:
-                hasFiles = os.path.isdir(outdir) and any(
-                    f.endswith('.tif') for f in os.listdir(outdir))
-            except (PermissionError, OSError):
-                hasFiles = False
-            if hasFiles:
-                nWithOutput += 1
-                if saved is not None:
-                    anySaved = True
-                    if saved != runParams:
-                        allMatch = False
-
-        if nWithOutput > 0:
-            self.resumeQuery.emit(nWithOutput, anySaved and allMatch)
-            # wait for main thread to answer
-            while self._resumeDecision is None and not self._stop.is_set():
-                time.sleep(0.05)
-            if self._stop.is_set():
-                self.log.emit('Cancelled by user.')
-                return
-            self._resume = self._resumeDecision
-
-        totalTasks = 0
-        for userPath, resolved in expandedPlates:
-            _, preWells = discoverWells(resolved, magSetting)
-            preOutdir = _computeOutdir(userPath, resolved, outputRoot)
-            if self._resume:
-                n = sum(1 for wid in preWells if not _wellAlreadyProcessed(preOutdir, wid))
-            else:
-                n = len(preWells)
-            totalTasks += n * nStages
-
         self._overallDone = 0
-        self._totalTasks = max(totalTasks, 1)
-        self.overallProgress.emit(0, self._totalTasks, 'Starting…')
+        self._totalTasks = 1
+        self.overallProgress.emit(0, 1, 'Starting…')
 
         plateOutdirs = []
         drawerMap = {}
+        runParams = _extractRunParams(s)
+        plateIdx = 0
 
-        for plateIdx, (userPath, resolvedPlate) in enumerate(expandedPlates):
-            if self._stop.is_set():
-                self.log.emit('Cancelled by user.')
-                return
+        for platePath in s['plates']:
+            expanded = _resolveAllTifDirs(platePath, maxDepth=2)
 
-            _, wells = discoverWells(resolvedPlate, magSetting)
-            isDrawer = (resolvedPlate != userPath)
+            for userPath, resolvedPlate in expanded:
+                if self._stop.is_set():
+                    self.log.emit('Cancelled by user.')
+                    return
 
-            plateName = os.path.basename(resolvedPlate)
-            drawerName = os.path.basename(userPath) if isDrawer else None
+                _, wells = discoverWells(resolvedPlate, magSetting)
+                isDrawer = (resolvedPlate != userPath)
+                plateName = os.path.basename(resolvedPlate)
+                drawerName = os.path.basename(userPath) if isDrawer else None
 
-            self.log.emit(f'\n{"="*60}')
-            if drawerName:
-                self.log.emit(f'Plate {plateIdx+1}/{totalPlates}: {drawerName} / {plateName}')
-            else:
-                self.log.emit(f'Plate {plateIdx+1}/{totalPlates}: {plateName}')
-            self.log.emit(f'{"="*60}')
+                self.log.emit(f'\n{"="*60}')
+                if drawerName:
+                    self.log.emit(f'Plate {plateIdx+1}: {drawerName} / {plateName}')
+                else:
+                    self.log.emit(f'Plate {plateIdx+1}: {plateName}')
+                self.log.emit(f'{"="*60}')
 
-            self.log.emit(f'  Found {len(wells)} wells (mag={magSetting})')
-            if not wells:
-                self.log.emit(f'  No wells found, skipping.')
-                continue
+                self.log.emit(f'  Found {len(wells)} wells (mag={magSetting})')
+                if not wells:
+                    self.log.emit(f'  No wells found, skipping.')
+                    plateIdx += 1
+                    continue
 
-            outdir = _computeOutdir(userPath, resolvedPlate, outputRoot)
-            os.makedirs(outdir, exist_ok=True)
-            self.log.emit(f'  Output dir: {outdir}')
+                outdir = _computeOutdir(userPath, resolvedPlate, outputRoot)
+                os.makedirs(outdir, exist_ok=True)
+                self.log.emit(f'  Output dir: {outdir}')
 
-            plateOutdirs.append(outdir)
-            drawerMap[plateName] = drawerName if drawerName else plateName
+                plateOutdirs.append(outdir)
+                drawerMap[plateName] = drawerName if drawerName else plateName
 
-            runParams = _extractRunParams(s)
-            _saveRunParams(outdir, runParams)
+                # per-plate resume: check if output already exists with same params
+                saved = _loadRunParams(outdir)
+                resume = False
+                if saved is not None and saved == runParams:
+                    resume = True
+                _saveRunParams(outdir, runParams)
 
-            wellItems = list(wells.items())
-            if self._resume:
-                skipped = []
-                remaining = []
-                for wellId, files in wellItems:
-                    if _wellAlreadyProcessed(outdir, wellId):
-                        skipped.append(wellId)
-                    else:
-                        remaining.append((wellId, files))
-                if skipped:
-                    self.log.emit(f'  Resuming: skipping {len(skipped)} already-processed wells')
-                wellItems = remaining
+                wellItems = list(wells.items())
+                if resume:
+                    skipped = []
+                    remaining = []
+                    for wellId, files in wellItems:
+                        if _wellAlreadyProcessed(outdir, wellId):
+                            skipped.append(wellId)
+                        else:
+                            remaining.append((wellId, files))
+                    if skipped:
+                        self.log.emit(f'  Resuming: skipping {len(skipped)} already-processed wells')
+                    wellItems = remaining
 
-            index = {}
-            totalWells = len(wellItems)
+                # update total tasks incrementally as we discover wells
+                self._totalTasks += len(wellItems) * nStages
+                self.overallProgress.emit(self._overallDone, self._totalTasks, f'Processing {plateName}…')
 
-            self.log.emit(f'\n  --- Stage 1: Processing ({totalWells} wells, {nWorkers} workers) ---')
-            self._runStageParallel(
-                plateName, plateIdx, totalPlates, 'Processing',
-                wellItems, index, outdir, nWorkers,
-                self._submitProcessing, resolvedPlate, s
-            )
+                index = {}
+                totalWells = len(wellItems)
 
-            if s.get('wholeImageFeats') and index:
-                self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
+                self.log.emit(f'\n  --- Stage 1: Processing ({totalWells} wells, {nWorkers} workers) ---')
                 self._runStageParallel(
-                    plateName, plateIdx, totalPlates, 'Whole-image',
-                    list(index.items()), index, outdir, nWorkers,
-                    self._submitWholeImage, plateName
+                    plateName, plateIdx, 0, 'Processing',
+                    wellItems, index, outdir, nWorkers,
+                    self._submitProcessing, resolvedPlate, s
                 )
 
-            if (s.get('colonyTracking') or s.get('colonyFeats')) and index:
-                self.log.emit(f'\n  --- Stage 3: Colony tracking ({len(index)} wells) ---')
-                self._runStageParallel(
-                    plateName, plateIdx, totalPlates, 'Tracking',
-                    list(index.items()), index, outdir, nWorkers,
-                    self._submitTracking, plateName, s
-                )
-
-            if s.get('colonyFeats') and index:
-                trackable = [(k, v) for k, v in index.items() if 'tracked_labels' in v]
-                if trackable:
-                    self.log.emit(f'\n  --- Stage 4: Colony features ({len(trackable)} wells) ---')
+                if s.get('wholeImageFeats') and index:
+                    self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
                     self._runStageParallel(
-                        plateName, plateIdx, totalPlates, 'Colony feats',
-                        trackable, index, outdir, nWorkers,
-                        self._submitColonyFeats, plateName
+                        plateName, plateIdx, 0, 'Whole-image',
+                        list(index.items()), index, outdir, nWorkers,
+                        self._submitWholeImage, plateName
                     )
 
-            self._saveIndex(index, outdir, plateName, resolvedPlate)
+                if (s.get('colonyTracking') or s.get('colonyFeats')) and index:
+                    self.log.emit(f'\n  --- Stage 3: Colony tracking ({len(index)} wells) ---')
+                    self._runStageParallel(
+                        plateName, plateIdx, 0, 'Tracking',
+                        list(index.items()), index, outdir, nWorkers,
+                        self._submitTracking, plateName, s
+                    )
 
-            try:
-                from multiWellAnalysis.processing.master_csv import assemblePlateNumericalData
-                assemblePlateNumericalData(outdir, logFn=self.log.emit)
-            except Exception as e:
-                self.log.emit(f'  [numericalData] ERROR: {e}')
+                if s.get('colonyFeats') and index:
+                    trackable = [(k, v) for k, v in index.items() if 'tracked_labels' in v]
+                    if trackable:
+                        self.log.emit(f'\n  --- Stage 4: Colony features ({len(trackable)} wells) ---')
+                        self._runStageParallel(
+                            plateName, plateIdx, 0, 'Colony feats',
+                            trackable, index, outdir, nWorkers,
+                            self._submitColonyFeats, plateName
+                        )
+
+                self._saveIndex(index, outdir, plateName, resolvedPlate)
+
+                try:
+                    from multiWellAnalysis.processing.master_csv import assemblePlateNumericalData
+                    assemblePlateNumericalData(outdir, logFn=self.log.emit)
+                except Exception as e:
+                    self.log.emit(f'  [numericalData] ERROR: {e}')
+
+                plateIdx += 1
 
         if outputRoot and plateOutdirs and not self._stop.is_set():
             self.log.emit(f'\n{"="*60}\nAssembling master CSVs…')
@@ -647,7 +611,7 @@ class ProcessingWorker(QObject):
                 wellId = futures[fut]
                 doneCount += 1
                 self._overallDone += 1
-                desc = (f'{stageName} · Plate {plateIdx+1}/{totalPlates} · {plateName}'
+                desc = (f'{stageName} · {plateName}'
                         f' · {wellId} ({doneCount}/{total})')
                 self.overallProgress.emit(self._overallDone, self._totalTasks, desc)
 
@@ -828,38 +792,8 @@ class RunTab(QWidget):
         self._worker.log.connect(self._onLog)
         self._worker.finished.connect(self._onFinished)
         self._worker.error.connect(self._onError)
-        self._worker.resumeQuery.connect(self._onResumeQuery)
 
         self._thread.start()
-
-    def _onResumeQuery(self, nPlates, paramsMatch):
-        """Handle resume dialog on main thread, triggered by worker."""
-        if paramsMatch:
-            reply = QMessageBox.question(
-                self, 'Resume previous run?',
-                f'{nPlates} plate(s) already have processed '
-                f'output with the same parameters.\n\n'
-                f'Resume and skip already-processed wells?',
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-            )
-            if reply == QMessageBox.Cancel:
-                self._stopEvent.set()
-                self._worker.setResumeDecision(False)
-                return
-            self._worker.setResumeDecision(reply == QMessageBox.Yes)
-        else:
-            reply = QMessageBox.warning(
-                self, 'Overwrite existing output?',
-                f'{nPlates} plate(s) already have processed output '
-                f'with different parameters.\n\n'
-                f'Continuing will overwrite existing results.',
-                QMessageBox.Ok | QMessageBox.Cancel,
-            )
-            if reply == QMessageBox.Cancel:
-                self._stopEvent.set()
-                self._worker.setResumeDecision(False)
-                return
-            self._worker.setResumeDecision(False)
 
     def _stop(self):
         self._stopEvent.set()
