@@ -402,19 +402,22 @@ class PreviewTab(QWidget):
 
         maskLive = blurred > fixedThresh
 
+        # invert exactly as the saved _processed.tif: normalize [min,max]→[0,1] then invert
+        pmin, pmax = float(processed.min()), float(processed.max())
+        if pmax > pmin:
+            display = 1.0 - (processed - pmin) / (pmax - pmin)
+        else:
+            display = np.zeros_like(processed, dtype=np.float32)
+
         self.axRaw.imshow(raw, cmap='gray')
         self.axRaw.set_title('Raw')
 
-        self.axProc.imshow(processed, cmap='gray_r')
+        self.axProc.imshow(display, cmap='gray')
         self.axProc.set_title(
             f'Preprocessed\nblockDiam={blockDiam}',
             fontsize=9,
         )
 
-        if processed.max() > 0:
-            display = 1.0 - processed / processed.max()
-        else:
-            display = processed
         overlay = np.stack([display, display, display], axis=-1)
         overlay[maskLive] = [0, 1, 1]
         self.axMask.imshow(overlay)
