@@ -5,108 +5,99 @@ import re
 import numpy as np
 import cv2
 
-from .io_utils import save_stack
-from .preprocessing import normalize_local_contrast
-from .segmentation import compute_mask_inplace, dust_correct_inplace
+from .io_utils import saveStack
+from .preprocessing import normalizeLocalContrast
+from .segmentation import computeMaskInplace, dustCorrectInplace
 from .registration import registerStackNormblur
-from .overlay import write_overlay_video
+from .overlay import writeOverlayVideo
 
 
+from typing import Optional
 
-# Helper functions
-def crop_stack(img_stack):
-    h, w = img_stack.shape[:2]
-    # Fast path: check a small sample for NaN before scanning the full stack
-    if not (np.isnan(img_stack[0, 0, :]).any() or
-            np.isnan(img_stack[-1, -1, :]).any() or
-            np.isnan(img_stack[0, -1, :]).any() or
-            np.isnan(img_stack[-1, 0, :]).any()):
-        return img_stack, (0, h, 0, w)
+def cropStack(imgStack):
+    h, w = imgStack.shape[:2]
+    if not (np.isnan(imgStack[0, 0, :]).any() or
+            np.isnan(imgStack[-1, -1, :]).any() or
+            np.isnan(imgStack[0, -1, :]).any() or
+            np.isnan(imgStack[-1, 0, :]).any()):
+        return imgStack, (0, h, 0, w)
 
-    mask = ~np.any(np.isnan(img_stack), axis=2)
-    mask_i = np.any(mask, axis=1)
-    mask_j = np.any(mask, axis=0)
-    i1, i2 = np.where(mask_i)[0][[0, -1]]
-    j1, j2 = np.where(mask_j)[0][[0, -1]]
-    cropped = img_stack[i1:i2 + 1, j1:j2 + 1, :]
+    mask = ~np.any(np.isnan(imgStack), axis=2)
+    maskI = np.any(mask, axis=1)
+    maskJ = np.any(mask, axis=0)
+    i1, i2 = np.where(maskI)[0][[0, -1]]
+    j1, j2 = np.where(maskJ)[0][[0, -1]]
+    cropped = imgStack[i1:i2 + 1, j1:j2 + 1, :]
     return cropped, (i1, i2 + 1, j1, j2 + 1)
 
 
-def frame_index_from_filename(path):
+def frameIndexFromFilename(path):
     m = re.search(r'_(\d+)\.tif$', os.path.basename(path))
     if m is None:
         raise ValueError(f'Cannot extract frame index from {path}')
     return int(m.group(1))
 
-from typing import Optional
 
-def timelapse_processing(
+def timelapseProcessing(
     images,
-    block_diameter,
+    blockDiameter,
     ntimepoints,
-    shift_thresh,
-    fixed_thresh,
-    dust_correction,
+    shiftThresh,
+    fixedThresh,
+    dustCorrection,
     outdir,
     filename,
-    image_records,
+    imageRecords,
     Imin: Optional[np.ndarray] = None,
     Imax: Optional[np.ndarray] = None,
     fftStride=3,
     downsample=2,
-    skip_overlay=False,
+    skipOverlay=False,
     label=None,
     workers=4,
-    progress_fn=None,
+    progressFn=None,
 ):
+    processedDir = os.path.join(outdir, 'processedImages')
+    os.makedirs(processedDir, exist_ok=True)
 
-    processed_dir = os.path.join(outdir, 'processedImages')
-    os.makedirs(processed_dir, exist_ok=True)
-    
     if ntimepoints != images.shape[2]:
         raise ValueError(
             f'ntimepoints ({ntimepoints}) does not match images shape ({images.shape})'
         )
-    
-    def register_image(kind, path):
-        if image_records is not None:
-            image_records.append({
+
+    def _registerImage(kind, path):
+        if imageRecords is not None:
+            imageRecords.append({
                 'Well': filename,
                 'Type': kind,
                 'Path': os.path.abspath(path)
             })
-        
 
     def _progress(msg):
-        if progress_fn is not None:
-            progress_fn(msg)
+        if progressFn is not None:
+            progressFn(msg)
 
-    # scale raw to [0,1] like Julia floatloader
     images = images.astype(np.float32, copy=False)
     imax = images.max()
     if imax > 0:
         images /= imax
 
-
-    # Julia hardcodes sig = 2 for the post-normalization blur
     sigma = 2.0
-
-    norm_blur = np.empty(images.shape, dtype=np.float32)
+    normBlur = np.empty(images.shape, dtype=np.float32)
 
     for t in range(ntimepoints):
         _progress(f'Normalizing frame {t+1}/{ntimepoints}')
-        r = normalize_local_contrast(images[..., t], block_diameter)
-        norm_blur[..., t] = cv2.GaussianBlur(
+        r = normalizeLocalContrast(images[..., t], blockDiameter)
+        normBlur[..., t] = cv2.GaussianBlur(
             r, (0, 0), sigmaX=sigma, borderType=cv2.BORDER_REFLECT
         )
 
     _progress('Registering stack...')
 
-    # 2) register normalized for masking; register raw for OD/biomass
-    registered_norm, registered_raw, shifts_array = registerStackNormblur(
-        norm_blur,
+    registeredNorm, registeredRaw, shiftsArray = registerStackNormblur(
+        normBlur,
         images,
-        shift_thresh,
+        shiftThresh,
         fftStride=fftStride,
         downsample=downsample,
         workers=workers,
@@ -114,76 +105,53 @@ def timelapse_processing(
 
     _progress('Cropping + computing masks...')
 
-    # 3) crop away NaN borders (if any appeared)
+    processedStack, cropIndices = cropStack(registeredNorm)
 
-    processed_stack, crop_indices = crop_stack(registered_norm)
-
-    row_min, row_max, col_min, col_max = crop_indices
-    raw_cropped = registered_raw[row_min:row_max, col_min:col_max, :]
+    rowMin, rowMax, colMin, colMax = cropIndices
+    rawCropped = registeredRaw[rowMin:rowMax, colMin:colMax, :]
     if Imin is not None:
-        Imin = Imin[row_min:row_max, col_min:col_max]
+        Imin = Imin[rowMin:rowMax, colMin:colMax]
     if Imax is not None:
-        Imax = Imax[row_min:row_max, col_min:col_max]
+        Imax = Imax[rowMin:rowMax, colMin:colMax]
 
-    # 4) mask computation - binary mask on processed (normalized) stack
-    masks = np.zeros(processed_stack.shape, dtype=bool)
-    compute_mask_inplace(processed_stack, masks, fixed_thresh)
+    masks = np.zeros(processedStack.shape, dtype=bool)
+    computeMaskInplace(processedStack, masks, fixedThresh)
 
+    if dustCorrection:
+        dustCorrectInplace(masks)
 
-    if dust_correction:
-        dust_correct_inplace(masks)
-
-    # 5) biomass curve (OD if references provided; else 1 - normalized)
     biomass = np.zeros(ntimepoints, dtype=np.float64)
     odMean = None
 
     if Imin is not None:
-        # Vectorized OD computation across all frames at once
         if Imax is not None:
             denom = Imax[..., np.newaxis] - Imin[..., np.newaxis] + 1e-12
         else:
-            denom = raw_cropped[..., 0:1] - Imin[..., np.newaxis] + 1e-12
+            denom = rawCropped[..., 0:1] - Imin[..., np.newaxis] + 1e-12
 
-        OD = -np.log10((raw_cropped - Imin[..., np.newaxis]) / denom + 1e-12)
-
+        OD = -np.log10((rawCropped - Imin[..., np.newaxis]) / denom + 1e-12)
         biomass = np.nanmean(OD * masks, axis=(0, 1))
         odMean = biomass.copy()
-
     else:
-        biomass = np.nanmean((1.0 - raw_cropped) * masks, axis=(0, 1))
+        biomass = np.nanmean((1.0 - rawCropped) * masks, axis=(0, 1))
 
     _progress('Saving outputs...')
 
-    # 6) save stacks
-    # Invert processed stack before saving so biofilms appear dark (background bright).
-    # normalize_local_contrast returns blurred-img, making biofilm pixels positive/bright;
-    # inverting gives the visually expected brightfield appearance for external viewers.
-    processed_to_save = np.clip(1.0 - processed_stack, 0.0, 1.0)
-    save_stack(processed_to_save, processed_dir, f"{filename}_processed")
+    # Invert processed stack before saving: biofilm pixels are bright after
+    # normalizeLocalContrast; inverting gives the expected dark-biofilm appearance.
+    processedToSave = np.clip(1.0 - processedStack, 0.0, 1.0)
+    saveStack(processedToSave, processedDir, f"{filename}_processed")
 
-    save_stack(
-        raw_cropped,
-        processed_dir,
-        f"{filename}_registered_raw"
-    )
+    saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
 
-    # save_stack(processed_stack * masks, processed_dir, f"{filename}_processed_masked")
+    npzPath = os.path.join(processedDir, f'{filename}_masks.npz')
+    np.savez_compressed(npzPath, masks=masks)
+    _registerImage('masks', npzPath)
 
-    # 7) save masks
-    npz_path = os.path.join(processed_dir, f'{filename}_masks.npz')
-    np.savez_compressed(npz_path, masks=masks)
-    register_image('masks', npz_path)
-
-    # 8) overlay video (optional)
-    # Uses the same inverted processed stack as the saved _processed.tif so the
-    # overlay background is visually consistent with what is saved to disk.
-    if not skip_overlay:
-        overlay_mp4_path = os.path.join(
-            processed_dir, f'{filename}_overlay.mp4'
-        )
-
-        write_overlay_video(processed_to_save, masks, overlay_mp4_path, label=label)
-        register_image('overlay_mp4', overlay_mp4_path)
+    # Overlay uses the same inverted processed stack as the saved _processed.tif
+    if not skipOverlay:
+        overlayPath = os.path.join(processedDir, f'{filename}_overlay.mp4')
+        writeOverlayVideo(processedToSave, masks, overlayPath, label=label)
+        _registerImage('overlay_mp4', overlayPath)
 
     return masks, biomass, odMean
-
