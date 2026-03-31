@@ -171,6 +171,10 @@ class ParametersTab(QWidget):
         self.save_masks.setChecked(self.state.get('saveMasks', True))
         output_form.addRow(self.save_masks)
 
+        self.copy_raw = QCheckBox('Copy raw frames as stacked TIFF (.tif)')
+        self.copy_raw.setChecked(self.state.get('copyRaw', False))
+        output_form.addRow(self.copy_raw)
+
         output_group.setLayout(output_form)
         layout.addWidget(output_group)
 
@@ -208,6 +212,8 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('saveProcessed', v))
         self.save_masks.toggled.connect(
             lambda v: self.state.set('saveMasks', v))
+        self.copy_raw.toggled.connect(
+            lambda v: self.state.set('copyRaw', v))
 
         # re-check deps when user unchecks saved outputs
         self.save_processed.toggled.connect(self._enforce_output_deps)
@@ -355,7 +361,7 @@ class ParametersTab(QWidget):
         widgets = [
             self.save_overlays, self.whole_image, self.colony_tracking,
             self.colony_feats, self.dust_correction, self.save_registered,
-            self.save_processed, self.save_masks,
+            self.save_processed, self.save_masks, self.copy_raw,
             self.block_diam, self.fixed_thresh,
             self.min_colony_area, self.prop_radius, self.workers,
         ]
@@ -370,6 +376,7 @@ class ParametersTab(QWidget):
         self.save_registered.setChecked(self.state.get('saveRegistered', True))
         self.save_processed.setChecked(self.state.get('saveProcessed', True))
         self.save_masks.setChecked(self.state.get('saveMasks', True))
+        self.copy_raw.setChecked(self.state.get('copyRaw', False))
         self.block_diam.setValue(self.state.get('blockDiam', 101))
         self.fixed_thresh.setValue(self.state.get('fixedThresh', 0.04))
         self.min_colony_area.setValue(self.state.get('minColonyAreaPx', 200))
