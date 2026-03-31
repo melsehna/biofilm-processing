@@ -6,14 +6,15 @@ Core image analysis pipeline for brightfield timelapse biofilm data. Handles pre
 
 | Module | Purpose |
 |---|---|
-| `analysis_main.py` | `timelapse_processing()` — full single-well pipeline |
-| `preprocessing.py` | Local contrast normalization (8x downsample + Gaussian blur) |
+| `analysis_main.py` | `timelapseProcessing()` — full single-well pipeline |
+| `preprocessing.py` | `normalizeLocalContrast()`, `meanFilter()` |
 | `registration.py` | Two-pass in-place phase-correlation drift correction |
-| `segmentation.py` | Binary masking + dust correction |
-| `overlay.py` | `write_overlay_video()` — MP4 generation with mask overlay |
+| `segmentation.py` | `computeMaskInplace()`, `dustCorrectInplace()` |
+| `overlay.py` | `writeOverlayVideo()` — MP4 generation with mask overlay |
 | `batch_runner.py` | Multi-plate batch processing with magnification discovery |
-| `io_utils.py` | Threaded TIFF I/O |
-| `helpers.py` | Utility functions (round_odd, etc.) |
+| `master_csv.py` | `assembleMasterCsvs()`, `assemblePlateNumericalData()` |
+| `io_utils.py` | Threaded TIFF I/O (`readImagesInplace()`, `saveStack()`) |
+| `helpers.py` | Utility functions (`roundOdd()`, `calculateStats()`) |
 | `plotting.py` | Plate-level summary plots |
 | `plotting_tools.py` | Diagnostic panels (peak frame, biomass curves) |
 | `pipeline.py` | High-level `Pipeline` entry point |
@@ -50,7 +51,7 @@ Raw .tif files
 ```python
 import numpy as np
 import tifffile
-from multiWellAnalysis.processing.analysis_main import timelapse_processing
+from multiWellAnalysis.processing.analysis_main import timelapseProcessing
 
 stack = tifffile.imread('plate/A1_03_1_1_Bright Field_001.tif')
 
@@ -58,16 +59,16 @@ stack = tifffile.imread('plate/A1_03_1_1_Bright Field_001.tif')
 if stack.shape[0] < stack.shape[1]:
     stack = np.transpose(stack, (1, 2, 0))
 
-masks, biomass, od_mean = timelapse_processing(
+masks, biomass, odMean = timelapseProcessing(
     images=stack.astype(np.float64),
-    block_diameter=101,
+    blockDiameter=101,
     ntimepoints=stack.shape[2],
-    shift_thresh=50,
-    fixed_thresh=0.014,
-    dust_correction=True,
+    shiftThresh=50,
+    fixedThresh=0.014,
+    dustCorrection=True,
     outdir='/path/to/output',
     filename='A1_03',
-    image_records=None,
+    imageRecords=None,
     fftStride=6,
     downsample=4,
     label='lipA  Plate1-A1',  # optional text on overlay
@@ -77,23 +78,22 @@ masks, biomass, od_mean = timelapse_processing(
 ### Batch (multiple plates)
 
 ```python
-from multiWellAnalysis.processing.batch_runner import batch_run
+from multiWellAnalysis.processing.batch_runner import batchRun
 
-batch_run(
-    config_path='experiment_config.json',
-    replicate_csv='ReplicatePositions.csv',
-    skip_overlay=False,
+batchRun(
+    configPath='experiment_config.json',
+    replicateCsv='ReplicatePositions.csv',
 )
 ```
 
 ### Single plate with magnification filtering
 
 ```python
-from multiWellAnalysis.processing.batch_runner import run_plate
-from multiWellAnalysis.processing.helpers import round_odd
+from multiWellAnalysis.processing.batch_runner import runPlate
+from multiWellAnalysis.processing.helpers import roundOdd
 
 params = {
-    'blockDiam': round_odd(101),
+    'blockDiam': roundOdd(101),
     'fixed_thresh': 0.014,
     'shift_thresh': 50,
     'dust_correction': True,
@@ -101,23 +101,22 @@ params = {
     'Imax': None,
 }
 
-mutant_map = {'A1': 'lipA', 'B2': 'WT', ...}
+mutantMap = {'A1': 'lipA', 'B2': 'WT', ...}
 
-df = run_plate('/path/to/plate', mutant_map, params)
+df = runPlate('/path/to/plate', mutantMap, params)
 ```
 
 ### Overlay video only
 
 ```python
-from multiWellAnalysis.processing.overlay import write_overlay_video
+from multiWellAnalysis.processing.overlay import writeOverlayVideo
 
-# display_stack: (H, W, T) float32 in [0, 1]
+# displayStack: (H, W, T) float32 in [0, 1]
 # masks: (H, W, T) bool
-write_overlay_video(
-    display_stack, masks, 'output/A1_overlay.mp4',
+writeOverlayVideo(
+    displayStack, masks, 'output/A1_overlay.mp4',
     fps=2,
     label='lipA  Plate1-A1',
-    overlay_color=(255, 255, 0),  # BGR cyan
 )
 ```
 
@@ -125,28 +124,28 @@ write_overlay_video(
 
 ```python
 from multiWellAnalysis.processing.preprocessing import (
-    normalize_local_contrast,
-    normalize_local_contrast_output,
+    normalizeLocalContrast,
+    normalizeLocalContrastOutput,
 )
 
 # For segmentation input (background - image):
-norm = normalize_local_contrast(frame, block_diameter=101)
+norm = normalizeLocalContrast(frame, blockDiameter=101)
 
 # For visualization (image - background + midpoint, clipped to [0, 1]):
-vis = normalize_local_contrast_output(stack, block_diameter=101, fpMean=0.5)
+vis = normalizeLocalContrastOutput(stack, blockDiameter=101, fpMean=0.5)
 ```
 
 ## Parameters
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `block_diameter` | 101 | Local contrast kernel size (odd). Larger = smoother background estimate. |
-| `fixed_thresh` | 0.014 (CLI) / 0.04 (GUI) | Mask threshold on normalized image. |
-| `shift_thresh` | 50 | Max registration shift (px). Larger shifts are rejected. |
+| `blockDiameter` | 101 | Local contrast kernel size (odd). Larger = smoother background estimate. |
+| `fixedThresh` | 0.014 (CLI) / 0.04 (GUI) | Mask threshold on normalized image. |
+| `shiftThresh` | 50 | Max registration shift (px). Larger shifts are rejected. |
 | `fftStride` | 6 | Compute shifts every N frames. |
 | `downsample` | 4 | Downsample factor for FFT. |
-| `dust_correction` | True | Kill pixels present at t=0 that vanish later. |
-| `skip_overlay` | False | Skip MP4 generation (saves ~30% runtime). |
+| `dustCorrection` | True | Kill pixels present at t=0 that vanish later. |
+| `skipOverlay` | False | Skip MP4 generation (saves ~30% runtime). |
 
 ## Magnification handling
 

@@ -30,7 +30,7 @@ pip install -e .
 Create a clickable shortcut so you can launch the GUI without a terminal:
 
 ```bash
-python scripts/install-desktop-shortcut.py
+python scripts/installDesktopShortcut.py
 ```
 
 This works on Linux, macOS, and Windows. It detects your active conda or virtualenv and bakes the activation into the shortcut.
@@ -68,7 +68,7 @@ phenotypr-gui
 # or: python -m multiWellAnalysis.gui.app
 ```
 
-The GUI has five tabs:
+The GUI has six tabs:
 
 | Tab | Purpose |
 |---|---|
@@ -76,7 +76,8 @@ The GUI has five tabs:
 | **Parameters** | Choose analyses to run, configure preprocessing, set worker count |
 | **Preview** | Live preview of processing and colony segmentation for any plate/well/frame |
 | **Conditions** | 96-well grid for labeling experimental conditions per well |
-| **Run** | Start/stop processing with per-plate and per-well progress bars and a live log |
+| **Test Well** | Run the full pipeline on a single well for debugging/validation |
+| **Run** | Start/stop processing with progress bar, ETA, and a live log |
 
 ### Setup tab
 
@@ -156,7 +157,7 @@ python scripts/runSinglePlate.py /path/to/plate/directory \
 ```python
 import numpy as np
 import tifffile
-from multiWellAnalysis.processing.analysis_main import timelapse_processing
+from multiWellAnalysis.processing.analysis_main import timelapseProcessing
 
 stack = tifffile.imread('path/to/A1.tif').astype(np.float64)
 
@@ -164,16 +165,16 @@ stack = tifffile.imread('path/to/A1.tif').astype(np.float64)
 if stack.shape[0] < stack.shape[1]:
     stack = np.transpose(stack, (1, 2, 0))
 
-masks, biomass, od_mean = timelapse_processing(
+masks, biomass, odMean = timelapseProcessing(
     images=stack,
-    block_diameter=101,
+    blockDiameter=101,
     ntimepoints=stack.shape[2],
-    shift_thresh=50,
-    fixed_thresh=0.04,
-    dust_correction=True,
+    shiftThresh=50,
+    fixedThresh=0.04,
+    dustCorrection=True,
     outdir='path/to/output',
     filename='A1',
-    image_records=None,
+    imageRecords=None,
     fftStride=6,
     downsample=4,
     label='mutantName  plateName-A1',  # optional text label on overlay
@@ -183,11 +184,11 @@ masks, biomass, od_mean = timelapse_processing(
 ### Batch processing
 
 ```python
-from multiWellAnalysis.processing.batch_runner import batch_run
+from multiWellAnalysis.processing.batch_runner import batchRun
 
-batch_run(
-    config_path='experiment_config.json',
-    replicate_csv='ReplicatePositions.csv',
+batchRun(
+    configPath='experiment_config.json',
+    replicateCsv='ReplicatePositions.csv',
 )
 ```
 
@@ -289,6 +290,22 @@ For each well (e.g., `A1`), the pipeline can produce:
 | `A1_wellColonyFeatures_*.csv` | Well-level colony aggregates (one row per frame) |
 | `A1_wholeImage_*.csv` | Whole-image texture features (one row per frame) |
 
+Per-plate aggregated data is written to `numericalData/` alongside `processedImages/`:
+
+| File | Description |
+|---|---|
+| `{mag}X_BF.csv` | Biomass timeseries for all wells at that magnification |
+| `{mag}X_wholeImage.csv` | Whole-image features for all wells (if enabled) |
+| `{mag}X_colonyFeatures.csv` | Per-colony features for all wells (if enabled) |
+| `{mag}X_colonyAgg.csv` | Well-level colony aggregates (if enabled) |
+
+Run-level master CSVs are written to the output root:
+
+| File | Description |
+|---|---|
+| `master_frame_features.csv` | One row per (drawer, plate, well, mag, frame) |
+| `master_colony_features.csv` | One row per (drawer, plate, well, mag, frame, colony) |
+
 ## Project structure
 
 ```
@@ -301,22 +318,24 @@ src/multiWellAnalysis/
             parameters.py         # Tab 2: analysis, preprocessing, workers
             preview.py            # Tab 3: live image preview
             conditions.py         # Tab 4: 96-well condition assignment
-            runGUI.py             # Tab 5: pipeline execution
+            test_well.py          # Tab 5: single-well pipeline test/debug
+            run.py                # Tab 6: pipeline execution
     processing/                   # Core image analysis
-        analysis_main.py          # timelapse_processing() — single-well pipeline
-        preprocessing.py          # normalize_local_contrast(), mean_filter()
+        analysis_main.py          # timelapseProcessing() — single-well pipeline
+        preprocessing.py          # normalizeLocalContrast(), meanFilter()
         registration.py           # Phase-correlation drift correction
         segmentation.py           # Binary masking + dust correction
-        overlay.py                # Overlay video generation (cv2 VideoWriter)
+        overlay.py                # writeOverlayVideo() — MP4 with mask overlay
         batch_runner.py           # Multi-plate batch processing with magnification discovery
+        master_csv.py             # assembleMasterCsvs(), assemblePlateNumericalData()
         io_utils.py               # Threaded image I/O
-        helpers.py                # Utility functions
+        helpers.py                # Utility functions (roundOdd, calculateStats)
         plotting.py               # Plate-level summary plots
         plotting_tools.py         # Diagnostic panels (peak frame, biomass curves)
         pipeline.py               # High-level Pipeline entry point
     colony/                       # Colony tracking & features
-        runTrackingGUI.py         # Colony tracking
-        runColonyFeatsGUI.py      # Colony feature extraction
+        runTrackingGUI.py         # Colony tracking (trackAndSave)
+        runColonyFeatsGUI.py      # Colony feature extraction (extractAndSave)
         runColFeatsCLI.py         # CLI colony feature extraction
         colonyFeatsMicrons.py     # Per-colony feature functions
         wellAggMicrons.py         # Well-level aggregation
@@ -327,7 +346,7 @@ src/multiWellAnalysis/
         extractWholeImageFeats.py # Mahotas feature extraction
     intensity/                    # Per-pixel intensity features
 scripts/
-    install-desktop-shortcut.py   # Create desktop shortcut (Linux/macOS/Windows)
+    installDesktopShortcut.py     # Create desktop shortcut (Linux/macOS/Windows)
     runSinglePlate.py             # CLI: process one plate with magnification filtering
     regenOverlays.py              # CLI: regenerate overlay videos from existing data
     reimaging/                    # Reimaging dataset scripts
