@@ -51,10 +51,14 @@ def get_desktop_dir():
         return os.path.join(Path.home(), 'Desktop')
 
 
-def get_icon_path():
-    """Check if an icon exists in the repo."""
-    repo_dir = Path(__file__).resolve().parent.parent
-    icon = repo_dir / 'assets' / 'phenotypr-icon.png'
+def getIconPath(fmt='png'):
+    """Return path to the app icon in the requested format, or None."""
+    repoDir = Path(__file__).resolve().parent.parent
+    if fmt == 'icns':
+        icon = repoDir / 'assets' / 'phenotypr-icon.icns'
+        if icon.exists():
+            return str(icon)
+    icon = repoDir / 'assets' / 'phenotypr-icon.png'
     if icon.exists():
         return str(icon)
     return None
@@ -86,8 +90,8 @@ def install_linux(gui_bin):
     else:
         exec_line = gui_bin
 
-    icon_path = get_icon_path()
-    icon_line = f'Icon={icon_path}\n' if icon_path else ''
+    iconPath = getIconPath('png')
+    iconLine = f'Icon={iconPath}\n' if iconPath else ''
 
     desktop_entry = (
         '[Desktop Entry]\n'
@@ -97,7 +101,7 @@ def install_linux(gui_bin):
         'Terminal=false\n'
         'Type=Application\n'
         'Categories=Science;Education;\n'
-        f'{icon_line}'
+        f'{iconLine}'
     )
 
     # Install to application menu
@@ -210,9 +214,9 @@ def install_macos(gui_bin):
         f.write(f'fi\n')
     os.chmod(launcher, 0o755)
 
-    # Write Info.plist
-    plist_dir = os.path.join(desktop_dir, 'Phenotypr.app', 'Contents')
-    with open(os.path.join(plist_dir, 'Info.plist'), 'w') as f:
+    # Write Info.plist with icon reference
+    plistDir = os.path.join(desktop_dir, 'Phenotypr.app', 'Contents')
+    with open(os.path.join(plistDir, 'Info.plist'), 'w') as f:
         f.write(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -227,18 +231,23 @@ def install_macos(gui_bin):
             '  <string>edu.cmu.phenotypr</string>\n'
             '  <key>CFBundleVersion</key>\n'
             '  <string>0.1.0</string>\n'
+            '  <key>CFBundleIconFile</key>\n'
+            '  <string>phenotypr-icon</string>\n'
             '  <key>LSUIElement</key>\n'
             '  <false/>\n'
             '</dict>\n'
             '</plist>\n'
         )
 
-    # Copy icon if available
-    icon_src = get_icon_path()
-    if icon_src:
-        res_dir = os.path.join(plist_dir, 'Resources')
-        os.makedirs(res_dir, exist_ok=True)
-        shutil.copy2(icon_src, os.path.join(res_dir, 'phenotypr-icon.png'))
+    # Copy icon files (.icns for Finder, .png as fallback)
+    icnsPath = getIconPath('icns')
+    pngPath = getIconPath('png')
+    resDir = os.path.join(plistDir, 'Resources')
+    os.makedirs(resDir, exist_ok=True)
+    if icnsPath:
+        shutil.copy2(icnsPath, os.path.join(resDir, 'phenotypr-icon.icns'))
+    if pngPath:
+        shutil.copy2(pngPath, os.path.join(resDir, 'phenotypr-icon.png'))
 
     app_path = os.path.join(desktop_dir, 'Phenotypr.app')
 
@@ -285,11 +294,14 @@ def install_windows(gui_bin):
 
     # Try to create a proper .lnk shortcut via PowerShell
     lnk_path = os.path.join(desktop_dir, 'Phenotypr.lnk')
+    iconPath = getIconPath('png')
+    iconArg = f'$s.IconLocation = "{iconPath}"; ' if iconPath else ''
     ps_script = (
         f'$ws = New-Object -ComObject WScript.Shell; '
         f'$s = $ws.CreateShortcut("{lnk_path}"); '
         f'$s.TargetPath = "{bat_path}"; '
         f'$s.Description = "Phenotypr - Biofilm Phenotyping GUI"; '
+        f'{iconArg}'
         f'$s.WindowStyle = 7; '  # minimized (hides the cmd window faster)
         f'$s.Save()'
     )
