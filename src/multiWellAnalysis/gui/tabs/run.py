@@ -519,7 +519,22 @@ class ProcessingWorker(QObject):
                 _saveRunParams(outdir, runParams)
 
                 wellItems = list(wells.items())
+                index = {}
                 if resume:
+                    # load previously-done wells into index so later stages can run on them
+                    existingIndex = os.path.join(outdir, 'index.csv')
+                    if os.path.exists(existingIndex):
+                        try:
+                            import csv as _csv
+                            with open(existingIndex, newline='') as f:
+                                for row in _csv.DictReader(f):
+                                    wid = row.get('well', '')
+                                    if wid:
+                                        index[wid] = {k: v for k, v in row.items()
+                                                      if k not in ('plate', 'plate_path', 'well', 'mag')}
+                        except Exception:
+                            pass
+
                     skipped = []
                     remaining = []
                     for wellId, files in wellItems:
@@ -535,7 +550,6 @@ class ProcessingWorker(QObject):
                 self._totalTasks += len(wellItems) * nStages
                 self.overallProgress.emit(self._overallDone, self._totalTasks, f'Processing {plateName}…')
 
-                index = {}
                 totalWells = len(wellItems)
 
                 self.log.emit(f'\n  --- Stage 1: Processing ({totalWells} wells, {nWorkers} workers) ---')
@@ -570,6 +584,12 @@ class ProcessingWorker(QObject):
                             trackable, index, outdir, nWorkers,
                             self._submitColonyFeats, plateName
                         )
+
+                # log index summary before saving
+                indexCols = set()
+                for row in index.values():
+                    indexCols.update(row.keys())
+                self.log.emit(f'\n  Index: {len(index)} wells, columns: {sorted(indexCols)}')
 
                 self._saveIndex(index, outdir, plateName, resolvedPlate)
 
