@@ -299,7 +299,7 @@ def _listRawTifs(directory):
 
 
 def _resolveTifDir(root, maxDepth=2):
-    """Find the directory containing raw TIF images, up to maxDepth levels below root."""
+    """Find the first directory containing raw TIF images, up to maxDepth levels below root."""
     try:
         names = os.listdir(root)
     except (PermissionError, OSError):
@@ -331,6 +331,47 @@ def _resolveTifDir(root, maxDepth=2):
         dirsAtLevel = nextLevel
 
     return root
+
+
+def _resolveAllTifDirs(root, maxDepth=2):
+    """Find ALL directories containing raw TIF images under root.
+
+    Unlike _resolveTifDir which returns only the first match, this returns
+    every plate directory found — needed when root is a drawer containing
+    multiple plates.  Returns [(platePath, resolvedDir), ...].
+    """
+    try:
+        names = os.listdir(root)
+    except (PermissionError, OSError):
+        return [(root, root)]
+
+    if any(_isRawFrame(n) for n in names):
+        return [(root, root)]
+
+    found = []
+    dirsAtLevel = [root]
+    for _ in range(maxDepth):
+        nextLevel = []
+        for d in dirsAtLevel:
+            try:
+                entries = os.listdir(d)
+            except (PermissionError, OSError):
+                continue
+            for name in entries:
+                if name.startswith('.') or _isOutputDir(name):
+                    continue
+                child = os.path.join(d, name)
+                if os.path.isdir(child):
+                    nextLevel.append(child)
+        for d in sorted(nextLevel):
+            try:
+                if any(_isRawFrame(n) for n in os.listdir(d)):
+                    found.append((root, d))
+            except (PermissionError, OSError):
+                continue
+        dirsAtLevel = nextLevel
+
+    return found if found else [(root, root)]
 
 
 def discoverWells(platePath, magSetting='all'):
@@ -372,27 +413,24 @@ def discoverWells(platePath, magSetting='all'):
     return resolved, wells
 
 
-def _computeOutdir(platePath, resolvedPlate, outputRoot):
+def _computeOutdir(userPath, resolvedPlate, outputRoot):
     """Compute the processedImages/ path for a plate.
 
-    Drawer given:  <root>/<drawer>/processedImages/  (sibling of plate)
-    Plate given:   <root>/<plate>/processedImages/   (inside plate)
-    No output root: same logic but relative to source location.
+    Drawer given:  output/<drawer>/<plate>/processedImages/
+    Plate given:   output/<plate>/processedImages/
+    No output root: <resolvedPlate>/processedImages/
     """
-    isDrawer = (resolvedPlate != platePath)
-    plateName = os.path.basename(resolvedPlate) if isDrawer else os.path.basename(platePath)
-    drawerName = os.path.basename(platePath) if isDrawer else None
+    isDrawer = (resolvedPlate != userPath)
+    plateName = os.path.basename(resolvedPlate)
+    drawerName = os.path.basename(userPath) if isDrawer else None
 
     if outputRoot:
         if isDrawer:
-            return os.path.join(outputRoot, drawerName, 'processedImages')
+            return os.path.join(outputRoot, drawerName, plateName, 'processedImages')
         else:
             return os.path.join(outputRoot, plateName, 'processedImages')
     else:
-        if isDrawer:
-            return os.path.join(platePath, 'processedImages')
-        else:
-            return os.path.join(resolvedPlate, 'processedImages')
+        return os.path.join(resolvedPlate, 'processedImages')
 
 
 class ProcessingWorker(QObject):
@@ -419,8 +457,6 @@ class ProcessingWorker(QObject):
 
     def _runPipeline(self):
         s = self._state
-        plates = s['plates']
-        totalPlates = len(plates)
         nWorkers = s.get('workers', 4)
         outputRoot = s.get('outputDir', '')
         magSetting = s.get('magnification', 'all')
@@ -430,10 +466,16 @@ class ProcessingWorker(QObject):
         doColonyFeats = s.get('colonyFeats', False)
         nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
+        # expand drawer entries into individual plate entries: (userPath, resolvedDir)
+        expandedPlates = []
+        for platePath in s['plates']:
+            expandedPlates.extend(_resolveAllTifDirs(platePath, maxDepth=2))
+        totalPlates = len(expandedPlates)
+
         totalTasks = 0
-        for platePath in plates:
-            resolved, preWells = discoverWells(platePath, magSetting)
-            preOutdir = _computeOutdir(platePath, resolved, outputRoot)
+        for userPath, resolved in expandedPlates:
+            _, preWells = discoverWells(resolved, magSetting)
+            preOutdir = _computeOutdir(userPath, resolved, outputRoot)
             if self._resume:
                 n = sum(1 for wid in preWells if not _wellAlreadyProcessed(preOutdir, wid))
             else:
@@ -447,16 +489,16 @@ class ProcessingWorker(QObject):
         plateOutdirs = []
         drawerMap = {}
 
-        for plateIdx, platePath in enumerate(plates):
+        for plateIdx, (userPath, resolvedPlate) in enumerate(expandedPlates):
             if self._stop.is_set():
                 self.log.emit('Cancelled by user.')
                 return
 
-            resolvedPlate, wells = discoverWells(platePath, magSetting)
-            isDrawer = (resolvedPlate != platePath)
+            _, wells = discoverWells(resolvedPlate, magSetting)
+            isDrawer = (resolvedPlate != userPath)
 
-            plateName = os.path.basename(resolvedPlate) if isDrawer else os.path.basename(platePath)
-            drawerName = os.path.basename(platePath) if isDrawer else None
+            plateName = os.path.basename(resolvedPlate)
+            drawerName = os.path.basename(userPath) if isDrawer else None
 
             self.log.emit(f'\n{"="*60}')
             if drawerName:
@@ -470,9 +512,7 @@ class ProcessingWorker(QObject):
                 self.log.emit(f'  No wells found, skipping.')
                 continue
 
-            outdir = _computeOutdir(platePath, resolvedPlate, outputRoot)
-            if isDrawer and outputRoot:
-                os.makedirs(os.path.join(outputRoot, drawerName, plateName), exist_ok=True)
+            outdir = _computeOutdir(userPath, resolvedPlate, outputRoot)
             os.makedirs(outdir, exist_ok=True)
             self.log.emit(f'  Output dir: {outdir}')
 
@@ -736,13 +776,13 @@ class RunTab(QWidget):
 
         platesWithOutput = []
         for platePath in plates:
-            resolved = _resolveTifDir(platePath, maxDepth=2)
-            outdir = _computeOutdir(platePath, resolved, outputRoot)
-            saved = _loadRunParams(outdir)
-            hasFiles = os.path.isdir(outdir) and any(
-                f.endswith('.tif') for f in os.listdir(outdir))
-            if hasFiles:
-                platesWithOutput.append((platePath, saved))
+            for userPath, resolved in _resolveAllTifDirs(platePath, maxDepth=2):
+                outdir = _computeOutdir(userPath, resolved, outputRoot)
+                saved = _loadRunParams(outdir)
+                hasFiles = os.path.isdir(outdir) and any(
+                    f.endswith('.tif') for f in os.listdir(outdir))
+                if hasFiles:
+                    platesWithOutput.append((resolved, saved))
 
         if platesWithOutput:
             allMatch = all(saved == runParams for _, saved in platesWithOutput if saved is not None)
