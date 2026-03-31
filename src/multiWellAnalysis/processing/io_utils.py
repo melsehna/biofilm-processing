@@ -4,23 +4,21 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 
-def _read_one(args):
+def _readOne(args):
     arr, t, path = args
     arr[..., t] = iio.imread(path).astype(np.float64)
 
 
-def read_images_inplace(ntimepoints, arr, files):
-    # Threaded I/O — TIFF decoding releases the GIL
+def readImagesInplace(ntimepoints, arr, files):
     with ThreadPoolExecutor() as pool:
-        pool.map(_read_one, [(arr, t, files[t]) for t in range(ntimepoints)])
+        pool.map(_readOne, [(arr, t, files[t]) for t in range(ntimepoints)])
     return arr
 
 
-def save_stack(stack, outdir, filename):
+def saveStack(stack, outDir, filename):
     """Save (H, W, T) stack as multi-page TIF in (T, H, W) layout."""
     import tifffile
-    os.makedirs(outdir, exist_ok=True)
-    path = os.path.join(outdir, f"{filename}.tif")
-    # Internal convention: memory is (H, W, T), disk is (T, H, W)
+    os.makedirs(outDir, exist_ok=True)
+    path = os.path.join(outDir, f"{filename}.tif")
     data = np.transpose(stack, (2, 0, 1)).astype(np.float32, copy=False)
     tifffile.imwrite(path, data)
