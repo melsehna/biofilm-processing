@@ -588,7 +588,7 @@ class ProcessingWorker(QObject):
             # ── Per-plate numericalData/ CSVs ──
             try:
                 from multiWellAnalysis.processing.master_csv import assemble_plate_numerical_data
-                assemble_plate_numerical_data(outdir, index, log_fn=self.log.emit)
+                assemble_plate_numerical_data(outdir, log_fn=self.log.emit)
             except Exception as e:
                 self.log.emit(f'  [numericalData] ERROR: {e}')
 
@@ -703,22 +703,41 @@ class ProcessingWorker(QObject):
         if not index:
             return
         index_path = os.path.join(outdir, 'index.csv')
+
+        # Merge with any existing index rows (from a prior resumed run)
+        existing = {}
+        if os.path.exists(index_path):
+            try:
+                import csv as _csv
+                with open(index_path, newline='') as f:
+                    for row in _csv.DictReader(f):
+                        existing[row['well']] = row
+            except Exception:
+                pass
+
+        # Build new rows, overwriting existing entries for re-processed wells
+        new_rows = {}
+        for well_id, row in index.items():
+            m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
+            mag = m.group(1) if m else ''
+            full_row = {'plate': plate_name, 'plate_path': plate_path, 'well': well_id, 'mag': mag}
+            full_row.update(row)
+            new_rows[well_id] = full_row
+
+        merged = {**existing, **new_rows}
+
         all_keys = ['plate', 'plate_path', 'well', 'mag']
         extra_keys = set()
-        for row in index.values():
+        for row in merged.values():
             extra_keys.update(row.keys())
         extra_keys -= set(all_keys)
         all_keys.extend(sorted(extra_keys))
 
         with open(index_path, 'w', newline='') as f:
-            writer = csv_mod.DictWriter(f, fieldnames=all_keys)
+            writer = csv_mod.DictWriter(f, fieldnames=all_keys, extrasaction='ignore')
             writer.writeheader()
-            for well_id, row in sorted(index.items()):
-                m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
-                mag = m.group(1) if m else ''
-                full_row = {'plate': plate_name, 'plate_path': plate_path, 'well': well_id, 'mag': mag}
-                full_row.update(row)
-                writer.writerow(full_row)
+            for well_id in sorted(merged):
+                writer.writerow(merged[well_id])
 
         self.log.emit(f'\n  Index saved: {index_path}')
 

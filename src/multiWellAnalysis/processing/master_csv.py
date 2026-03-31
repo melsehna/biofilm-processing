@@ -153,17 +153,16 @@ def assemble_master_csvs(plate_outdirs, drawer_map, output_root, log_fn=None):
     return results
 
 
-def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
+def assemble_plate_numerical_data(processed_images_dir, log_fn=None):
     """Write per-magnification CSVs into <plate_dir>/numericalData/.
+
+    Reads the on-disk index.csv so that resumed runs include all wells,
+    not just those processed in the current run.
 
     Parameters
     ----------
     processed_images_dir : str
         Path to the plate's processedImages/ directory.
-    index : dict
-        Well-keyed dict of output file paths (as built by ProcessingWorker).
-        Keys per well may include: 'biomass', 'whole_image_feats',
-        'colony_feats', 'well_colony_feats'.
     log_fn : callable, optional
         Called with progress strings.
     """
@@ -171,23 +170,31 @@ def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
         if log_fn:
             log_fn(msg)
 
+    index_path = os.path.join(processed_images_dir, 'index.csv')
+    if not os.path.exists(index_path):
+        log(f'  [numericalData] no index.csv in {processed_images_dir}, skipping')
+        return
+
+    index = pd.read_csv(index_path, dtype=str).fillna('')
+
     numerical_dir = os.path.join(os.path.dirname(processed_images_dir), 'numericalData')
     os.makedirs(numerical_dir, exist_ok=True)
 
-    # Group wells by magnification suffix (e.g. '_03')
+    # Group index rows by magnification suffix
     groups = {}
-    for well_id, row in index.items():
-        m = re.match(r'^[A-P]\d+(_\d+)$', well_id)
-        mag_suffix = m.group(1) if m else ''
-        groups.setdefault(mag_suffix, []).append((well_id, row))
+    for _, irow in index.iterrows():
+        well_id = irow['well']
+        mag_suffix = irow.get('mag', '')
+        groups.setdefault(mag_suffix, []).append(irow)
 
-    for mag_suffix, well_rows in sorted(groups.items()):
+    for mag_suffix, rows in sorted(groups.items()):
         obj_label = _MAG_SUFFIX_TO_OBJ.get(mag_suffix, mag_suffix.lstrip('_') + 'X') if mag_suffix else 'unknownX'
 
         # ── BF biomass ──────────────────────────────────────────────
         bf_dfs = []
-        for well_id, row in well_rows:
-            p = row.get('biomass', '')
+        for irow in rows:
+            well_id = irow['well']
+            p = irow.get('biomass', '')
             if p and os.path.exists(p):
                 df = pd.read_csv(p)[['frame', 'biomass']]
                 df.insert(0, 'well', well_id)
@@ -201,8 +208,9 @@ def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
 
         # ── Whole-image features ────────────────────────────────────
         wi_dfs = []
-        for well_id, row in well_rows:
-            p = row.get('whole_image_feats', '')
+        for irow in rows:
+            well_id = irow['well']
+            p = irow.get('whole_image_feats', '')
             if p and os.path.exists(p):
                 df = pd.read_csv(p)
                 df.insert(0, 'well', well_id)
@@ -216,8 +224,9 @@ def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
 
         # ── Per-colony features ─────────────────────────────────────
         cf_dfs = []
-        for well_id, row in well_rows:
-            p = row.get('colony_feats', '')
+        for irow in rows:
+            well_id = irow['well']
+            p = irow.get('colony_feats', '')
             if p and os.path.exists(p):
                 df = pd.read_csv(p)
                 df.insert(0, 'well', well_id)
@@ -231,8 +240,9 @@ def assemble_plate_numerical_data(processed_images_dir, index, log_fn=None):
 
         # ── Well-level colony aggregates ────────────────────────────
         wca_dfs = []
-        for well_id, row in well_rows:
-            p = row.get('well_colony_feats', '')
+        for irow in rows:
+            well_id = irow['well']
+            p = irow.get('well_colony_feats', '')
             if p and os.path.exists(p):
                 df = pd.read_csv(p)
                 df.insert(0, 'well', well_id)
