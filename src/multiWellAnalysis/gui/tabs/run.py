@@ -438,14 +438,20 @@ class ProcessingWorker(QObject):
     log = Signal(str)
     finished = Signal()
     error = Signal(str)
+    resumeQuery = Signal(int, bool)  # (nPlatesWithOutput, paramsMatch)
 
-    def __init__(self, stateDict, stopEvent, resume=False):
+    def __init__(self, stateDict, stopEvent):
         super().__init__()
         self._state = stateDict
         self._stop = stopEvent
-        self._resume = resume
+        self._resume = False
+        self._resumeDecision = None  # set by main thread via setResumeDecision
         self._overallDone = 0
         self._totalTasks = 1
+
+    def setResumeDecision(self, resume):
+        """Called from main thread after user answers the resume dialog."""
+        self._resumeDecision = resume
 
     def run(self):
         try:
@@ -466,11 +472,43 @@ class ProcessingWorker(QObject):
         doColonyFeats = s.get('colonyFeats', False)
         nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
+        self.log.emit('Scanning plates...')
+
         # expand drawer entries into individual plate entries: (userPath, resolvedDir)
         expandedPlates = []
         for platePath in s['plates']:
             expandedPlates.extend(_resolveAllTifDirs(platePath, maxDepth=2))
         totalPlates = len(expandedPlates)
+
+        # resume detection (runs in worker thread, not main thread)
+        runParams = _extractRunParams(s)
+        nWithOutput = 0
+        allMatch = True
+        anySaved = False
+        for userPath, resolved in expandedPlates:
+            outdir = _computeOutdir(userPath, resolved, outputRoot)
+            saved = _loadRunParams(outdir)
+            try:
+                hasFiles = os.path.isdir(outdir) and any(
+                    f.endswith('.tif') for f in os.listdir(outdir))
+            except (PermissionError, OSError):
+                hasFiles = False
+            if hasFiles:
+                nWithOutput += 1
+                if saved is not None:
+                    anySaved = True
+                    if saved != runParams:
+                        allMatch = False
+
+        if nWithOutput > 0:
+            self.resumeQuery.emit(nWithOutput, anySaved and allMatch)
+            # wait for main thread to answer
+            while self._resumeDecision is None and not self._stop.is_set():
+                time.sleep(0.05)
+            if self._stop.is_set():
+                self.log.emit('Cancelled by user.')
+                return
+            self._resume = self._resumeDecision
 
         totalTasks = 0
         for userPath, resolved in expandedPlates:
@@ -770,50 +808,6 @@ class RunTab(QWidget):
             return
 
         stateDict = self.state.to_dict()
-        outputRoot = stateDict.get('outputDir', '')
-        runParams = _extractRunParams(stateDict)
-        resume = False
-
-        platesWithOutput = []
-        for platePath in plates:
-            for userPath, resolved in _resolveAllTifDirs(platePath, maxDepth=2):
-                outdir = _computeOutdir(userPath, resolved, outputRoot)
-                saved = _loadRunParams(outdir)
-                hasFiles = os.path.isdir(outdir) and any(
-                    f.endswith('.tif') for f in os.listdir(outdir))
-                if hasFiles:
-                    platesWithOutput.append((resolved, saved))
-
-        if platesWithOutput:
-            allMatch = all(saved == runParams for _, saved in platesWithOutput if saved is not None)
-            anySaved = any(saved is not None for _, saved in platesWithOutput)
-
-            if anySaved and allMatch:
-                reply = QMessageBox.question(
-                    self, 'Resume previous run?',
-                    f'{len(platesWithOutput)} plate(s) already have processed '
-                    f'output with the same parameters.\n\n'
-                    f'Resume and skip already-processed wells?',
-                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                )
-                if reply == QMessageBox.Cancel:
-                    return
-                resume = (reply == QMessageBox.Yes)
-            else:
-                if anySaved:
-                    msg = (f'{len(platesWithOutput)} plate(s) already have '
-                           f'processed output with DIFFERENT parameters.\n\n'
-                           f'Continuing will overwrite existing results.')
-                else:
-                    msg = (f'{len(platesWithOutput)} plate(s) already have '
-                           f'processed output.\n\n'
-                           f'Continuing will overwrite existing results.')
-                reply = QMessageBox.warning(
-                    self, 'Overwrite existing output?', msg,
-                    QMessageBox.Ok | QMessageBox.Cancel,
-                )
-                if reply == QMessageBox.Cancel:
-                    return
 
         self.logText.clear()
         self._stopEvent.clear()
@@ -822,11 +816,11 @@ class RunTab(QWidget):
         self.startBtn.setEnabled(False)
         self.stopBtn.setEnabled(True)
         self.etaLabel.setText('')
-        self.statusLabel.setText('Starting…')
+        self.statusLabel.setText('Scanning plates…')
         self.progressBar.setValue(0)
 
         self._thread = QThread()
-        self._worker = ProcessingWorker(stateDict, self._stopEvent, resume=resume)
+        self._worker = ProcessingWorker(stateDict, self._stopEvent)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
@@ -834,8 +828,38 @@ class RunTab(QWidget):
         self._worker.log.connect(self._onLog)
         self._worker.finished.connect(self._onFinished)
         self._worker.error.connect(self._onError)
+        self._worker.resumeQuery.connect(self._onResumeQuery)
 
         self._thread.start()
+
+    def _onResumeQuery(self, nPlates, paramsMatch):
+        """Handle resume dialog on main thread, triggered by worker."""
+        if paramsMatch:
+            reply = QMessageBox.question(
+                self, 'Resume previous run?',
+                f'{nPlates} plate(s) already have processed '
+                f'output with the same parameters.\n\n'
+                f'Resume and skip already-processed wells?',
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            )
+            if reply == QMessageBox.Cancel:
+                self._stopEvent.set()
+                self._worker.setResumeDecision(False)
+                return
+            self._worker.setResumeDecision(reply == QMessageBox.Yes)
+        else:
+            reply = QMessageBox.warning(
+                self, 'Overwrite existing output?',
+                f'{nPlates} plate(s) already have processed output '
+                f'with different parameters.\n\n'
+                f'Continuing will overwrite existing results.',
+                QMessageBox.Ok | QMessageBox.Cancel,
+            )
+            if reply == QMessageBox.Cancel:
+                self._stopEvent.set()
+                self._worker.setResumeDecision(False)
+                return
+            self._worker.setResumeDecision(False)
 
     def _stop(self):
         self._stopEvent.set()
