@@ -36,8 +36,17 @@ def writeOverlayVideo(
     colorBgr = np.array(overlayColor, dtype=np.float32)
     bgWeight = 1.0 - alpha
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video = cv2.VideoWriter(outPath, fourcc, fps, (w, h))
+    # try H.264 first (widely compatible), fall back to mp4v
+    video = None
+    for codec in ['avc1', 'mp4v']:
+        fourcc = cv2.VideoWriter_fourcc(*codec)
+        video = cv2.VideoWriter(outPath, fourcc, fps, (w, h))
+        if video.isOpened():
+            break
+        video.release()
+        video = None
+    if video is None:
+        return
 
     for t in range(nFrames):
         gray = displayStack[:, :, t]
