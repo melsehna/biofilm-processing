@@ -565,23 +565,41 @@ class ProcessingWorker(QObject):
                     self._submitProcessing, resolvedPlate, s
                 )
 
-                if s.get('wholeImageFeats') and index:
-                    self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
-                    self._runStageParallel(
-                        plateName, plateIdx, 0, 'Whole-image',
-                        list(index.items()), index, outdir, nWorkers,
-                        self._submitWholeImage, plateName
-                    )
+                if self._stop.is_set():
+                    plateIdx += 1
+                    continue
 
-                if (s.get('colonyTracking') or s.get('colonyFeats')) and index:
-                    self.log.emit(f'\n  --- Stage 3: Colony tracking ({len(index)} wells) ---')
-                    self._runStageParallel(
-                        plateName, plateIdx, 0, 'Tracking',
-                        list(index.items()), index, outdir, nWorkers,
-                        self._submitTracking, plateName, s
-                    )
+                if s.get('wholeImageFeats'):
+                    if index:
+                        self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
+                        self._runStageParallel(
+                            plateName, plateIdx, 0, 'Whole-image',
+                            list(index.items()), index, outdir, nWorkers,
+                            self._submitWholeImage, plateName
+                        )
+                    else:
+                        self.log.emit(f'\n  Stage 2 skipped: no wells in index')
 
-                if s.get('colonyFeats') and index:
+                if self._stop.is_set():
+                    plateIdx += 1
+                    continue
+
+                if s.get('colonyTracking') or s.get('colonyFeats'):
+                    if index:
+                        self.log.emit(f'\n  --- Stage 3: Colony tracking ({len(index)} wells) ---')
+                        self._runStageParallel(
+                            plateName, plateIdx, 0, 'Tracking',
+                            list(index.items()), index, outdir, nWorkers,
+                            self._submitTracking, plateName, s
+                        )
+                    else:
+                        self.log.emit(f'\n  Stage 3 skipped: no wells in index')
+
+                if self._stop.is_set():
+                    plateIdx += 1
+                    continue
+
+                if s.get('colonyFeats'):
                     trackable = [(k, v) for k, v in index.items() if 'tracked_labels' in v]
                     if trackable:
                         self.log.emit(f'\n  --- Stage 4: Colony features ({len(trackable)} wells) ---')
@@ -590,6 +608,8 @@ class ProcessingWorker(QObject):
                             trackable, index, outdir, nWorkers,
                             self._submitColonyFeats, plateName
                         )
+                    else:
+                        self.log.emit(f'\n  Stage 4 skipped: no tracked labels in index')
 
                 # log index summary before saving
                 indexCols = set()
@@ -622,8 +642,7 @@ class ProcessingWorker(QObject):
                           items, index, outdir, nWorkers, submitFn, *submitArgs):
         total = len(items)
 
-        pool = ProcessPoolExecutor(max_workers=nWorkers)
-        try:
+        with ProcessPoolExecutor(max_workers=nWorkers) as pool:
             futures = {}
             for wellId, data in items:
                 if self._stop.is_set():
@@ -635,10 +654,8 @@ class ProcessingWorker(QObject):
             doneCount = 0
             for fut in as_completed(futures):
                 if self._stop.is_set():
-                    # cancel all pending futures and kill workers immediately
                     for f in futures:
                         f.cancel()
-                    pool.shutdown(wait=False, cancel_futures=True)
                     self.log.emit('Stopped — cancelled remaining wells.')
                     return
 
@@ -667,8 +684,6 @@ class ProcessingWorker(QObject):
                     self.log.emit(f'  {wellId} ERROR: {result.get("error", "unknown")}')
                 else:
                     self.log.emit(f'  {wellId} {result["status"]}: {result.get("reason", "")}')
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
 
     def _submitProcessing(self, pool, wellId, wellFiles, outdir, platePath, state):
         m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
