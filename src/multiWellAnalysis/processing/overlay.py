@@ -1,5 +1,8 @@
 """Overlay video generation for biofilm timelapse data."""
 
+import os
+import shutil
+import tempfile
 import numpy as np
 import cv2
 
@@ -36,16 +39,21 @@ def writeOverlayVideo(
     colorBgr = np.array(overlayColor, dtype=np.float32)
     bgWeight = 1.0 - alpha
 
-    # try H.264 first (widely compatible), fall back to mp4v
+    # write to a local temp file first, then move to outPath
+    # cv2.VideoWriter can produce corrupt files on network/SMB mounts
+    tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
+    os.close(tmpFd)
+
     video = None
     for codec in ['avc1', 'mp4v']:
         fourcc = cv2.VideoWriter_fourcc(*codec)
-        video = cv2.VideoWriter(outPath, fourcc, fps, (w, h))
+        video = cv2.VideoWriter(tmpPath, fourcc, fps, (w, h))
         if video.isOpened():
             break
         video.release()
         video = None
     if video is None:
+        os.remove(tmpPath)
         return
 
     for t in range(nFrames):
@@ -68,3 +76,10 @@ def writeOverlayVideo(
         video.write(frame)
 
     video.release()
+
+    # move completed file to final destination
+    try:
+        shutil.move(tmpPath, outPath)
+    except Exception:
+        shutil.copy2(tmpPath, outPath)
+        os.remove(tmpPath)

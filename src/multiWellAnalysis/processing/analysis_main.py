@@ -149,14 +149,8 @@ def timelapseProcessing(
     _registerImage('masks', npzPath)
 
     if not skipOverlay:
-        # contrast-stretch for visible overlay (saved TIF keeps raw values)
-        pmin, pmax = float(processedToSave.min()), float(processedToSave.max())
-        if pmax > pmin:
-            overlayBg = np.float32((processedToSave - pmin) / (pmax - pmin))
-        else:
-            overlayBg = processedToSave
         overlayPath = os.path.join(processedDir, f'{filename}_overlay.mp4')
-        writeOverlayVideo(overlayBg, masks, overlayPath, label=label)
+        writeOverlayVideo(processedToSave, masks, overlayPath, label=label)
         _registerImage('overlay_mp4', overlayPath)
 
     return masks, biomass, odMean
