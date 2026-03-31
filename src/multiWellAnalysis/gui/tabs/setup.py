@@ -4,7 +4,7 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QListWidget, QListWidgetItem, QLabel, QTextEdit, QFileDialog,
-    QInputDialog,
+    QInputDialog, QListView, QTreeView,
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -202,67 +202,62 @@ class SetupTab(QWidget):
         )
 
     def _add_plates(self):
-        """Add plate folders using the native dialog.
-
-        The native macOS dialog only supports single-folder selection,
-        so we loop until the user cancels, allowing them to add plates
-        one at a time.  This preserves access to SMB/network mounts
-        that the non-native Qt dialog cannot see.
-        """
+        """Add one or more plate folders via a multi-select directory dialog."""
         existing = {
             self.plate_list.item(i).data(Qt.UserRole)
             for i in range(self.plate_list.count())
         }
+        start = self.state.get('lastBrowseDir', '')
+        dlg = QFileDialog(self, 'Select plate folder(s)', start)
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+        # enable multi-select in the non-native dialog's list/tree views
+        for view in dlg.findChildren((QListView, QTreeView)):
+            view.setSelectionMode(QListView.ExtendedSelection)
+        if not dlg.exec():
+            return
+        paths = dlg.selectedFiles()
         added_any = False
-        while True:
-            start = self.state.get('lastBrowseDir', '')
-            path = QFileDialog.getExistingDirectory(
-                self, 'Select a plate folder (Cancel when done)', start,
-            )
-            if not path:
-                break  # user cancelled — done adding
-            self.state.set('lastBrowseDir', os.path.dirname(path))
-            if path not in existing:
+        for path in paths:
+            if os.path.isdir(path) and path not in existing:
                 self._add_plate_item(path)
                 existing.add(path)
                 added_any = True
+        if paths:
+            self.state.set('lastBrowseDir', os.path.dirname(paths[0]))
         if added_any:
             self._sync_state()
 
     def _add_from_parent(self):
-        """Select a parent directory and add all its sub-folders as plates.
-
-        Useful for experiments stored as:
-            root/
-              drawer1/
-                plate1/   ← images here
-              drawer2/
-                plate1/   ← images here
-        The user picks 'root' and every immediate child directory is added.
-        """
+        """Select one or more parent directories and add all their sub-folders as plates."""
         start = self.state.get('lastBrowseDir', '')
-        parent = QFileDialog.getExistingDirectory(
-            self, 'Select parent folder containing plate directories', start,
-        )
-        if not parent:
+        dlg = QFileDialog(self, 'Select parent folder(s) containing plate directories', start)
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+        for view in dlg.findChildren((QListView, QTreeView)):
+            view.setSelectionMode(QListView.ExtendedSelection)
+        if not dlg.exec():
             return
-        self.state.set('lastBrowseDir', parent)
+        parents = dlg.selectedFiles()
+        if parents:
+            self.state.set('lastBrowseDir', parents[0])
         existing = {
             self.plate_list.item(i).data(Qt.UserRole)
             for i in range(self.plate_list.count())
         }
-        added_any = False
-        try:
-            children = sorted(os.listdir(parent))
-        except (PermissionError, OSError):
-            return
-        for name in children:
-            path = os.path.join(parent, name)
-            if os.path.isdir(path) and not name.startswith('.') and path not in existing:
-                self._add_plate_item(path)
-                existing.add(path)
-                added_any = True
-        if added_any:
+        addedAny = False
+        for parent in parents:
+            try:
+                children = sorted(os.listdir(parent))
+            except (PermissionError, OSError):
+                continue
+            for name in children:
+                path = os.path.join(parent, name)
+                if os.path.isdir(path) and not name.startswith('.') and path not in existing:
+                    self._add_plate_item(path)
+                    existing.add(path)
+                    addedAny = True
+        if addedAny:
             self._sync_state()
 
     def _paste_path(self):
