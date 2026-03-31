@@ -272,15 +272,18 @@ def installWindows(guiBin):
     else:
         activate = ''
 
-    batPath = os.path.join(desktopDir, 'Phenotypr.bat')
+    # hide the .bat launcher in AppData so only the .lnk shows on Desktop
+    appDataDir = os.path.join(os.environ.get('APPDATA', ''), 'Phenotypr')
+    os.makedirs(appDataDir, exist_ok=True)
+    batPath = os.path.join(appDataDir, 'phenotypr.bat')
     with open(batPath, 'w') as f:
         f.write('@echo off\n')
         f.write(activate)
         f.write('phenotypr-gui\n')
-    print(f'Created: {batPath}')
+    print(f'Created launcher: {batPath}')
 
     lnkPath = os.path.join(desktopDir, 'Phenotypr.lnk')
-    iconPath = getIconPath('ico')  # Windows .lnk requires .ico format
+    iconPath = getIconPath('ico')
     iconArg = f'$s.IconLocation = "{iconPath}"; ' if iconPath else ''
     psScript = (
         f'$ws = New-Object -ComObject WScript.Shell; '
@@ -296,9 +299,12 @@ def installWindows(guiBin):
             ['powershell', '-Command', psScript],
             capture_output=True, check=True
         )
-        print(f'Created: {lnkPath}')
+        print(f'Created shortcut: {lnkPath}')
     except Exception:
-        print(f'Note: Could not create .lnk shortcut. Use {batPath} to launch.')
+        # fallback: put .bat on Desktop if .lnk creation fails
+        fallback = os.path.join(desktopDir, 'Phenotypr.bat')
+        shutil.copy2(batPath, fallback)
+        print(f'Created: {fallback} (could not create .lnk shortcut)')
 
 
 def main():
