@@ -30,8 +30,18 @@ def discoverWellsWithMag(plateDir):
         return []
 
     from multiWellAnalysis.gui.tabs.run import _resolveTifDir, _listRawTifs
-    resolved = _resolveTifDir(plateDir, max_depth=2)
+    resolved = _resolveTifDir(plateDir, maxDepth=2)
     rawTifs = _listRawTifs(resolved)
+
+    # fallback: if _listRawTifs found nothing, grab all .tif files directly
+    if not rawTifs:
+        try:
+            rawTifs = sorted(
+                os.path.join(resolved, f) for f in os.listdir(resolved)
+                if f.lower().endswith('.tif')
+            )
+        except (PermissionError, OSError):
+            pass
 
     bfFiles = [f for f in rawTifs if 'Bright Field' in f or 'Bright_Field' in f]
 
