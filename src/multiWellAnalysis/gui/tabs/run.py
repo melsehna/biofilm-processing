@@ -596,18 +596,26 @@ class ProcessingWorker(QObject):
                           items, index, outdir, nWorkers, submitFn, *submitArgs):
         total = len(items)
 
-        with ProcessPoolExecutor(max_workers=nWorkers) as pool:
+        pool = ProcessPoolExecutor(max_workers=nWorkers)
+        try:
             futures = {}
             for wellId, data in items:
                 if self._stop.is_set():
-                    self.log.emit('Cancelled by user.')
-                    return
+                    break
                 fut = submitFn(pool, wellId, data, outdir, *submitArgs)
                 if fut is not None:
                     futures[fut] = wellId
 
             doneCount = 0
             for fut in as_completed(futures):
+                if self._stop.is_set():
+                    # cancel all pending futures and kill workers immediately
+                    for f in futures:
+                        f.cancel()
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    self.log.emit('Stopped — cancelled remaining wells.')
+                    return
+
                 wellId = futures[fut]
                 doneCount += 1
                 self._overallDone += 1
@@ -633,6 +641,8 @@ class ProcessingWorker(QObject):
                     self.log.emit(f'  {wellId} ERROR: {result.get("error", "unknown")}')
                 else:
                     self.log.emit(f'  {wellId} {result["status"]}: {result.get("reason", "")}')
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _submitProcessing(self, pool, wellId, wellFiles, outdir, platePath, state):
         m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
@@ -822,9 +832,14 @@ class RunTab(QWidget):
     def _onFinished(self):
         self.startBtn.setEnabled(True)
         self.stopBtn.setEnabled(False)
-        self.logText.append('\nDone.')
-        self.progressBar.setValue(self.progressBar.maximum())
-        self.statusLabel.setText('Complete')
+        stopped = self._stopEvent.is_set()
+        if stopped:
+            self.logText.append('\nStopped by user.')
+            self.statusLabel.setText('Stopped')
+        else:
+            self.logText.append('\nDone.')
+            self.progressBar.setValue(self.progressBar.maximum())
+            self.statusLabel.setText('Complete')
         if self._runStartTime is not None:
             elapsed = time.perf_counter() - self._runStartTime
             self.etaLabel.setText(f'Total time: {_fmtTime(elapsed)}')
