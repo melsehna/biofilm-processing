@@ -21,26 +21,42 @@ def writeOverlayVideo(
     Parameters
     ----------
     displayStack : ndarray, shape (H, W, T), float32 in [0, 1]
-        Normalized grayscale frames for visualization.
     masks : ndarray, shape (H, W, T), bool
-        Binary mask per frame.
     outPath : str
-        Output .mp4 path.
     fps : int
-        Frames per second.
     label : str or None
-        Text label to burn into each frame.
     alpha : float
-        Overlay blending weight (0 = no overlay, 1 = solid color).
     overlayColor : tuple of 3 ints
-        BGR color for the mask overlay. Default is cyan (255, 255, 0) in BGR.
+        BGR color for the mask overlay.
     """
     h, w, nFrames = displayStack.shape
-    colorBgr = np.array(overlayColor, dtype=np.float32)
-    bgWeight = 1.0 - alpha
+    bgWeight = np.float32(1.0 - alpha)
 
-    # write to a local temp file first, then move to outPath
-    # cv2.VideoWriter can produce corrupt files on network/SMB mounts
+    # batch convert entire stack to uint8 BGR frames: (T, H, W, 3)
+    grayAll = np.clip(displayStack * 255, 0, 255).astype(np.uint8)  # (H, W, T)
+    frames = np.stack([grayAll, grayAll, grayAll], axis=-1)  # (H, W, T, 3)
+    frames = np.moveaxis(frames, 2, 0)  # (T, H, W, 3)
+
+    # batch apply mask overlay with vectorized numpy
+    colorArr = np.array(overlayColor, dtype=np.float32) * alpha
+    masksHW = masks[:h, :w, :]
+    masksT = np.moveaxis(masksHW, 2, 0)  # (T, H, W)
+    for t in range(nFrames):
+        m = masksT[t]
+        if m.any():
+            region = frames[t][m].astype(np.float32)
+            frames[t][m] = (region * bgWeight + colorArr).astype(np.uint8)
+
+    # pre-render label once and composite (avoids per-frame putText)
+    if label:
+        labelOverlay = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(labelOverlay, label, (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+        labelMask = labelOverlay.any(axis=-1)
+        for t in range(nFrames):
+            frames[t][labelMask] = labelOverlay[labelMask]
+
+    # write to local temp file to avoid corrupt files on network mounts
     tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
     os.close(tmpFd)
 
@@ -57,27 +73,10 @@ def writeOverlayVideo(
         return
 
     for t in range(nFrames):
-        gray = displayStack[:, :, t]
-        grayU8 = np.clip(gray * 255, 0, 255).astype(np.uint8)
-        frame = cv2.cvtColor(grayU8, cv2.COLOR_GRAY2BGR)
-
-        maskT = masks[:h, :w, t]
-        if maskT.any():
-            region = frame[maskT].astype(np.float32)
-            frame[maskT] = (region * bgWeight + colorBgr * alpha).astype(np.uint8)
-
-        if label:
-            cv2.putText(
-                frame, label, (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1,
-                (255, 255, 255), 2, cv2.LINE_AA,
-            )
-
-        video.write(frame)
+        video.write(frames[t])
 
     video.release()
 
-    # move completed file to final destination
     try:
         shutil.move(tmpPath, outPath)
     except Exception:
