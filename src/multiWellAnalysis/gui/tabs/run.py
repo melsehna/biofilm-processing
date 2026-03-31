@@ -576,7 +576,8 @@ class ProcessingWorker(QObject):
 
                 if s.get('wholeImageFeats'):
                     if index:
-                        self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells) ---')
+                        wellsWithProcessed = sum(1 for r in index.values() if 'processed' in r)
+                        self.log.emit(f'\n  --- Stage 2: Whole-image features ({len(index)} wells, {wellsWithProcessed} with processed TIF) ---')
                         self._runStageParallel(
                             plateName, plateIdx, 0, 'Whole-image',
                             list(index.items()), index, outdir, nWorkers,
@@ -584,6 +585,8 @@ class ProcessingWorker(QObject):
                         )
                     else:
                         self.log.emit(f'\n  Stage 2 skipped: no wells in index')
+                else:
+                    self.log.emit(f'\n  Stage 2 skipped: wholeImageFeats={s.get("wholeImageFeats")}')
 
                 if self._stop.is_set():
                     plateIdx += 1
@@ -710,12 +713,14 @@ class ProcessingWorker(QObject):
         return pool.submit(_processOneWell, platePath, outdir, wellId, wellFiles, params)
 
     def _submitWholeImage(self, pool, wellId, row, outdir, plateName):
-        if 'registered_raw' not in row:
+        if 'processed' not in row:
+            self.log.emit(f'  {wellId} whole-image skipped: no processed TIF in index')
             return None
         return pool.submit(_wholeImageOneWell, plateName, {**row, 'well': wellId})
 
     def _submitTracking(self, pool, wellId, row, outdir, plateName, state):
         if 'registered_raw' not in row:
+            self.log.emit(f'  {wellId} tracking skipped: no registered_raw in index')
             return None
         m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
         mag = m.group(1) if m else ''
