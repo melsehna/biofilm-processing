@@ -111,6 +111,7 @@ class PreviewTab(QWidget):
         self._current_well = ''
         self._n_frames = 0
         self._well_entries = []  # list of (label, well_id, mag, source)
+        self._last_mag_setting = None
         self._build_ui()
         self._connect_signals()
 
@@ -202,7 +203,12 @@ class PreviewTab(QWidget):
         if plates != current_plates:
             self._populate_plates()
         else:
-            self._schedule_render()
+            mag_setting = self.state.get('magnification', 'all')
+            if mag_setting != self._last_mag_setting:
+                # Magnification selection changed — re-filter mag combo without re-scanning
+                self._on_wells_discovered(self._well_entries)
+            else:
+                self._schedule_render()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -277,6 +283,7 @@ class PreviewTab(QWidget):
             self.mag_combo.setCurrentIndex(restore_idx)
         self.mag_combo.blockSignals(False)
 
+        self._last_mag_setting = self.state.get('magnification', 'all')
         self._populate_wells_for_mag()
 
     def _on_mag_changed(self, idx):
