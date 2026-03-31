@@ -469,6 +469,12 @@ class ProcessingWorker(QObject):
         doColonyFeats = s.get('colonyFeats', False)
         nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
+        enabled = ['biomass']
+        if doWhole: enabled.append('whole-image')
+        if doTracking: enabled.append('tracking')
+        if doColonyFeats: enabled.append('colony-feats')
+        self.log.emit(f'Enabled stages: {", ".join(enabled)} ({nStages} total)')
+
         self._overallDone = 0
         self._totalTasks = 1
         self.overallProgress.emit(0, 1, 'Starting…')

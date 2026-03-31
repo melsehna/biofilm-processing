@@ -32,22 +32,21 @@ def writeOverlayVideo(
     h, w, nFrames = displayStack.shape
     bgWeight = np.float32(1.0 - alpha)
 
-    # batch convert entire stack to uint8 BGR frames: (T, H, W, 3)
-    grayAll = np.clip(displayStack * 255, 0, 255).astype(np.uint8)  # (H, W, T)
-    frames = np.stack([grayAll, grayAll, grayAll], axis=-1)  # (H, W, T, 3)
-    frames = np.moveaxis(frames, 2, 0)  # (T, H, W, 3)
+    # batch convert to uint8 BGR: (T, H, W, 3)
+    grayAll = np.clip(displayStack * 255, 0, 255).astype(np.uint8)
+    frames = np.stack([grayAll, grayAll, grayAll], axis=-1)
+    frames = np.moveaxis(frames, 2, 0)
 
-    # batch apply mask overlay with vectorized numpy
+    # apply mask overlay
     colorArr = np.array(overlayColor, dtype=np.float32) * alpha
-    masksHW = masks[:h, :w, :]
-    masksT = np.moveaxis(masksHW, 2, 0)  # (T, H, W)
+    masksT = np.moveaxis(masks[:h, :w, :], 2, 0)
     for t in range(nFrames):
         m = masksT[t]
         if m.any():
             region = frames[t][m].astype(np.float32)
             frames[t][m] = (region * bgWeight + colorArr).astype(np.uint8)
 
-    # pre-render label once and composite (avoids per-frame putText)
+    # pre-render label
     if label:
         labelOverlay = np.zeros((h, w, 3), dtype=np.uint8)
         cv2.putText(labelOverlay, label, (20, 40),
@@ -56,29 +55,42 @@ def writeOverlayVideo(
         for t in range(nFrames):
             frames[t][labelMask] = labelOverlay[labelMask]
 
-    # write to local temp file to avoid corrupt files on network mounts
+    # write to local temp file then move (avoids corrupt files on network mounts)
     tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
     os.close(tmpFd)
 
-    video = None
-    for codec in ['avc1', 'mp4v']:
-        fourcc = cv2.VideoWriter_fourcc(*codec)
-        video = cv2.VideoWriter(tmpPath, fourcc, fps, (w, h))
-        if video.isOpened():
-            break
-        video.release()
-        video = None
-    if video is None:
-        os.remove(tmpPath)
-        return
-
-    for t in range(nFrames):
-        video.write(frames[t])
-
-    video.release()
+    try:
+        _writeWithImageio(frames, tmpPath, fps)
+    except Exception:
+        _writeWithCv2(frames, tmpPath, fps, w, h)
 
     try:
         shutil.move(tmpPath, outPath)
     except Exception:
         shutil.copy2(tmpPath, outPath)
         os.remove(tmpPath)
+
+
+def _writeWithImageio(frames, path, fps):
+    """Write frames using imageio-ffmpeg (RGB input)."""
+    import imageio.v3 as iio
+    rgbFrames = frames[..., ::-1].copy()  # BGR→RGB, contiguous for ffmpeg
+    iio.imwrite(path, rgbFrames, fps=fps, codec='libx264',
+                plugin='FFMPEG', macro_block_size=1)
+
+
+def _writeWithCv2(frames, path, fps, w, h):
+    """Fallback: write frames using cv2.VideoWriter (BGR input)."""
+    video = None
+    for codec in ['avc1', 'mp4v']:
+        fourcc = cv2.VideoWriter_fourcc(*codec)
+        video = cv2.VideoWriter(path, fourcc, fps, (w, h))
+        if video.isOpened():
+            break
+        video.release()
+        video = None
+    if video is None:
+        return
+    for t in range(frames.shape[0]):
+        video.write(frames[t])
+    video.release()
