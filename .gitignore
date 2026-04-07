@@ -9,3 +9,4 @@ build/
 *.csv
 *.txt
 !requirements.txt
+/tmp/
