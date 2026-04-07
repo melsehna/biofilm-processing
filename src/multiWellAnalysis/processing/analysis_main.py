@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 from .io_utils import saveStack
-from .preprocessing import normalizeLocalContrast
+from .preprocessing import normalizeLocalContrast, normalizeLocalContrastOutput
 from .segmentation import computeMaskInplace, dustCorrectInplace
 from .registration import registerStackNormblur
 from .overlay import writeOverlayVideo
@@ -150,7 +150,12 @@ def timelapseProcessing(
 
     if not skipOverlay:
         overlayPath = os.path.join(processedDir, f'{filename}_overlay.mp4')
-        writeOverlayVideo(processedToSave, masks, overlayPath, label=label)
+        fpMean = 0.5 * (np.nanmax(rawCropped) + np.nanmin(rawCropped))
+        overlayDisplay = np.clip(
+            normalizeLocalContrastOutput(rawCropped, blockDiameter, fpMean),
+            0.0, 1.0,
+        )
+        writeOverlayVideo(overlayDisplay, masks, overlayPath, label=label)
         _registerImage('overlay_mp4', overlayPath)
 
     return masks, biomass, odMean
