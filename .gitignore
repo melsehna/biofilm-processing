@@ -10,3 +10,6 @@ build/
 *.txt
 !requirements.txt
 /tmp/
+scripts/reimaging/
+scripts/training/
+scripts/transposons/
