@@ -176,6 +176,7 @@ class TestWellTab(QWidget):
 
         mags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
 
+        suffixObjective = self.state.get('suffixObjective', {})
         prevMag = self.magCombo.currentData()
         self.magCombo.blockSignals(True)
         self.magCombo.clear()
@@ -184,7 +185,8 @@ class TestWellTab(QWidget):
         else:
             restoreIdx = 0
             for i, mag in enumerate(mags):
-                magLabel = MAG_SUFFIXES.get(mag, mag)
+                obj = suffixObjective.get(mag)
+                magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                 self.magCombo.addItem(magLabel, mag)
                 if mag == prevMag:
                     restoreIdx = i

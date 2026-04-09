@@ -348,37 +348,59 @@ class SetupTab(QWidget):
     def _scan_magnifications_async(self, plates):
         """Detect magnifications (background thread).
 
-        First tries to parse magnifications from directory names (instant,
-        no I/O into subdirs).  Falls back to scanning a sample of TIF
-        filenames if directory names don't contain magnification labels.
+        Scans TIF filenames for mag suffixes, then probes one TIFF per suffix
+        to read the actual objective magnification from Cytation metadata.
+        Falls back to directory-name heuristics if no TIFs can be probed.
         """
         def _scan():
             if not plates:
-                return set(), 'no plates'
+                return set(), 'no plates', {}
 
             allMags = set()
-            suffixSet = set(self.MAG_SUFFIXES)  # {'_02', '_03', '_04', '_05'}
+            suffixFiles = {}  # suffix → one representative TIF path
 
-            # 1) check drawer/plate dir names for human labels like "4x", "10x"
-            for platePath in plates[:3]:
-                dirname = os.path.basename(platePath)
-                for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
-                    if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', dirname):
-                        allMags.add(suffix)
-            if allMags:
-                return allMags, 'from directory names'
-
-            # 2) peek at first TIF filename to extract mag suffixes
+            # Scan filenames to find all suffixes and collect one file per suffix
             for platePath in plates[:1]:
-                tifDir, firstName = _firstTifDir(platePath, maxDepth=2)
-                if tifDir and firstName:
-                    m = re.match(r'^[A-P]\d+(_\d+)_', firstName)
-                    if m and m.group(1) in suffixSet:
-                        allMags.add(m.group(1))
-                        allMags |= _magSuffixesFromDir(tifDir, suffixSet, limit=200)
-                        return allMags, 'from filenames'
+                tifDir, _ = _firstTifDir(platePath, maxDepth=2)
+                if tifDir:
+                    try:
+                        for name in os.listdir(tifDir):
+                            if not name.lower().endswith('.tif'):
+                                continue
+                            m = re.match(r'^[A-P]\d+(_\d+)_', name)
+                            if m:
+                                suffix = m.group(1)
+                                allMags.add(suffix)
+                                if suffix not in suffixFiles:
+                                    suffixFiles[suffix] = os.path.join(tifDir, name)
+                    except (PermissionError, OSError):
+                        pass
 
-            return allMags, 'no magnifications found'
+            # Fallback: check directory names for human labels like "4x", "10x"
+            if not allMags:
+                for platePath in plates[:3]:
+                    dirname = os.path.basename(platePath)
+                    for label, suffix in self._MAG_LABEL_TO_SUFFIX.items():
+                        if re.search(rf'(?<![a-zA-Z0-9]){re.escape(label)}(?![a-zA-Z0-9])', dirname):
+                            allMags.add(suffix)
+                if allMags:
+                    return allMags, 'from directory names (no TIFs probed)', {}
+
+            if not allMags:
+                return allMags, 'no magnifications found', {}
+
+            # Probe one TIFF per suffix to read actual objective from metadata
+            from multiWellAnalysis.processing.image_metadata import readCytationMeta
+            suffixObjective = {}
+            for suffix, tifPath in suffixFiles.items():
+                try:
+                    meta = readCytationMeta(tifPath)
+                    suffixObjective[suffix] = meta['objective']
+                except Exception:
+                    pass
+
+            source = 'from metadata' if suffixObjective else 'from filenames'
+            return allMags, source, suffixObjective
 
         def _done(result):
             self.detect_mag_btn.setEnabled(True)
@@ -386,8 +408,9 @@ class SetupTab(QWidget):
                 self.mag_status.setText('Error during scan')
                 return
 
-            all_mags, source = result
+            all_mags, source, suffixObjective = result
             self.mag_status.setText(source)
+            self.state.set('suffixObjective', suffixObjective)
 
             if not all_mags:
                 self.mag_list.clear()
@@ -403,7 +426,8 @@ class SetupTab(QWidget):
             self.mag_list.blockSignals(True)
             self.mag_list.clear()
             for mag in sorted(all_mags):
-                mag_label = self.MAG_SUFFIXES.get(mag, mag)
+                obj = suffixObjective.get(mag)
+                mag_label = f'{obj}x' if obj else self.MAG_SUFFIXES.get(mag, mag)
                 item = QListWidgetItem(f'{mag_label} ({mag})')
                 item.setData(Qt.UserRole, mag)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -448,10 +472,12 @@ class SetupTab(QWidget):
             all_mags.add(m)
 
         if all_mags:
+            suffixObjective = self.state.get('suffixObjective', {})
             self.mag_list.blockSignals(True)
             self.mag_list.clear()
             for mag in sorted(all_mags):
-                mag_label = self.MAG_SUFFIXES.get(mag, mag)
+                obj = suffixObjective.get(mag)
+                mag_label = f'{obj}x' if obj else self.MAG_SUFFIXES.get(mag, mag)
                 item = QListWidgetItem(f'{mag_label} ({mag})')
                 item.setData(Qt.UserRole, mag)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)

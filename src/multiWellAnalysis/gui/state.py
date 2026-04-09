@@ -26,6 +26,7 @@ DEFAULTS = {
     'magnification':    'all',
     'workers':          8,
     'magParams':        {},   # per-mag overrides: {'_03': {'fixedThresh': 0.02}, ...}
+    'suffixObjective':  {},   # suffix → objective int, e.g. {'_03': 10} — read from TIFF metadata
 }
 
 

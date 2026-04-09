@@ -56,11 +56,25 @@ def discoverWellsWithMag(plateDir):
                 groups[mag][well].append(f)
 
         if groups:
+            # Probe one TIFF per suffix to get actual objective from metadata
+            from multiWellAnalysis.processing.image_metadata import readCytationMeta
+            suffixObjective = {}
+            for mag, wellDict in groups.items():
+                for files in wellDict.values():
+                    if files:
+                        try:
+                            meta = readCytationMeta(files[0])
+                            suffixObjective[mag] = meta['objective']
+                        except Exception:
+                            pass
+                        break
+
             result = []
             for mag in sorted(groups):
                 for well in sorted(groups[mag]):
                     files = sorted(groups[mag][well])
-                    magLabel = MAG_SUFFIXES.get(mag, mag)
+                    obj = suffixObjective.get(mag)
+                    magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                     label = f'{well} ({magLabel})'
                     result.append((label, well, mag, files))
             return result
@@ -272,6 +286,7 @@ class PreviewTab(QWidget):
         else:
             mags = [m for m in allMags if m == magSetting]
 
+        suffixObjective = self.state.get('suffixObjective', {})
         prevMag = self.magCombo.currentData()
         self.magCombo.blockSignals(True)
         self.magCombo.clear()
@@ -280,7 +295,8 @@ class PreviewTab(QWidget):
         else:
             restoreIdx = 0
             for i, mag in enumerate(mags):
-                magLabel = MAG_SUFFIXES.get(mag, mag)
+                obj = suffixObjective.get(mag)
+                magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                 self.magCombo.addItem(magLabel, mag)
                 if mag == prevMag:
                     restoreIdx = i
