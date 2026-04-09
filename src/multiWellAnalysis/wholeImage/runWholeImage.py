@@ -60,10 +60,7 @@ def processWellWholeImage(
 
     paramHash = f'wholeImage_procOnly_sf{startFrame}_{featureVersion}'
 
-    outCsv = os.path.join(
-        plateOutDir,
-        f'{wellId}_wholeImage_{featureVersion}.csv'
-    )
+    outCsv = os.path.join(plateOutDir, f'{wellId}_wholeImageFeatures.csv')
 
     logPath = os.path.join(
         plateOutDir,
@@ -123,7 +120,7 @@ def processWellWholeImage(
         for t in range(startFrame, procStack.shape[0]):
 
             procFeats = extractFrameFeats(procStack[t])
-            procFeats = {f'proc_{k}': v for k, v in procFeats.items()}
+            procFeats = {f'whole_{k}': v for k, v in procFeats.items()}
 
             procFeats.update({
                 'plateId': plateId,

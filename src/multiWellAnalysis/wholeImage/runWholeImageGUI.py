@@ -60,10 +60,7 @@ def extractWholeImageFeatures(
 
     os.makedirs(outDir, exist_ok=True)
 
-    outCsv = os.path.join(
-        outDir,
-        f'{wellId}_wholeImage_{featureVersion}.csv'
-    )
+    outCsv = os.path.join(outDir, f'{wellId}_wholeImageFeatures.csv')
 
     if not os.path.exists(processedPath):
         return 'skipped'
@@ -101,7 +98,7 @@ def extractWholeImageFeatures(
         for t in range(startFrame, procStack.shape[0]):
 
             procFeats = extractFrameFeats(procStack[t])
-            procFeats = {f'proc_{k}': v for k, v in procFeats.items()}
+            procFeats = {f'whole_{k}': v for k, v in procFeats.items()}
 
             procFeats.update({
                 'plateId': plateId,
