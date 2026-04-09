@@ -33,6 +33,18 @@ _magSuffixToObj = {
 }
 
 
+def _objLabel(magSuffix, rows):
+    """Derive e.g. '10X' from index rows (preferred) or suffix fallback."""
+    for irow in rows:
+        obj = irow.get('objective', '')
+        try:
+            if obj:
+                return f'{int(float(obj))}X'
+        except (ValueError, TypeError):
+            pass
+    return _magSuffixToObj.get(magSuffix, magSuffix.lstrip('_') + 'X') if magSuffix else 'unknownX'
+
+
 def _dropCols(df, lowerNameSet):
     toDrop = [c for c in df.columns if c.lower() in lowerNameSet]
     return df.drop(columns=toDrop)
@@ -164,7 +176,7 @@ def assemblePlateNumericalData(processedImagesDir, logFn=None):
         groups.setdefault(magSuffix, []).append(irow)
 
     for magSuffix, rows in sorted(groups.items()):
-        objLabel = _magSuffixToObj.get(magSuffix, magSuffix.lstrip('_') + 'X') if magSuffix else 'unknownX'
+        objLabel = _objLabel(magSuffix, rows)
 
         bfDfs = []
         for irow in rows:

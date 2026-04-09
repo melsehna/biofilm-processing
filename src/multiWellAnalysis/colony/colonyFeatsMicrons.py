@@ -8,11 +8,9 @@ from scipy.stats import skew, kurtosis
 from scipy.ndimage import binary_dilation
 from skimage.morphology import disk
 
-pxToUm = 0.697
-px2ToUm2 = pxToUm ** 2
 
-
-def addColonyNeighborFeatures(colonyDf, k=5):
+def addColonyNeighborFeatures(colonyDf, pxToUm, k=5):
+    px2ToUm2 = pxToUm ** 2
     n = len(colonyDf)
     if n < 2:
         colonyDf['nnDistance1_um'] = np.nan
@@ -33,7 +31,7 @@ def addColonyNeighborFeatures(colonyDf, k=5):
     return colonyDf
 
 
-def addColonyGraphFeatures(colonyDf):
+def addColonyGraphFeatures(colonyDf, pxToUm):
     n = len(colonyDf)
     if n < 2:
         colonyDf[['mstDegree','mstEdgeMean_um','mstEdgeMax_um']] = [0, np.nan, np.nan]
@@ -62,7 +60,9 @@ def addColonyGraphFeatures(colonyDf):
     return colonyDf
 
 
-def extractColonyGeometry(labels, rawImg):
+def extractColonyGeometry(labels, rawImg, pxToUm):
+    px2ToUm2 = pxToUm ** 2
+
     props = regionprops_table(
         labels,
         intensity_image=rawImg,
@@ -111,7 +111,7 @@ def extractColonyGeometry(labels, rawImg):
     return df
 
 
-def addColonySpatialFeatures(colonyDf):
+def addColonySpatialFeatures(colonyDf, pxToUm):
     if colonyDf.empty:
         colonyDf['distanceToCenter_um'] = []
         colonyDf['angleToCenter_rad'] = []
@@ -129,9 +129,7 @@ def addColonySpatialFeatures(colonyDf):
     return colonyDf
 
 
-from skimage.measure import regionprops
-
-def addColonyIntensityMassFeatures(colonyDf, labels, rawImg):
+def addColonyIntensityMassFeatures(colonyDf, labels, rawImg, pxToUm):
     props = {p.label: p for p in regionprops(labels, intensity_image=rawImg)}
     n = len(colonyDf)
 

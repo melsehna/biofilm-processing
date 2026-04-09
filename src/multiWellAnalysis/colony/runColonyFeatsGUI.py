@@ -43,7 +43,8 @@ def extractTrackedColonyFeatures(
     wellId,
     wasTracked,
     trackedLabelsPath,
-    registeredRawPath
+    registeredRawPath,
+    pxToUm=0.697,
 ):
     """Extract per-colony features for all non-empty frames.
 
@@ -77,17 +78,17 @@ def extractTrackedColonyFeatures(
         labels = labelStack[:, :, i]
         rawImg = rawStack[:, :, t]
 
-        colonyDf = extractColonyGeometry(labels, rawImg)
+        colonyDf = extractColonyGeometry(labels, rawImg, pxToUm)
         if colonyDf.empty:
             continue
 
         for k, v in meta.items():
             colonyDf[k] = v
 
-        colonyDf = addColonySpatialFeatures(colonyDf)
-        colonyDf = addColonyNeighborFeatures(colonyDf)
-        colonyDf = addColonyGraphFeatures(colonyDf)
-        colonyDf = addColonyIntensityMassFeatures(colonyDf, labels, rawImg)
+        colonyDf = addColonySpatialFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyNeighborFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyGraphFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyIntensityMassFeatures(colonyDf, labels, rawImg, pxToUm)
 
         bg = extractBackgroundIntensityFeatures(rawImg, labels, dilateRadius=backgroundDilateRadius)
         for k, v in bg.items():
@@ -115,6 +116,7 @@ def extractAndSave(
     trackedLabelsPath,
     rawPath,
     outdir,
+    pxToUm=0.697,
 ):
     """Extract colony + well-level features and save CSVs to outdir.
 
@@ -143,7 +145,8 @@ def extractAndSave(
         wellId,
         wasTracked,
         trackedLabelsPath,
-        rawPath
+        rawPath,
+        pxToUm=pxToUm,
     )
 
     if colonyDf.empty:
@@ -151,10 +154,10 @@ def extractAndSave(
 
     wellDf = aggregateWellFeatures(colonyDf, frames, plateId, wellId)
 
-    colonyOutCsv = os.path.join(outdir, f'{wellId}_colonyFeatures_{featVersion}.csv')
+    colonyOutCsv = os.path.join(outdir, f'{wellId}_perColonyFeatures.csv')
     colonyDf.to_csv(colonyOutCsv, index=False)
 
-    wellOutCsv = os.path.join(outdir, f'{wellId}_wellColonyFeatures_{featVersion}.csv')
+    wellOutCsv = os.path.join(outdir, f'{wellId}_wellColonyFeatures.csv')
     wellDf.to_csv(wellOutCsv, index=False)
 
     return colonyDf, wellDf

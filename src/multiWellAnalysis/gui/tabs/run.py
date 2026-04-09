@@ -208,8 +208,8 @@ def _wholeImageOneWell(plateName, row):
             row['processed'], plateName, wellId, outdir
         )
         elapsed = time.perf_counter() - t0
-        featsFiles = glob.glob(os.path.join(outdir, f'{wellId}_wholeImage_*.csv'))
-        featsPath = featsFiles[0] if featsFiles else ''
+        featsPath = os.path.join(outdir, f'{wellId}_wholeImageFeatures.csv')
+        featsPath = featsPath if os.path.exists(featsPath) else ''
         return {
             'well': wellId,
             'status': 'done' if featsPath else status,
@@ -243,24 +243,27 @@ def _colonyFeatsOneWell(plateName, row):
         frames = data['frames']
         wasTracked = bool(data['wasTracked']) if 'wasTracked' in data else True
 
+        pxToUm = float(row.get('pxToUm', 0.697))
+
         t0 = time.perf_counter()
         colonyDf, wellDf = extractAndSave(
             rawStack, labels, frames,
             plateName, wellId, wasTracked,
             labelsPath, rawPath,
             outdir=outdir,
+            pxToUm=pxToUm,
         )
         elapsed = time.perf_counter() - t0
 
-        colonyFiles = glob.glob(os.path.join(outdir, f'{wellId}_colonyFeatures_*.csv'))
-        aggFiles = glob.glob(os.path.join(outdir, f'{wellId}_wellColonyFeatures_*.csv'))
+        colonyPath = os.path.join(outdir, f'{wellId}_perColonyFeatures.csv')
+        aggPath = os.path.join(outdir, f'{wellId}_wellColonyFeatures.csv')
 
         return {
             'well': wellId,
             'status': 'done',
             'elapsed': elapsed,
-            'colony_feats': colonyFiles[0] if colonyFiles else '',
-            'well_colony_feats': aggFiles[0] if aggFiles else '',
+            'colony_feats': colonyPath if os.path.exists(colonyPath) else '',
+            'well_colony_feats': aggPath if os.path.exists(aggPath) else '',
         }
     except Exception as e:
         return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
@@ -515,6 +518,10 @@ class ProcessingWorker(QObject):
                     plateIdx += 1
                     continue
 
+                # Probe one TIFF per suffix to read objective/pxToUm from metadata
+                from multiWellAnalysis.processing.image_metadata import probeSuffixMeta
+                suffixMeta = probeSuffixMeta(wells, logFn=self.log.emit)
+
                 outdir = _computeOutdir(userPath, resolvedPlate, outputRoot)
                 os.makedirs(outdir, exist_ok=True)
                 self.log.emit(f'  Output dir: {outdir}')
@@ -530,7 +537,19 @@ class ProcessingWorker(QObject):
                 _saveRunParams(outdir, runParams)
 
                 wellItems = list(wells.items())
+
+                # Pre-populate index with per-well metadata (pxToUm, objective)
+                import re as _re
                 index = {}
+                for wellId in wells:
+                    m = _re.search(r'(_\d+)$', wellId)
+                    suffix = m.group(1) if m else ''
+                    meta = suffixMeta.get(suffix, {})
+                    index[wellId] = {
+                        'pxToUm': meta.get('pxToUm', 0.697),
+                        'objective': meta.get('objective', ''),
+                    }
+
                 if resume:
                     # load previously-done wells into index so later stages can run on them
                     existingIndex = os.path.join(outdir, 'index.csv')
@@ -541,8 +560,12 @@ class ProcessingWorker(QObject):
                                 for row in _csv.DictReader(f):
                                     wid = row.get('well', '')
                                     if wid:
-                                        index[wid] = {k: v for k, v in row.items()
-                                                      if k not in ('plate', 'plate_path', 'well', 'mag')}
+                                        # Merge CSV into pre-populated dict (keeps fresh pxToUm/objective
+                                        # if the CSV predates metadata probing)
+                                        index.setdefault(wid, {}).update(
+                                            {k: v for k, v in row.items()
+                                             if k not in ('plate', 'plate_path', 'well', 'mag')}
+                                        )
                         except Exception:
                             pass
 

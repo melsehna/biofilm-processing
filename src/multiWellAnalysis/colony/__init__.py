@@ -2,12 +2,13 @@
 
 from .segmentation import segmentColonies
 
-from .colonyFeats import (
+from .colonyFeatsMicrons import (
     extractColonyGeometry,
     addColonySpatialFeatures,
     addColonyNeighborFeatures,
     addColonyGraphFeatures,
     addColonyIntensityMassFeatures,
+    extractBackgroundIntensityFeatures,
 )
 
 from .wellAggMicrons import aggregateWellFeatures
@@ -19,5 +20,6 @@ __all__ = [
     'addColonyNeighborFeatures',
     'addColonyGraphFeatures',
     'addColonyIntensityMassFeatures',
+    'extractBackgroundIntensityFeatures',
     'aggregateWellFeatures',
 ]

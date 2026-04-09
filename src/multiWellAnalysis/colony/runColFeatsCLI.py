@@ -56,7 +56,8 @@ def extractTrackedColonyFeatures(
     wellId,
     wasTracked,
     trackedLabelsPath,
-    rawPath
+    rawPath,
+    pxToUm=0.697,
 ):
     rows = []
     nonEmpty = np.any(labelStack, axis=(0, 1))
@@ -74,17 +75,17 @@ def extractTrackedColonyFeatures(
         labels = labelStack[:, :, i]
         rawImg = rawStack[:, :, t]
 
-        colonyDf = extractColonyGeometry(labels, rawImg)
+        colonyDf = extractColonyGeometry(labels, rawImg, pxToUm)
         if colonyDf.empty:
             continue
 
         for k, v in meta.items():
             colonyDf[k] = v
 
-        colonyDf = addColonySpatialFeatures(colonyDf)
-        colonyDf = addColonyNeighborFeatures(colonyDf)
-        colonyDf = addColonyGraphFeatures(colonyDf)
-        colonyDf = addColonyIntensityMassFeatures(colonyDf, labels, rawImg)
+        colonyDf = addColonySpatialFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyNeighborFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyGraphFeatures(colonyDf, pxToUm)
+        colonyDf = addColonyIntensityMassFeatures(colonyDf, labels, rawImg, pxToUm)
 
         bg = extractBackgroundIntensityFeatures(
             rawImg,
@@ -146,11 +147,11 @@ def processOneWell(argsTuple):
         outdir = f'{outRoot}/{plateId}'
         ensureDir(outdir)
 
-        colonyOutCsv = f'{outdir}/{wellId}_colonyFeatures_{featVersion}.csv'
+        colonyOutCsv = f'{outdir}/{wellId}_perColonyFeatures.csv'
         colonyDf.to_csv(colonyOutCsv, index=False)
 
         wellDf = aggregateWellFeatures(colonyDf, frames, plateId, wellId)
-        wellOutCsv = f'{outdir}/{wellId}_wellColonyFeatures_{featVersion}.csv'
+        wellOutCsv = f'{outdir}/{wellId}_wellColonyFeatures.csv'
         wellDf.to_csv(wellOutCsv, index=False)
 
         writeCheckpoint(
