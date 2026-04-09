@@ -2,160 +2,74 @@
 
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import pdist
-from scipy.stats import skew
-from scipy.sparse.csgraph import minimum_spanning_tree
+from scipy.stats import skew, kurtosis
 
-pxToUm = 0.697
-
-requiredColonyColumns = {
-    'plateID',
-    'wellID',
-    'frame',
-    'area_um2',
-    'centroidX_px',
-    'centroidY_px',
-    'circularity',
-    'eccentricity',
-    'aspectRatio',
-    'solidity',
-    'extent',
-    'perimeterAreaRatio',
-    'meanIntensity',
-    'integratedIntensity',
-    'maxMeanIntensityRatio',
-    'centroidOffset_um',
-    'centroidOffsetNorm',
-    'bgMeanIntensity',
-    'bgMedianIntensity',
-    'bgStdIntensity',
-    'bgP10Intensity',
-    'bgP90Intensity',
-    'bgCV',
-    'nnDistance1_um',
-    'nnDistanceMeanK_um',
-    'nnDistanceVarK_um2',
-    'mstDegree'
+# Columns that are not per-colony features — excluded from stat aggregation
+METADATA_COLS = {
+    'plateID', 'wellID', 'frame',
+    'trackedLabelsPath', 'registeredRawPath', 'wasTracked', 'colonyId'
 }
 
+# Background columns are frame-global (same value for every colony in a frame)
+BG_COLS = {
+    'bgMeanIntensity', 'bgMedianIntensity', 'bgStdIntensity',
+    'bgP10Intensity', 'bgP90Intensity', 'bgCV'
+}
 
-def validateColonySchema(colonyDf):
-    missing = requiredColonyColumns - set(colonyDf.columns)
-    if missing:
-        raise ValueError(f'colonyDf missing required columns: {missing}')
+SKIP_COLS = METADATA_COLS | BG_COLS
 
 
 def aggregateWellFeatures(colonyDf, allFrames, plateId, wellId):
+    frames = np.asarray(allFrames)
 
     if colonyDf.empty:
         return pd.DataFrame({
             'plateID': plateId,
             'wellID': wellId,
-            'frame': allFrames,
+            'frame': frames,
             'nColonies': 0
         })
 
-    validateColonySchema(colonyDf)
+    # Per-colony numeric feature columns
+    featCols = [
+        c for c in colonyDf.columns
+        if c not in SKIP_COLS and pd.api.types.is_numeric_dtype(colonyDf[c])
+    ]
 
-    frames = np.asarray(allFrames)
-
-    def safeMean(x):
-        return x.mean() if len(x) > 0 else np.nan
-
-    def safeVar(x):
-        return x.var(ddof=1) if len(x) > 1 else np.nan
-
-    def safeCv(x):
-        m = np.nanmean(x)
-        return np.nanstd(x, ddof=1) / m if m > 0 else np.nan
+    presentBgCols = [c for c in BG_COLS if c in colonyDf.columns]
 
     rows = []
-
     for frame in frames:
-
         g = colonyDf[colonyDf['frame'] == frame]
+        n = len(g)
 
         out = {
             'plateID': plateId,
             'wellID': wellId,
             'frame': int(frame),
-            'nColonies': int(len(g))
+            'nColonies': n,
         }
 
-        if g.empty:
-            rows.append(out)
-            continue
+        # Background: frame-global, pass through directly
+        for col in presentBgCols:
+            out[col] = g[col].iloc[0] if n > 0 else np.nan
 
-        areas = g['area_um2'].values
-
-        out['totalColonyArea_um2'] = areas.sum()
-        out['meanColonyArea_um2'] = safeMean(areas)
-        out['medianColonyArea_um2'] = np.median(areas)
-        out['maxColonyArea_um2'] = np.max(areas)
-        out['cvColonyArea'] = safeCv(areas)
-
-        for col in [
-            'circularity',
-            'eccentricity',
-            'aspectRatio',
-            'solidity',
-            'extent',
-            'perimeterAreaRatio'
-        ]:
-            out[f'mean_{col}'] = safeMean(g[col])
-            out[f'var_{col}'] = safeVar(g[col])
-
-        if len(g) > 1:
-            coords = g[['centroidX_px','centroidY_px']].values
-            d_um = pdist(coords) * pxToUm
-
-            out['meanPairwiseDistance_um'] = d_um.mean()
-            out['varPairwiseDistance_um'] = d_um.var()
-            out['skewPairwiseDistance'] = skew(d_um)
-
-            mat = np.zeros((len(coords), len(coords)))
-            iu = np.triu_indices(len(coords), 1)
-            mat[iu] = d_um
-            mat += mat.T
-
-            mst = minimum_spanning_tree(mat).data
-            out['mstMeanEdgeLength_um'] = mst.mean()
-            out['mstMaxEdgeLength_um'] = mst.max()
-            out['mstCvEdgeLength'] = safeCv(mst)
-        else:
-            out['meanPairwiseDistance_um'] = np.nan
-            out['varPairwiseDistance_um'] = np.nan
-            out['skewPairwiseDistance'] = np.nan
-            out['mstMeanEdgeLength_um'] = np.nan
-            out['mstMaxEdgeLength_um'] = np.nan
-            out['mstCvEdgeLength'] = np.nan
-
-        out['meanIntensity_mean'] = safeMean(g['meanIntensity'])
-        out['meanIntensity_std'] = g['meanIntensity'].std()
-        out['meanIntensity_cv'] = safeCv(g['meanIntensity'])
-        out['integratedIntensity_sum'] = g['integratedIntensity'].sum()
-        out['integratedIntensity_mean'] = safeMean(g['integratedIntensity'])
-        out['maxMeanIntensityRatio_mean'] = safeMean(g['maxMeanIntensityRatio'])
-        out['centroidOffset_um_mean'] = safeMean(g['centroidOffset_um'])
-        out['centroidOffsetNorm_mean'] = safeMean(g['centroidOffsetNorm'])
-
-        for k in [
-            'bgMeanIntensity',
-            'bgMedianIntensity',
-            'bgStdIntensity',
-            'bgP10Intensity',
-            'bgP90Intensity',
-            'bgCV'
-        ]:
-            out[k] = g[k].iloc[0]
-
-        out['nnDistance1_mean'] = safeMean(g['nnDistance1_um'])
-        out['nnDistance1_cv'] = safeCv(g['nnDistance1_um'])
-        out['nnDistanceMeanK_mean'] = safeMean(g['nnDistanceMeanK_um'])
-        out['nnDistanceVarK_mean'] = safeMean(g['nnDistanceVarK_um2'])
-
-        out['mstDegree_mean'] = safeMean(g['mstDegree'])
-        out['mstDegree_max'] = g['mstDegree'].max()
+        for col in featCols:
+            if n == 0:
+                out[f'{col}_mean'] = np.nan
+                out[f'{col}_std'] = np.nan
+                out[f'{col}_var'] = np.nan
+                out[f'{col}_skewness'] = np.nan
+                out[f'{col}_kurtosis'] = np.nan
+            else:
+                vals = g[col].dropna().values
+                nv = len(vals)
+                zeroVar = nv >= 2 and vals.var() == 0
+                out[f'{col}_mean'] = vals.mean() if nv >= 1 else np.nan
+                out[f'{col}_std'] = 0.0 if zeroVar else (vals.std(ddof=1) if nv >= 2 else np.nan)
+                out[f'{col}_var'] = 0.0 if zeroVar else (vals.var(ddof=1) if nv >= 2 else np.nan)
+                out[f'{col}_skewness'] = np.nan if (nv < 3 or zeroVar) else float(skew(vals))
+                out[f'{col}_kurtosis'] = np.nan if (nv < 4 or zeroVar) else float(kurtosis(vals, bias=False))
 
         rows.append(out)
 
