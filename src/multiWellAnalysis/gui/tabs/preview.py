@@ -284,12 +284,19 @@ class PreviewTab(QWidget):
         self.wellCombo.addItem('Scanning...')
         self.wellCombo.setEnabled(False)
 
+        cached = self.state.cache_get(('wells', platePath))
+        if cached is not None:
+            self._onWellsDiscovered(cached)
+            return
+
         def _scan():
             try:
-                return discoverWellsWithMag(
+                entries = discoverWellsWithMag(
                     platePath,
                     knownObjectives=self.state.get('suffixObjective', {}),
                 )
+                self.state.cache_set(('wells', platePath), entries)
+                return entries
             except Exception:
                 return []
 

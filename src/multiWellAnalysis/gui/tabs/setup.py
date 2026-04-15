@@ -309,6 +309,7 @@ class SetupTab(QWidget):
         ]
         self.state.set('plates', plates)
         self.clear_btn.setEnabled(len(plates) > 0)
+        self.state.cache_clear()   # plate list changed — well cache is stale
 
     def _browse_outdir(self):
         start = self.state.get('outputDir', '') or self.state.get('lastBrowseDir', '')

@@ -36,6 +36,7 @@ class AppState(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = dict(DEFAULTS)
+        self._cache = {}   # silent store — reads/writes never emit changed
 
     def set(self, key, value):
         self._data[key] = value
@@ -50,6 +51,18 @@ class AppState(QObject):
     def from_dict(self, d):
         self._data.update(d)
         self.changed.emit()
+
+    def cache_get(self, key, default=None):
+        return self._cache.get(key, default)
+
+    def cache_set(self, key, value):
+        self._cache[key] = value
+
+    def cache_clear(self, key=None):
+        if key is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(key, None)
 
     def save(self, path):
         with open(path, 'w') as f:
