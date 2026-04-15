@@ -478,7 +478,8 @@ class PreviewTab(QWidget):
         overlay[maskLive] = [0, 1, 1]
         self.axMask.imshow(overlay)
         self.axMask.set_title(
-            f'Mask Overlay\nthresh={fixedThresh}  dust={dustCorrection}',
+            f'Mask Overlay\nthresh={fixedThresh}'
+            + (f'  dust=on (full run only)' if dustCorrection else ''),
             fontsize=9,
         )
 

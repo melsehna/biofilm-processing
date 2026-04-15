@@ -152,6 +152,11 @@ class ParametersTab(QWidget):
         outputGroup = QGroupBox('Saved Outputs (Advanced)')
         outputForm = QFormLayout()
 
+        # NOTE: saveRegistered / saveProcessed / saveMasks / copyRaw are stored
+        # in state and respected by the dependency-enforcement logic, but
+        # post-run file cleanup is not yet implemented — the pipeline always
+        # writes all outputs.  These checkboxes are placeholders for that feature.
+
         self.saveRegistered = QCheckBox('Keep registered raw stacks (.tif)')
         self.saveRegistered.setChecked(self.state.get('saveRegistered', True))
         outputForm.addRow(self.saveRegistered)
