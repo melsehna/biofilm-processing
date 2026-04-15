@@ -407,10 +407,12 @@ class SetupTab(QWidget):
                                         suffixObjective[suffix] = _knownObjectives[suffix]
                                     elif suffix not in unknownSuffixFiles:
                                         unknownSuffixFiles[suffix] = entry.path
-                                # Early exit only once every known suffix is
-                                # mapped AND there are no pending unknowns.
-                                if (suffixObjective.keys() >= _knownSuffixes
-                                        and not unknownSuffixFiles):
+                                # Break once every suffix seen so far is
+                                # accounted for (known objective or file queued).
+                                # allMags - suffixObjective - unknownSuffixFiles
+                                # gives the set of suffixes with no file yet.
+                                if not (allMags - suffixObjective.keys()
+                                                - unknownSuffixFiles.keys()):
                                     break
                     except (PermissionError, OSError):
                         pass
