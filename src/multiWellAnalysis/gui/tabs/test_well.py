@@ -163,7 +163,10 @@ class TestWellTab(QWidget):
 
         def _scan():
             try:
-                return discoverWellsWithMag(platePath)
+                return discoverWellsWithMag(
+                    platePath,
+                    knownObjectives=self.state.get('suffixObjective', {}),
+                )
             except Exception:
                 return []
 

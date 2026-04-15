@@ -20,11 +20,18 @@ from multiWellAnalysis.processing.preprocessing import normalizeLocalContrast
 MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
 
 
-def discoverWellsWithMag(plateDir):
+_KNOWN_OBJECTIVES = {'_02': 4, '_03': 10, '_04': 20, '_05': 40}
+
+
+def discoverWellsWithMag(plateDir, knownObjectives=None):
     """Find well+mag combinations from TIF filenames.
 
     Returns list of (display_label, well_id, mag_suffix, file_list_or_path) tuples.
     For plates without magnification suffixes, mag_suffix is ''.
+
+    knownObjectives : dict, optional
+        suffix → objective int already resolved (e.g. from AppState
+        'suffixObjective').  Avoids TIFF metadata reads for those suffixes.
     """
     if not plateDir or not os.path.isdir(plateDir):
         return []
@@ -56,18 +63,31 @@ def discoverWellsWithMag(plateDir):
                 groups[mag][well].append(f)
 
         if groups:
-            # Probe one TIFF per suffix to get actual objective from metadata
-            from multiWellAnalysis.processing.image_metadata import readCytationMeta
+            # Build suffix→objective using (in priority order):
+            # 1. caller-supplied knownObjectives (from AppState — no I/O)
+            # 2. hardcoded map for standard Cytation suffixes (no I/O)
+            # 3. TIFF metadata probe only for genuinely unknown suffixes
             suffixObjective = {}
-            for mag, wellDict in groups.items():
-                for files in wellDict.values():
-                    if files:
-                        try:
-                            meta = readCytationMeta(files[0])
-                            suffixObjective[mag] = meta['objective']
-                        except Exception:
-                            pass
-                        break
+            unknownMags = []
+            for mag in groups:
+                if knownObjectives and mag in knownObjectives:
+                    suffixObjective[mag] = knownObjectives[mag]
+                elif mag in _KNOWN_OBJECTIVES:
+                    suffixObjective[mag] = _KNOWN_OBJECTIVES[mag]
+                else:
+                    unknownMags.append(mag)
+
+            if unknownMags:
+                from multiWellAnalysis.processing.image_metadata import readCytationMeta
+                for mag in unknownMags:
+                    for files in groups[mag].values():
+                        if files:
+                            try:
+                                meta = readCytationMeta(files[0])
+                                suffixObjective[mag] = meta['objective']
+                            except Exception:
+                                pass
+                            break
 
             result = []
             for mag in sorted(groups):
@@ -266,7 +286,10 @@ class PreviewTab(QWidget):
 
         def _scan():
             try:
-                return discoverWellsWithMag(platePath)
+                return discoverWellsWithMag(
+                    platePath,
+                    knownObjectives=self.state.get('suffixObjective', {}),
+                )
             except Exception:
                 return []
 
