@@ -38,6 +38,28 @@ def _firstTifDir(root, maxDepth=2):
     return None, None
 
 
+def _allTifDirs(root, maxDepth=2):
+    """Yield every directory under root (up to maxDepth) that contains .tif files.
+
+    Unlike _firstTifDir, this visits all branches so that plates whose
+    magnifications are split across subdirectories are fully covered.
+    Output directories are skipped.
+    """
+    try:
+        names = os.listdir(root)
+    except (PermissionError, OSError):
+        return
+    if any(n.lower().endswith('.tif') and not n.startswith('.') for n in names):
+        yield root
+    if maxDepth > 0:
+        for name in sorted(names):
+            if name.startswith('.') or name.lower() in _OUTPUT_DIR_NAMES:
+                continue
+            child = os.path.join(root, name)
+            if os.path.isdir(child):
+                yield from _allTifDirs(child, maxDepth - 1)
+
+
 def _magSuffixesFromDir(directory, suffixSet, limit=200):
     """Scan up to `limit` filenames in directory for mag suffixes."""
     found = set()
@@ -359,44 +381,39 @@ class SetupTab(QWidget):
 
             # Objectives for known suffixes — no TIFF probing needed for these.
             _knownObjectives = {'_02': 4, '_03': 10, '_04': 20, '_05': 40}
-            # Stop scanning a directory once this many consecutive TIF files
-            # yield no new suffix.  Covers plates with fewer than 4 mags.
-            _NO_NEW_SUFFIX_LIMIT = 50
 
             allMags = set()
             unknownSuffixFiles = {}  # suffix → first TIF, only for truly unknown suffixes
             suffixObjective = {}
 
             for platePath in plates:
-                tifDir, _ = _firstTifDir(platePath, maxDepth=2)
-                if not tifDir:
-                    continue
-                noNewCount = 0
-                try:
-                    # os.scandir streams directory entries rather than fetching
-                    # all at once, so the early break actually saves I/O.
-                    with os.scandir(tifDir) as it:
-                        for entry in it:
-                            if not entry.name.lower().endswith('.tif'):
-                                continue
-                            m = re.match(r'^[A-P]\d+(_\d+)_', entry.name)
-                            if not m:
-                                continue
-                            suffix = m.group(1)
-                            isNew = suffix not in allMags
-                            allMags.add(suffix)
-                            if isNew:
-                                noNewCount = 0
-                                if suffix in _knownObjectives:
-                                    suffixObjective[suffix] = _knownObjectives[suffix]
-                                elif suffix not in unknownSuffixFiles:
-                                    unknownSuffixFiles[suffix] = entry.path
-                            else:
-                                noNewCount += 1
-                                if noNewCount >= _NO_NEW_SUFFIX_LIMIT:
+                for tifDir in _allTifDirs(platePath, maxDepth=2):
+                    try:
+                        # os.scandir streams entries lazily; we break as soon
+                        # as all four known suffixes are mapped, but always
+                        # finish the directory if unknown suffixes are present
+                        # so none are missed.
+                        with os.scandir(tifDir) as it:
+                            for entry in it:
+                                if not entry.name.lower().endswith('.tif'):
+                                    continue
+                                m = re.match(r'^[A-P]\d+(_\d+)_', entry.name)
+                                if not m:
+                                    continue
+                                suffix = m.group(1)
+                                allMags.add(suffix)
+                                if suffix not in suffixObjective:
+                                    if suffix in _knownObjectives:
+                                        suffixObjective[suffix] = _knownObjectives[suffix]
+                                    elif suffix not in unknownSuffixFiles:
+                                        unknownSuffixFiles[suffix] = entry.path
+                                # Early exit only once every known suffix is
+                                # mapped AND there are no pending unknowns.
+                                if (suffixObjective.keys() >= _knownSuffixes
+                                        and not unknownSuffixFiles):
                                     break
-                except (PermissionError, OSError):
-                    pass
+                    except (PermissionError, OSError):
+                        pass
 
             # Only open TIFFs for suffixes not in the known mapping.
             if unknownSuffixFiles:
