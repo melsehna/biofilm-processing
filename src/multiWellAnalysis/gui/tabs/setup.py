@@ -356,46 +356,56 @@ class SetupTab(QWidget):
             if not plates:
                 return set(), 'no plates', {}
 
-            from multiWellAnalysis.processing.image_metadata import readCytationMeta
+            # Objectives for known suffixes — no TIFF probing needed for these.
+            _knownObjectives = {'_02': 4, '_03': 10, '_04': 20, '_05': 40}
+            # Stop scanning a directory once this many consecutive TIF files
+            # yield no new suffix.  Covers plates with fewer than 4 mags.
+            _NO_NEW_SUFFIX_LIMIT = 50
 
             allMags = set()
-            suffixFiles = {}   # suffix → first TIF found for that suffix (any plate)
-            suffixObjective = {}  # suffix → objective int (filled as soon as a file is found)
-            _knownSuffixes = set(self.MAG_SUFFIXES)
+            unknownSuffixFiles = {}  # suffix → first TIF, only for truly unknown suffixes
+            suffixObjective = {}
 
-            # Scan each plate; for each, stop as soon as the first file per
-            # suffix is found and its metadata has been read.  Never revisit a
-            # suffix that already has an objective mapping.
             for platePath in plates:
                 tifDir, _ = _firstTifDir(platePath, maxDepth=2)
                 if not tifDir:
                     continue
+                noNewCount = 0
                 try:
-                    for name in os.listdir(tifDir):
-                        if not name.lower().endswith('.tif'):
-                            continue
-                        m = re.match(r'^[A-P]\d+(_\d+)_', name)
-                        if not m:
-                            continue
-                        suffix = m.group(1)
-                        allMags.add(suffix)
-                        if suffix not in suffixFiles:
-                            tifPath = os.path.join(tifDir, name)
-                            suffixFiles[suffix] = tifPath
-                            # Probe metadata immediately so we don't keep the
-                            # path around longer than needed.
-                            if suffix not in suffixObjective:
-                                try:
-                                    meta = readCytationMeta(tifPath)
-                                    suffixObjective[suffix] = meta['objective']
-                                except Exception:
-                                    pass
-                        # Stop scanning this plate once every known suffix has
-                        # been mapped (unknown suffixes are a bonus).
-                        if _knownSuffixes and suffixFiles.keys() >= _knownSuffixes:
-                            break
+                    # os.scandir streams directory entries rather than fetching
+                    # all at once, so the early break actually saves I/O.
+                    with os.scandir(tifDir) as it:
+                        for entry in it:
+                            if not entry.name.lower().endswith('.tif'):
+                                continue
+                            m = re.match(r'^[A-P]\d+(_\d+)_', entry.name)
+                            if not m:
+                                continue
+                            suffix = m.group(1)
+                            isNew = suffix not in allMags
+                            allMags.add(suffix)
+                            if isNew:
+                                noNewCount = 0
+                                if suffix in _knownObjectives:
+                                    suffixObjective[suffix] = _knownObjectives[suffix]
+                                elif suffix not in unknownSuffixFiles:
+                                    unknownSuffixFiles[suffix] = entry.path
+                            else:
+                                noNewCount += 1
+                                if noNewCount >= _NO_NEW_SUFFIX_LIMIT:
+                                    break
                 except (PermissionError, OSError):
                     pass
+
+            # Only open TIFFs for suffixes not in the known mapping.
+            if unknownSuffixFiles:
+                from multiWellAnalysis.processing.image_metadata import readCytationMeta
+                for suffix, tifPath in unknownSuffixFiles.items():
+                    try:
+                        meta = readCytationMeta(tifPath)
+                        suffixObjective[suffix] = meta['objective']
+                    except Exception:
+                        pass
 
             # Fallback: check directory names for human labels like "4x", "10x"
             if not allMags:
