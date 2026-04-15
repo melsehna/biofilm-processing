@@ -356,25 +356,46 @@ class SetupTab(QWidget):
             if not plates:
                 return set(), 'no plates', {}
 
-            allMags = set()
-            suffixFiles = {}  # suffix → one representative TIF path
+            from multiWellAnalysis.processing.image_metadata import readCytationMeta
 
-            # Scan filenames to find all suffixes and collect one file per suffix
-            for platePath in plates[:1]:
+            allMags = set()
+            suffixFiles = {}   # suffix → first TIF found for that suffix (any plate)
+            suffixObjective = {}  # suffix → objective int (filled as soon as a file is found)
+            _knownSuffixes = set(self.MAG_SUFFIXES)
+
+            # Scan each plate; for each, stop as soon as the first file per
+            # suffix is found and its metadata has been read.  Never revisit a
+            # suffix that already has an objective mapping.
+            for platePath in plates:
                 tifDir, _ = _firstTifDir(platePath, maxDepth=2)
-                if tifDir:
-                    try:
-                        for name in os.listdir(tifDir):
-                            if not name.lower().endswith('.tif'):
-                                continue
-                            m = re.match(r'^[A-P]\d+(_\d+)_', name)
-                            if m:
-                                suffix = m.group(1)
-                                allMags.add(suffix)
-                                if suffix not in suffixFiles:
-                                    suffixFiles[suffix] = os.path.join(tifDir, name)
-                    except (PermissionError, OSError):
-                        pass
+                if not tifDir:
+                    continue
+                try:
+                    for name in os.listdir(tifDir):
+                        if not name.lower().endswith('.tif'):
+                            continue
+                        m = re.match(r'^[A-P]\d+(_\d+)_', name)
+                        if not m:
+                            continue
+                        suffix = m.group(1)
+                        allMags.add(suffix)
+                        if suffix not in suffixFiles:
+                            tifPath = os.path.join(tifDir, name)
+                            suffixFiles[suffix] = tifPath
+                            # Probe metadata immediately so we don't keep the
+                            # path around longer than needed.
+                            if suffix not in suffixObjective:
+                                try:
+                                    meta = readCytationMeta(tifPath)
+                                    suffixObjective[suffix] = meta['objective']
+                                except Exception:
+                                    pass
+                        # Stop scanning this plate once every known suffix has
+                        # been mapped (unknown suffixes are a bonus).
+                        if _knownSuffixes and suffixFiles.keys() >= _knownSuffixes:
+                            break
+                except (PermissionError, OSError):
+                    pass
 
             # Fallback: check directory names for human labels like "4x", "10x"
             if not allMags:
@@ -388,16 +409,6 @@ class SetupTab(QWidget):
 
             if not allMags:
                 return allMags, 'no magnifications found', {}
-
-            # Probe one TIFF per suffix to read actual objective from metadata
-            from multiWellAnalysis.processing.image_metadata import readCytationMeta
-            suffixObjective = {}
-            for suffix, tifPath in suffixFiles.items():
-                try:
-                    meta = readCytationMeta(tifPath)
-                    suffixObjective[suffix] = meta['objective']
-                except Exception:
-                    pass
 
             source = 'from metadata' if suffixObjective else 'from filenames'
             return allMags, source, suffixObjective
