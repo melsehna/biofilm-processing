@@ -13,3 +13,4 @@ build/
 scripts/reimaging/
 scripts/training/
 scripts/transposons/
+scripts/*.log
