@@ -17,21 +17,21 @@ import tifffile
 
 from multiWellAnalysis.processing.preprocessing import normalizeLocalContrast
 
+# Display-only fallback for when per-plate metadata isn't available.
+# Authoritative objectives come from state.plateMeta (TIFF metadata).
 MAG_SUFFIXES = {'_02': '4x', '_03': '10x', '_04': '20x', '_05': '40x'}
 
 
-_KNOWN_OBJECTIVES = {'_02': 4, '_03': 10, '_04': 20, '_05': 40}
-
-
-def discoverWellsWithMag(plateDir, knownObjectives=None):
+def discoverWellsWithMag(plateDir, plateMeta=None):
     """Find well+mag combinations from TIF filenames.
 
-    Returns list of (display_label, well_id, mag_suffix, file_list_or_path) tuples.
+    Returns list of (display_label, well_id, mag_suffix, file_list) tuples.
     For plates without magnification suffixes, mag_suffix is ''.
 
-    knownObjectives : dict, optional
-        suffix → objective int already resolved (e.g. from AppState
-        'suffixObjective').  Avoids TIFF metadata reads for those suffixes.
+    plateMeta : dict, optional
+        Per-plate TIFF metadata: {suffix: {'objective': int, 'pxToUm': float}}.
+        Used only to build display labels. If a suffix is missing from
+        plateMeta, falls back to MAG_SUFFIXES or the raw suffix.
     """
     if not plateDir or not os.path.isdir(plateDir):
         return []
@@ -63,38 +63,13 @@ def discoverWellsWithMag(plateDir, knownObjectives=None):
                 groups[mag][well].append(f)
 
         if groups:
-            # Build suffix→objective using (in priority order):
-            # 1. caller-supplied knownObjectives (from AppState — no I/O)
-            # 2. hardcoded map for standard Cytation suffixes (no I/O)
-            # 3. TIFF metadata probe only for genuinely unknown suffixes
-            suffixObjective = {}
-            unknownMags = []
-            for mag in groups:
-                if knownObjectives and mag in knownObjectives:
-                    suffixObjective[mag] = knownObjectives[mag]
-                elif mag in _KNOWN_OBJECTIVES:
-                    suffixObjective[mag] = _KNOWN_OBJECTIVES[mag]
-                else:
-                    unknownMags.append(mag)
-
-            if unknownMags:
-                from multiWellAnalysis.processing.image_metadata import readCytationMeta
-                for mag in unknownMags:
-                    for files in groups[mag].values():
-                        if files:
-                            try:
-                                meta = readCytationMeta(files[0])
-                                suffixObjective[mag] = meta['objective']
-                            except Exception:
-                                pass
-                            break
-
+            plateMeta = plateMeta or {}
             result = []
             for mag in sorted(groups):
+                obj = plateMeta.get(mag, {}).get('objective')
+                magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                 for well in sorted(groups[mag]):
                     files = sorted(groups[mag][well])
-                    obj = suffixObjective.get(mag)
-                    magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                     label = f'{well} ({magLabel})'
                     result.append((label, well, mag, files))
             return result
@@ -293,7 +268,7 @@ class PreviewTab(QWidget):
             try:
                 entries = discoverWellsWithMag(
                     platePath,
-                    knownObjectives=self.state.get('suffixObjective', {}),
+                    plateMeta=self.state.get('plateMeta', {}).get(platePath, {}),
                 )
                 self.state.cache_set(('wells', platePath), entries)
                 return entries
@@ -316,7 +291,8 @@ class PreviewTab(QWidget):
         else:
             mags = [m for m in allMags if m == magSetting]
 
-        suffixObjective = self.state.get('suffixObjective', {})
+        platePath = self.plateCombo.currentData()
+        plateMeta = self.state.get('plateMeta', {}).get(platePath, {}) if platePath else {}
         prevMag = self.magCombo.currentData()
         self.magCombo.blockSignals(True)
         self.magCombo.clear()
@@ -325,7 +301,7 @@ class PreviewTab(QWidget):
         else:
             restoreIdx = 0
             for i, mag in enumerate(mags):
-                obj = suffixObjective.get(mag)
+                obj = plateMeta.get(mag, {}).get('objective')
                 magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                 self.magCombo.addItem(magLabel, mag)
                 if mag == prevMag:

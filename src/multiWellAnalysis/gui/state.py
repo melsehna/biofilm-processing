@@ -26,7 +26,10 @@ DEFAULTS = {
     'magnification':    'all',
     'workers':          8,
     'magParams':        {},   # per-mag overrides: {'_03': {'fixedThresh': 0.02}, ...}
-    'suffixObjective':  {},   # suffix → objective int, e.g. {'_03': 10} — read from TIFF metadata
+    # plateMeta: per-plate TIFF metadata resolved from Cytation headers.
+    # {platePath: {suffix: {'objective': int, 'pxToUm': float}}}
+    # Per-plate because objective slots can differ across microscopes.
+    'plateMeta':        {},
 }
 
 
@@ -49,7 +52,9 @@ class AppState(QObject):
         return dict(self._data)
 
     def from_dict(self, d):
-        self._data.update(d)
+        # Only accept keys we know about — silently drops renamed/removed
+        # fields from older configs (e.g. 'suffixObjective' → 'plateMeta').
+        self._data.update({k: v for k, v in d.items() if k in DEFAULTS})
         self.changed.emit()
 
     def cache_get(self, key, default=None):

@@ -170,7 +170,7 @@ class TestWellTab(QWidget):
             try:
                 entries = discoverWellsWithMag(
                     platePath,
-                    knownObjectives=self.state.get('suffixObjective', {}),
+                    plateMeta=self.state.get('plateMeta', {}).get(platePath, {}),
                 )
                 self.state.cache_set(('wells', platePath), entries)
                 return entries
@@ -186,7 +186,8 @@ class TestWellTab(QWidget):
 
         mags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
 
-        suffixObjective = self.state.get('suffixObjective', {})
+        platePath = self.plateCombo.currentData()
+        plateMeta = self.state.get('plateMeta', {}).get(platePath, {}) if platePath else {}
         prevMag = self.magCombo.currentData()
         self.magCombo.blockSignals(True)
         self.magCombo.clear()
@@ -195,7 +196,7 @@ class TestWellTab(QWidget):
         else:
             restoreIdx = 0
             for i, mag in enumerate(mags):
-                obj = suffixObjective.get(mag)
+                obj = plateMeta.get(mag, {}).get('objective')
                 magLabel = f'{obj}x' if obj else MAG_SUFFIXES.get(mag, mag)
                 self.magCombo.addItem(magLabel, mag)
                 if mag == prevMag:
