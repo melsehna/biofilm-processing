@@ -57,7 +57,7 @@ def extractTrackedColonyFeatures(
     wasTracked,
     trackedLabelsPath,
     rawPath,
-    pxToUm=0.697,
+    pxToUm,
 ):
     rows = []
     nonEmpty = np.any(labelStack, axis=(0, 1))
@@ -112,6 +112,7 @@ def processOneWell(argsTuple):
     wellId = row['wellId']
     trackedPath = row['trackedLabelsPath']
     rawPath = row['rawPath']
+    pxToUmRaw = row.get('pxToUm')
 
     if checkpointExists(plateId, wellId, checkpointTag):
         logWellAndPlate(plateId, wellId, 'skipped (checkpoint exists)', logSuffix)
@@ -119,6 +120,10 @@ def processOneWell(argsTuple):
 
     try:
         logWellAndPlate(plateId, wellId, 'status=in_progress', logSuffix)
+
+        if pxToUmRaw in (None, '') or (isinstance(pxToUmRaw, float) and pxToUmRaw != pxToUmRaw):
+            raise RuntimeError(f'missing pxToUm in index row for {wellId}')
+        pxToUm = float(pxToUmRaw)
 
         if not isinstance(trackedPath, str) or not os.path.exists(trackedPath):
             raise RuntimeError(f'missing tracked labels: {trackedPath}')
@@ -141,7 +146,8 @@ def processOneWell(argsTuple):
             wellId,
             wasTracked,
             trackedPath,
-            rawPath
+            rawPath,
+            pxToUm,
         )
 
         outdir = f'{outRoot}/{plateId}'

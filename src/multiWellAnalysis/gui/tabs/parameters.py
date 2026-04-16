@@ -277,12 +277,29 @@ class ParametersTab(QWidget):
             if m not in mags:
                 mags.append(m)
 
-        prev = self.magOverrideCombo.currentText()
+        # Build "4x (_02)" style labels from plateMeta; when plates disagree
+        # on a suffix, show "4x/10x (_02)". The combo's stored data is still
+        # the bare suffix — the label is display-only.
+        plateMeta = self.state.get('plateMeta', {})
+        suffixObjs = {}
+        for meta in plateMeta.values():
+            for suf, m in meta.items():
+                obj = m.get('objective')
+                if obj is not None:
+                    suffixObjs.setdefault(suf, set()).add(obj)
+
+        prev = self.magOverrideCombo.currentData()
         self.magOverrideCombo.blockSignals(True)
         self.magOverrideCombo.clear()
         for m in sorted(set(mags)):
-            self.magOverrideCombo.addItem(m)
-        idx = self.magOverrideCombo.findText(prev)
+            objs = suffixObjs.get(m)
+            if objs:
+                objLabel = '/'.join(f'{o}x' for o in sorted(objs))
+                label = f'{objLabel} ({m})'
+            else:
+                label = m
+            self.magOverrideCombo.addItem(label, m)
+        idx = self.magOverrideCombo.findData(prev)
         if idx >= 0:
             self.magOverrideCombo.setCurrentIndex(idx)
         self.magOverrideCombo.blockSignals(False)
@@ -295,7 +312,7 @@ class ParametersTab(QWidget):
             self.magOverridesList.addItem(f'{mag}: {", ".join(parts)}')
 
     def _saveMagOverride(self):
-        mag = self.magOverrideCombo.currentText()
+        mag = self.magOverrideCombo.currentData()
         if not mag:
             return
         magParams = self.state.get('magParams', {})
@@ -311,7 +328,7 @@ class ParametersTab(QWidget):
 
     def _loadMagOverride(self):
         """Load a saved override's values into the parameter widgets for editing."""
-        mag = self.magOverrideCombo.currentText()
+        mag = self.magOverrideCombo.currentData()
         if not mag:
             return
         magParams = self.state.get('magParams', {})
@@ -331,7 +348,7 @@ class ParametersTab(QWidget):
             w.blockSignals(False)
 
     def _deleteMagOverride(self):
-        mag = self.magOverrideCombo.currentText()
+        mag = self.magOverrideCombo.currentData()
         if not mag:
             return
         magParams = self.state.get('magParams', {})

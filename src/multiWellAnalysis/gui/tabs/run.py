@@ -243,7 +243,15 @@ def _colonyFeatsOneWell(plateName, row):
         frames = data['frames']
         wasTracked = bool(data['wasTracked']) if 'wasTracked' in data else True
 
-        pxToUm = float(row.get('pxToUm', 0.697))
+        pxToUmRaw = row.get('pxToUm', '')
+        if pxToUmRaw in ('', None):
+            return {'well': wellId, 'status': 'error',
+                    'error': 'missing pxToUm — run Setup → Detect from files '
+                             'to probe TIFF metadata for this plate'}
+        pxToUm = float(pxToUmRaw)
+        if pxToUm <= 0:
+            return {'well': wellId, 'status': 'error',
+                    'error': f'invalid pxToUm={pxToUm!r}'}
 
         t0 = time.perf_counter()
         colonyDf, wellDf = extractAndSave(
@@ -518,9 +526,16 @@ class ProcessingWorker(QObject):
                     plateIdx += 1
                     continue
 
-                # Probe one TIFF per suffix to read objective/pxToUm from metadata
-                from multiWellAnalysis.processing.image_metadata import probeSuffixMeta
-                suffixMeta = probeSuffixMeta(wells, logFn=self.log.emit)
+                # Look up per-plate metadata cached by Setup tab's scan;
+                # fall back to probing if this plate was never detected
+                # (e.g. drawer-expanded plates, configs loaded without a
+                # fresh detection click).
+                plateMeta = s.get('plateMeta', {})
+                suffixMeta = plateMeta.get(userPath) or plateMeta.get(resolvedPlate)
+                if not suffixMeta:
+                    self.log.emit(f'  No cached metadata for this plate — probing now')
+                    from multiWellAnalysis.processing.image_metadata import probePlateMeta
+                    suffixMeta = probePlateMeta(resolvedPlate, logFn=self.log.emit)
 
                 outdir = _computeOutdir(userPath, resolvedPlate, outputRoot)
                 os.makedirs(outdir, exist_ok=True)
@@ -538,17 +553,30 @@ class ProcessingWorker(QObject):
 
                 wellItems = list(wells.items())
 
-                # Pre-populate index with per-well metadata (pxToUm, objective)
+                # Pre-populate index with per-well metadata (pxToUm, objective).
+                # Suffixes with no metadata entry are stored with empty values;
+                # colony feats will fail loudly rather than silently using a
+                # wrong default.
                 import re as _re
                 index = {}
+                missingMeta = set()
                 for wellId in wells:
                     m = _re.search(r'(_\d+)$', wellId)
                     suffix = m.group(1) if m else ''
-                    meta = suffixMeta.get(suffix, {})
-                    index[wellId] = {
-                        'pxToUm': meta.get('pxToUm', 0.697),
-                        'objective': meta.get('objective', ''),
-                    }
+                    meta = suffixMeta.get(suffix)
+                    if meta is None:
+                        missingMeta.add(suffix)
+                        index[wellId] = {'pxToUm': '', 'objective': ''}
+                    else:
+                        index[wellId] = {
+                            'pxToUm': meta['pxToUm'],
+                            'objective': meta['objective'],
+                        }
+                if missingMeta:
+                    self.log.emit(
+                        f'  WARNING: no metadata for suffixes {sorted(missingMeta)} — '
+                        f'colony-feature extraction will fail for these wells'
+                    )
 
                 if resume:
                     # load previously-done wells into index so later stages can run on them
@@ -559,13 +587,17 @@ class ProcessingWorker(QObject):
                             with open(existingIndex, newline='') as f:
                                 for row in _csv.DictReader(f):
                                     wid = row.get('well', '')
-                                    if wid:
-                                        # Merge CSV into pre-populated dict (keeps fresh pxToUm/objective
-                                        # if the CSV predates metadata probing)
-                                        index.setdefault(wid, {}).update(
-                                            {k: v for k, v in row.items()
-                                             if k not in ('plate', 'plate_path', 'well', 'mag')}
-                                        )
+                                    if not wid:
+                                        continue
+                                    target = index.setdefault(wid, {})
+                                    for k, v in row.items():
+                                        if k in ('plate', 'plate_path', 'well', 'mag'):
+                                            continue
+                                        # Never overwrite freshly-probed metadata
+                                        # with possibly-stale CSV values
+                                        if k in ('pxToUm', 'objective') and target.get(k) not in ('', None):
+                                            continue
+                                        target[k] = v
                         except Exception:
                             pass
 

@@ -44,7 +44,7 @@ def extractTrackedColonyFeatures(
     wasTracked,
     trackedLabelsPath,
     registeredRawPath,
-    pxToUm=0.697,
+    pxToUm,
 ):
     """Extract per-colony features for all non-empty frames.
 
@@ -116,7 +116,7 @@ def extractAndSave(
     trackedLabelsPath,
     rawPath,
     outdir,
-    pxToUm=0.697,
+    pxToUm,
 ):
     """Extract colony + well-level features and save CSVs to outdir.
 

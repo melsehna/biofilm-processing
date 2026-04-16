@@ -71,7 +71,7 @@ def extractTrackedColonyFeatures(
     wasTracked,
     trackedLabelsPath,
     registeredRawPath,
-    pxToUm=0.697,
+    pxToUm,
 ):
     rows = []
 
@@ -140,6 +140,11 @@ def processOneWell(row):
             nFrames = len(frames)
             wasTracked = bool(npz['wasTracked']) if 'wasTracked' in npz else True
 
+        pxToUm = row.get('pxToUm')
+        if pxToUm in (None, '', float('nan')):
+            raise RuntimeError(f'{wellId}: missing pxToUm in index row')
+        pxToUm = float(pxToUm)
+
         colonyDf = extractTrackedColonyFeatures(
             rawStack,
             labelStack,
@@ -148,7 +153,8 @@ def processOneWell(row):
             wellId,
             wasTracked,
             trackedPath,
-            row['rawPath']
+            row['rawPath'],
+            pxToUm,
         )
         
             
