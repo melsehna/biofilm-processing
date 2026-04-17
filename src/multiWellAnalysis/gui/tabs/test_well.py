@@ -127,6 +127,10 @@ class TestWellTab(QWidget):
         ]
         if plates != currentPlates:
             self._populatePlates()
+        elif self._wellEntries:
+            magSetting = self.state.get('magnification', 'all')
+            if magSetting != getattr(self, '_lastMagSetting', None):
+                self._onWellsDiscovered(self._wellEntries)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -184,7 +188,15 @@ class TestWellTab(QWidget):
         self.wellCombo.setEnabled(True)
         self.magCombo.setEnabled(True)
 
-        mags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
+        allMags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
+        magSetting = self.state.get('magnification', 'all')
+        if magSetting == 'all':
+            mags = allMags
+        elif isinstance(magSetting, list):
+            mags = [m for m in allMags if m in magSetting]
+        else:
+            mags = [m for m in allMags if m == magSetting]
+        self._lastMagSetting = magSetting
 
         platePath = self.plateCombo.currentData()
         plateMeta = self.state.get('plateMeta', {}).get(platePath, {}) if platePath else {}
