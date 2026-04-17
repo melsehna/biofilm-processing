@@ -284,6 +284,8 @@ class PreviewTab(QWidget):
 
         allMags = sorted({mag for _, _, mag, _ in self._wellEntries if mag})
         magSetting = self.state.get('magnification', 'all')
+        print(f'[Preview] _onWellsDiscovered: {len(self._wellEntries)} entries, '
+              f'allMags={allMags}, magSetting={magSetting!r}')
         if magSetting == 'all':
             mags = allMags
         elif isinstance(magSetting, list):
@@ -321,6 +323,8 @@ class PreviewTab(QWidget):
         filtered = [(label, well, mag, source)
                      for label, well, mag, source in self._wellEntries
                      if mag == selectedMag]
+        print(f'[Preview] _populateWellsForMag: selectedMag={selectedMag!r}, '
+              f'{len(filtered)} wells')
 
         prevWell = self.wellCombo.currentData()
         self.wellCombo.blockSignals(True)
@@ -359,6 +363,11 @@ class PreviewTab(QWidget):
         self._currentSource = source
         self._currentMag = mag
         self._currentWell = well
+        if isinstance(source, list) and source:
+            print(f'[Preview] _loadSource: well={well}, mag={mag}, '
+                  f'file[0]={os.path.basename(source[0])}')
+        else:
+            print(f'[Preview] _loadSource: well={well}, mag={mag}, source={source!r}')
 
         if self._currentSource is not None:
             _, self._nFrames = loadFrame(self._currentSource, 0)
