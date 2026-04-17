@@ -72,17 +72,49 @@ _OUTPUT_DIR_NAMES = {
 _SUFFIX_FROM_NAME_RE = re.compile(r'^[A-P]\d+(_\d+)_')
 
 
+_SAMPLE_WELLS = [
+    'A1', 'A2', 'A5', 'A10', 'B1', 'B5', 'B10',
+    'C1', 'C10', 'D1', 'E1', 'F1', 'G1', 'H1', 'H12',
+]
+_COMMON_SUFFIXES = [f'_{i:02d}' for i in range(2, 11)]
+_CHANNEL_VARIANTS = ['Bright Field', 'Bright_Field']
+
+
+def _probeByTargetedStat(directory):
+    """Try to find one TIFF per suffix using direct path construction.
+
+    Uses known Cytation naming convention (WELL_SUFFIX_1_1_CHANNEL_001.tif)
+    with a sample of wells. Each check is a single stat call — much faster
+    than listing a 10K-entry directory on NFS.
+
+    Returns {suffix: path} for suffixes found, or {} if naming doesn't match.
+    """
+    import os
+    found = {}
+    for suffix in _COMMON_SUFFIXES:
+        for well in _SAMPLE_WELLS:
+            for channel in _CHANNEL_VARIANTS:
+                path = os.path.join(directory, f'{well}{suffix}_1_1_{channel}_001.tif')
+                if os.path.exists(path):
+                    found[suffix] = path
+                    break
+            if suffix in found:
+                break
+    return found
+
+
 def probePlateMeta(plateDir, logFn=None, maxDepth=2):
     """Probe one representative TIFF per magnification suffix on a single plate.
 
-    Walks `plateDir` (and subdirectories up to `maxDepth`) for files matching
-    the Cytation raw filename pattern `WELL_MAGSUFFIX_...`. Picks one file
-    per distinct suffix and reads its metadata via readCytationMeta().
+    Uses a two-tier strategy:
+    1. **Targeted stat** — constructs expected filenames for a sample of wells
+       and checks existence with single stat calls. This avoids listing large
+       directories on NFS (~6ms vs ~700ms for 10K entries).
+    2. **Streaming scandir fallback** — if targeted stat finds nothing (non-
+       standard naming, nested directories), streams directory entries lazily.
 
-    This is the intended entry point for magnification detection — it replaces
-    any filename- or directory-name-based heuristic. The suffix→objective
-    mapping is per-plate, since different microscopes may place different
-    objectives in different slots.
+    The suffix→objective mapping is per-plate, since different microscopes
+    may place different objectives in different slots.
 
     Parameters
     ----------
@@ -108,27 +140,47 @@ def probePlateMeta(plateDir, logFn=None, maxDepth=2):
         if logFn:
             logFn(msg)
 
-    suffixFile = {}
+    # Tier 1: targeted stat on known filename patterns
+    suffixFile = _probeByTargetedStat(plateDir)
 
-    def _scan(d, depth):
+    # Also check subdirectories (some plates organize by date/drawer)
+    if not suffixFile and maxDepth > 0:
         try:
-            with os.scandir(d) as it:
-                entries = list(it)
+            with os.scandir(plateDir) as it:
+                for entry in it:
+                    if (entry.is_dir(follow_symlinks=False)
+                            and not entry.name.startswith('.')
+                            and entry.name.lower() not in _OUTPUT_DIR_NAMES):
+                        subResult = _probeByTargetedStat(entry.path)
+                        for suf, path in subResult.items():
+                            suffixFile.setdefault(suf, path)
         except (PermissionError, OSError):
-            return
-        for entry in entries:
-            if entry.is_file(follow_symlinks=False) and entry.name.lower().endswith('.tif'):
-                m = _SUFFIX_FROM_NAME_RE.match(entry.name)
-                if m:
-                    suffixFile.setdefault(m.group(1), entry.path)
-        if depth < maxDepth:
-            for entry in entries:
-                if (entry.is_dir(follow_symlinks=False)
-                        and not entry.name.startswith('.')
-                        and entry.name.lower() not in _OUTPUT_DIR_NAMES):
-                    _scan(entry.path, depth + 1)
+            pass
 
-    _scan(plateDir, 0)
+    # Tier 2: streaming scandir fallback (non-standard naming)
+    if not suffixFile:
+        def _scan(d, depth):
+            subdirs = []
+            try:
+                with os.scandir(d) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            if (not entry.name.startswith('.')
+                                    and entry.name.lower() not in _OUTPUT_DIR_NAMES):
+                                subdirs.append(entry.path)
+                            continue
+                        if not entry.name.lower().endswith('.tif'):
+                            continue
+                        m = _SUFFIX_FROM_NAME_RE.match(entry.name)
+                        if m:
+                            suffixFile.setdefault(m.group(1), entry.path)
+            except (PermissionError, OSError):
+                return
+            if depth < maxDepth:
+                for subdir in subdirs:
+                    _scan(subdir, depth + 1)
+
+        _scan(plateDir, 0)
 
     if not suffixFile:
         log(f'  {os.path.basename(plateDir)}: no Cytation-pattern TIFFs found')
