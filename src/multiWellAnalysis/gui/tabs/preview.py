@@ -410,15 +410,24 @@ class PreviewTab(QWidget):
         mag = self._currentMag
         blockDiam, fixedThresh, dustCorrection, minColonyArea = self._getParamsForMag(mag)
 
+        # Show which file is being loaded so the user can verify mag
+        if isinstance(self._currentSource, list):
+            frameIdx = self.frameSlider.value()
+            fi = min(frameIdx, len(self._currentSource) - 1)
+            fname = os.path.basename(self._currentSource[fi])
+        elif isinstance(self._currentSource, str):
+            fname = os.path.basename(self._currentSource)
+        else:
+            fname = '?'
+
         magParams = self.state.get('magParams', {})
         if mag and mag in magParams:
             self.paramsLabel.setText(
-                f'Using per-mag overrides for {mag}: {magParams[mag]}'
+                f'{fname}  ·  per-mag overrides for {mag}: {magParams[mag]}'
             )
         else:
             self.paramsLabel.setText(
-                f'Using global parameters'
-                + (f' (mag {mag})' if mag else '')
+                f'{fname}  ·  global params (mag {mag})' if mag else f'{fname}'
             )
 
         rawScaled = raw.astype(np.float32)
@@ -442,7 +451,7 @@ class PreviewTab(QWidget):
             display = np.zeros_like(processed, dtype=np.float32)
 
         self.axRaw.imshow(raw, cmap='gray')
-        self.axRaw.set_title('Raw')
+        self.axRaw.set_title(f'Raw  ({fname})', fontsize=8)
 
         self.axProc.imshow(display, cmap='gray')
         self.axProc.set_title(
