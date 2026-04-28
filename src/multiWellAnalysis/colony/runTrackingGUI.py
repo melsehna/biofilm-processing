@@ -141,16 +141,24 @@ def trackColoniesAllFrames(rawStack, maskStack, seedFrame, peakFrame,
     labelsByFrame[seedFrame] = labels.copy()
 
     prevT = seedFrame
+    # Persistent label footprint: union of all labeled pixels seen so far.
+    # Never shrinks — if a colony temporarily drops from the mask its footprint
+    # stays here so the distance transform can still attract nearby mask pixels
+    # to the correct label during stable or non-expanding phases.
+    labelsForProp = labels.copy()
 
     for t in range(seedFrame + 1, nFrames):
         effRadius = prop_radius * (t - prevT if prevT < peakFrame else 1)
         labels, nextLabelId = propagateLabelsFastVectorized(
-            labels,
+            labelsForProp,
             maskStack[:, :, t],
             nextLabelId,
             effRadius,
             min_area=min_area,
         )
+        # Expand persistent footprint with newly labeled pixels; never overwrite
+        # existing labels so established colony boundaries are preserved.
+        labelsForProp = np.where(labels > 0, labels, labelsForProp)
         labelsByFrame[t] = labels.copy()
         prevT = t
 
