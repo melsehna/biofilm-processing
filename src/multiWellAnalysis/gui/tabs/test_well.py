@@ -29,6 +29,14 @@ def _makeLabelCmap(nLabels):
     return ListedColormap(colors)
 
 
+def _makeColorTable(nLabels):
+    """Return (nLabels+1, 3) float64 color array; index 0 is black."""
+    rng = np.random.RandomState(42)
+    table = np.zeros((max(nLabels + 1, 2), 3), dtype=np.float64)
+    table[1:] = rng.rand(max(nLabels, 1), 3)
+    return table
+
+
 class TestWellTab(QWidget):
     _wellResult = Signal(object)
     _runLog = Signal(str)
@@ -47,6 +55,13 @@ class TestWellTab(QWidget):
         self._result = None
         self._running = False
         self._stopEvent = threading.Event()
+        self._colorTable = None   # precomputed per result
+
+        self._renderTimer = QTimer(self)
+        self._renderTimer.setSingleShot(True)
+        self._renderTimer.setInterval(60)  # 60 ms debounce
+        self._renderTimer.timeout.connect(self._render)
+
         self._buildUi()
         self._connectSignals()
 
@@ -103,6 +118,16 @@ class TestWellTab(QWidget):
         for ax in self.figure.axes:
             ax.set_xticks([])
             ax.set_yticks([])
+
+        # Persistent image handles — updated via set_data() to avoid full relayout
+        _blank2 = np.zeros((2, 2), dtype=np.float32)
+        _blank3 = np.zeros((2, 2, 3), dtype=np.float32)
+        self._imRaw = self.axRaw.imshow(_blank2, cmap='gray')
+        self._imLabels = self.axLabels.imshow(_blank2, interpolation='nearest')
+        self._imOverlay = self.axOverlay.imshow(_blank3)
+        self.axRaw.set_title('Raw')
+        self.axLabels.set_title('Tracked Labels')
+        self.axOverlay.set_title('Colony Overlay')
 
         self.figure.tight_layout()
         layout.addWidget(self.canvas, stretch=1)
@@ -244,6 +269,7 @@ class TestWellTab(QWidget):
 
     def _onWellChanged(self, idx):
         self._result = None
+        self._colorTable = None
         self._clearCanvas()
 
     def _getSelectedWell(self):
@@ -443,6 +469,14 @@ class TestWellTab(QWidget):
 
         self.statusLabel.setText(f'Done — {result["well_id"]}')
 
+        # Precompute color table from the maximum label across the whole stack
+        labelStack = result.get('label_stack')
+        if labelStack is not None and labelStack.size > 0:
+            nMax = int(labelStack.max())
+            self._colorTable = _makeColorTable(nMax)
+        else:
+            self._colorTable = None
+
         nFrames = len(result['frames']) if result['frames'] else 0
         if nFrames > 0:
             self.frameSlider.blockSignals(True)
@@ -456,29 +490,25 @@ class TestWellTab(QWidget):
     def _onFrameChanged(self, val):
         n = len(self._result['frames']) if self._result and self._result['frames'] else 0
         self.frameLabel.setText(f'{val} / {max(0, n - 1)}')
-        self._render()
+        self._renderTimer.start()  # debounce — fires _render after 60 ms of silence
 
     def _clearCanvas(self):
-        for ax in self.figure.axes:
-            ax.clear()
-            ax.set_xticks([])
-            ax.set_yticks([])
+        _blank2 = np.zeros((2, 2), dtype=np.float32)
+        _blank3 = np.zeros((2, 2, 3), dtype=np.float32)
+        self._imRaw.set_data(_blank2)
+        self._imLabels.set_data(_blank2)
+        self._imOverlay.set_data(_blank3)
         self.axRaw.set_title('Raw')
         self.axLabels.set_title('Tracked Labels')
         self.axOverlay.set_title('Colony Overlay')
-        self.canvas.draw()
+        self.canvas.draw_idle()
 
     def _render(self):
-        for ax in self.figure.axes:
-            ax.clear()
-            ax.set_xticks([])
-            ax.set_yticks([])
-
         if self._result is None:
             self.axRaw.set_title('Raw\n(run pipeline first)')
             self.axLabels.set_title('Tracked Labels')
             self.axOverlay.set_title('Colony Overlay')
-            self.canvas.draw()
+            self.canvas.draw_idle()
             return
 
         frameIdx = self.frameSlider.value()
@@ -486,48 +516,51 @@ class TestWellTab(QWidget):
         rawStack = self._result.get('raw_stack')
         if rawStack is None:
             self.axRaw.set_title('No data')
-            self.canvas.draw()
+            self.canvas.draw_idle()
             return
+
         fi = min(frameIdx, rawStack.shape[2] - 1)
         raw = rawStack[:, :, fi].astype(np.float64)
 
-        self.axRaw.imshow(raw, cmap='gray')
+        self._imRaw.set_data(raw)
+        self._imRaw.autoscale()
         self.axRaw.set_title('Raw')
 
         labelStack = self._result.get('label_stack')
         if labelStack is not None and labelStack.shape[2] > 0:
-            fi = min(frameIdx, labelStack.shape[2] - 1)
-            labelFrame = labelStack[:, :, fi]
+            fi2 = min(frameIdx, labelStack.shape[2] - 1)
+            labelFrame = labelStack[:, :, fi2]
             nTracked = int(labelFrame.max())
-            cmap = _makeLabelCmap(nTracked)
-            self.axLabels.imshow(labelFrame, cmap=cmap, interpolation='nearest')
+
+            # Update label image
+            cmap = _makeLabelCmap(nTracked) if nTracked > 0 else 'gray'
+            self._imLabels.set_data(labelFrame)
+            self._imLabels.set_cmap(cmap)
+            self._imLabels.set_clim(0, max(nTracked, 1))
             self.axLabels.set_title(f'Tracked Labels\n{nTracked} colonies', fontsize=9)
 
+            # Build overlay — vectorized: no per-colony loop
             rmax = raw.max()
-            if rmax > 0:
-                rawNorm = raw / rmax
-            else:
-                rawNorm = raw.astype(np.float64)
+            rawNorm = (raw / rmax) if rmax > 0 else raw.copy()
             overlay = np.stack([rawNorm, rawNorm, rawNorm], axis=-1)
 
-            if nTracked > 0:
-                rng = np.random.RandomState(42)
-                colors = rng.rand(nTracked + 1, 3)
-                colors[0] = [0, 0, 0]
+            if nTracked > 0 and self._colorTable is not None:
                 h = min(overlay.shape[0], labelFrame.shape[0])
                 w = min(overlay.shape[1], labelFrame.shape[1])
-                for lid in range(1, nTracked + 1):
-                    region = labelFrame[:h, :w] == lid
-                    if region.any():
-                        overlay[:h, :w][region] = (
-                            overlay[:h, :w][region] * 0.5 + colors[lid] * 0.5
-                        )
+                lf = labelFrame[:h, :w]
+                # Clamp label indices to color table size
+                lf_clamped = np.clip(lf, 0, len(self._colorTable) - 1)
+                colMap = self._colorTable[lf_clamped]   # (H, W, 3)
+                mask3d = (lf > 0)[:, :, np.newaxis]
+                overlay[:h, :w] = np.where(mask3d,
+                                            overlay[:h, :w] * 0.5 + colMap * 0.5,
+                                            overlay[:h, :w])
 
-            self.axOverlay.imshow(overlay)
+            self._imOverlay.set_data(overlay)
+            self._imOverlay.set_clim(0, 1)
             self.axOverlay.set_title('Colony Overlay', fontsize=9)
         else:
             self.axLabels.set_title('Tracked Labels\n(no results)', fontsize=9)
             self.axOverlay.set_title('Colony Overlay\n(no results)', fontsize=9)
 
-        self.figure.tight_layout()
-        self.canvas.draw()
+        self.canvas.draw_idle()
