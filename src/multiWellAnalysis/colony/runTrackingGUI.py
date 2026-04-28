@@ -77,27 +77,27 @@ def stripBorderLabels(labels, marginPx):
 
 def propagateLabelsFastVectorized(labelsPrev, maskNext, nextLabelId, effectiveRadius,
                                   min_area=minColonyAreaPx):
-    binaryNext = cleanBinary(maskNext, min_area=min_area)
     labelsNext = np.zeros_like(labelsPrev, dtype=np.int32)
 
-    if labelsPrev.max() == 0:
-        return labelsNext, nextLabelId
+    if labelsPrev.max() > 0:
+        dist, indices = distance_transform_edt(
+            labelsPrev == 0,
+            return_indices=True
+        )
+        nearestLab = labelsPrev[indices[0], indices[1]]
+        # Use raw mask (no min-area filter) so already-tracked colonies survive
+        # frames where they temporarily shrink below min_area.
+        valid = (
+            (nearestLab != 0) &
+            (dist <= effectiveRadius) &
+            maskNext.astype(bool)
+        )
+        labelsNext[valid] = nearestLab[valid]
 
-    dist, indices = distance_transform_edt(
-        labelsPrev == 0,
-        return_indices=True
-    )
-
-    nearestLab = labelsPrev[indices[0], indices[1]]
-
-    valid = (
-        (nearestLab != 0) &
-        (dist <= effectiveRadius) &
-        binaryNext
-    )
-
-    labelsNext[valid] = nearestLab[valid]
-
+    # New colony detection uses the size-filtered mask to avoid noise.
+    # Runs unconditionally so colonies are picked up even when labelsPrev is
+    # empty (e.g. seed frame had only sub-min-area fragments).
+    binaryNext = cleanBinary(maskNext, min_area=min_area)
     newMask = binaryNext & (labelsNext == 0)
     newLabels = label(newMask, connectivity=connectivity)
 
