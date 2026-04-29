@@ -137,9 +137,12 @@ def timelapseProcessing(
 
     _progress('Saving outputs...')
 
-    # Invert processed stack before saving: biofilm pixels are bright after
-    # normalizeLocalContrast; inverting gives the expected dark-biofilm appearance.
-    processedToSave = np.clip(1.0 - processedStack, 0.0, 1.0)
+    # Invert and rescale: normalizeLocalContrast returns small-range values
+    # (blurred - img), so without rescaling the saved TIFF sits near 1.0 everywhere.
+    processedToSave = 1.0 - processedStack
+    p_min, p_max = processedToSave.min(), processedToSave.max()
+    if p_max > p_min:
+        processedToSave = (processedToSave - p_min) / (p_max - p_min)
     saveStack(processedToSave, processedDir, f"{filename}_processed")
 
     saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
