@@ -14,6 +14,26 @@ from .overlay import writeOverlayVideo
 
 from typing import Optional
 
+def _toBitDepthScaled(arr):
+    """Cast to float32 in [0, 1] using bit-depth-aware scaling.
+
+    Integer dtype → divide by the dtype's full-scale.
+    Float dtype with max > 1.5 → infer bit depth (255 vs 65535) and divide.
+    Float dtype already in [0, 1] → return as float32 unchanged.
+    Empty / None → returned as-is.
+    """
+    if arr is None:
+        return None
+    if np.issubdtype(arr.dtype, np.integer):
+        return arr.astype(np.float32) / float(np.iinfo(arr.dtype).max)
+    arr = arr.astype(np.float32, copy=False)
+    amax = float(arr.max()) if arr.size else 0.0
+    if amax > 1.5:
+        bitDepthScale = 255.0 if amax <= 255.0 else 65535.0
+        return arr / bitDepthScale
+    return arr
+
+
 def cropStack(imgStack):
     h, w = imgStack.shape[:2]
     if not (np.isnan(imgStack[0, 0, :]).any() or
@@ -77,10 +97,13 @@ def timelapseProcessing(
         if progressFn is not None:
             progressFn(msg)
 
-    images = images.astype(np.float32, copy=False)
-    imax = images.max()
-    if imax > 0:
-        images /= imax
+    # Bit-depth-aware scaling: every input (images, Imin, Imax) goes onto a
+    # shared [0, 1] photometric axis based on the originating bit depth, not
+    # each stack's own max. This is what makes cross-well intensity features
+    # and OD math comparable across wells/plates/sessions.
+    images = _toBitDepthScaled(images)
+    Imin = _toBitDepthScaled(Imin)
+    Imax = _toBitDepthScaled(Imax)
 
     sigma = 2.0
     normBlur = np.empty(images.shape, dtype=np.float32)
