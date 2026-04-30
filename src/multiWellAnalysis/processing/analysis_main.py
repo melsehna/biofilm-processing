@@ -137,13 +137,18 @@ def timelapseProcessing(
 
     _progress('Saving outputs...')
 
-    # Invert and rescale: normalizeLocalContrast returns small-range values
-    # (blurred - img), so without rescaling the saved TIFF sits near 1.0 everywhere.
-    processedToSave = 1.0 - processedStack
-    p_min, p_max = processedToSave.min(), processedToSave.max()
-    if p_max > p_min:
-        processedToSave = (processedToSave - p_min) / (p_max - p_min)
-    saveStack(processedToSave, processedDir, f"{filename}_processed")
+    # Build the display rendering: re-run local-contrast on rawCropped with a
+    # midpoint bias (fpMean), then clip. This is the same path as the overlay,
+    # so the saved processed TIFF and the overlay are photometrically consistent
+    # — and unlike a min-max stretch, the local-contrast subtraction gives every
+    # well a shared "background = fpMean" reference rather than rescaling each
+    # well's range to fill [0,1] independently.
+    fpMean = 0.5 * (np.nanmax(rawCropped) + np.nanmin(rawCropped))
+    displayStack = np.clip(
+        normalizeLocalContrastOutput(rawCropped, blockDiameter, fpMean),
+        0.0, 1.0,
+    )
+    saveStack(displayStack, processedDir, f"{filename}_processed")
 
     saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
 
@@ -153,12 +158,7 @@ def timelapseProcessing(
 
     if not skipOverlay:
         overlayPath = os.path.join(processedDir, f'{filename}_overlay.mp4')
-        fpMean = 0.5 * (np.nanmax(rawCropped) + np.nanmin(rawCropped))
-        overlayDisplay = np.clip(
-            normalizeLocalContrastOutput(rawCropped, blockDiameter, fpMean),
-            0.0, 1.0,
-        )
-        writeOverlayVideo(overlayDisplay, masks, overlayPath, label=label)
+        writeOverlayVideo(displayStack, masks, overlayPath, label=label)
         _registerImage('overlay_mp4', overlayPath)
 
     return masks, biomass, odMean
