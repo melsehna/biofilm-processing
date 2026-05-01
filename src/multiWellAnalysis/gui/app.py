@@ -2,13 +2,15 @@ import sys
 import os
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QMessageBox, QFileDialog,
+    QLabel, QMessageBox, QFileDialog,
 )
 
 from .state import AppState
+from .buildinfo import buildString
 from .tabs.setup import SetupTab
 from .tabs.parameters import ParametersTab
 from .tabs.preview import PreviewTab
@@ -25,7 +27,8 @@ class PhenotyprApp(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle('Phenotypr')
+        self._buildInfo = buildString()
+        self.setWindowTitle(f'Phenotypr  ·  {self._buildInfo}')
         self.resize(1000, 750)
         self.setMinimumSize(400, 300)
 
@@ -57,6 +60,16 @@ class PhenotyprApp(QMainWindow):
         btn_row.addWidget(load_btn)
 
         btn_row.addStretch()
+
+        # Always-visible build identifier — survives title-bar truncation on
+        # small screens, makes branch/version unambiguous across checkouts.
+        buildLabel = QLabel(self._buildInfo)
+        buildLabel.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        buildLabel.setStyleSheet('color: gray; font-size: 11px;')
+        buildLabel.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        buildLabel.setToolTip('Package version  ·  git branch @ short commit  ·  * = uncommitted changes')
+        btn_row.addWidget(buildLabel)
+
         layout.addLayout(btn_row)
 
         container.setLayout(layout)

@@ -12,6 +12,6 @@ from . import wholeImage
 __all__ = ['colony', 'processing', 'wholeImage']
 
 try:
-    __version__ = version('multiWellAnalysis')
+    __version__ = version('biofilm-processing')
 except PackageNotFoundError:
     __version__ = 'unknown'
