@@ -692,14 +692,68 @@ class ProcessingWorker(QObject):
 
         if outputRoot and plateOutdirs and not self._stop.is_set():
             self.log.emit(f'\n{"="*60}\nAssembling master CSVs…')
+            masterOk = False
             try:
                 from multiWellAnalysis.processing.master_csv import assembleMasterCsvs
                 assembleMasterCsvs(
                     plateOutdirs, drawerMap, outputRoot,
                     logFn=self.log.emit,
                 )
+                masterOk = True
             except Exception as e:
                 self.log.emit(f'  [master CSV] ERROR: {e}')
+
+            if masterOk and (s.get('umapStatic') or s.get('umapInteractive')):
+                self._runUmapStep(outputRoot, s)
+
+    def _runUmapStep(self, outputRoot, s):
+        """Generate UMAP outputs after master CSV assembly. Failures are logged
+        and isolated — they don't abort the run summary."""
+        masterPath = os.path.join(outputRoot, 'master_frame_features.csv')
+        if not os.path.exists(masterPath):
+            self.log.emit('  [UMAP] master_frame_features.csv missing, skipping.')
+            return
+
+        self.log.emit(f'\n{"="*60}\nGenerating UMAPs…')
+        try:
+            import pandas as pd
+            from multiWellAnalysis.analysis.runner import runUmap
+        except ImportError as e:
+            self.log.emit(
+                f'  [UMAP] umap-learn not installed — '
+                f'install with `pip install -e ".[umap]"` and re-run. ({e})'
+            )
+            return
+
+        try:
+            mags = sorted(pd.read_csv(masterPath, usecols=['mag'])['mag']
+                          .dropna().unique())
+        except Exception as e:
+            self.log.emit(f'  [UMAP] could not read master CSV mags: {e}')
+            return
+
+        plates = self._state.get('plates', [])
+        plateDirMap = {os.path.basename(os.path.normpath(p)): p for p in plates}
+        columnName = self._state.get('umapColumnName') or None
+
+        for mag in mags:
+            if self._stop.is_set():
+                self.log.emit('  [UMAP] stopped before completing.')
+                return
+            try:
+                runUmap(
+                    outputRoot,
+                    magnification=mag,
+                    doStatic=self._state.get('umapStatic', False),
+                    doInteractive=self._state.get('umapInteractive', False),
+                    plateDirMap=plateDirMap,
+                    conditionsMap=self._state.get('conditions'),
+                    columnName=columnName,
+                    plateMeta=self._state.get('plateMeta'),
+                    logFn=self.log.emit,
+                )
+            except Exception as e:
+                self.log.emit(f'  [UMAP {mag}] ERROR: {e}')
 
     def _runStageParallel(self, plateName, plateIdx, totalPlates, stageName,
                           items, index, outdir, nWorkers, submitFn, *submitArgs):
