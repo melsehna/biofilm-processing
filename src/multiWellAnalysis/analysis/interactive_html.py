@@ -36,7 +36,9 @@ def _buildPointsByParam(embeddings, labels, mp4Column):
         pts = []
         for _, row in embeddings.iterrows():
             wellId = str(row['wellId'])
-            label = labels.get(wellId, '')
+            plateId = str(row['plateId'])
+            # tuple key preferred for multi-plate runs; fall back to bare wellId
+            label = labels.get((plateId, wellId)) or labels.get(wellId, '')
             mp4 = str(row[mp4Column]) if mp4Column in embeddings.columns else ''
             pts.append({
                 'x': round(float(row[xCol]), 4),

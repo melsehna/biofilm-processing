@@ -37,10 +37,15 @@ def _categoricalColors(categories):
 
 
 def _splitByLabel(embeddings, labels):
-    """Return (unlabeledIdx, wtIdx, {category: idx}) for plotting in z-order."""
-    series = embeddings.apply(
-        lambda r: labels.get(str(r['wellId']), None), axis=1
-    )
+    """Return (unlabeledIdx, wtIdx, {category: idx}) for plotting in z-order.
+
+    Labels can be keyed either by (plateId, wellId) tuple (preferred for
+    multi-plate runs) or by bare wellId. Tuple lookup is tried first.
+    """
+    def _lookup(row):
+        key = (str(row['plateId']), str(row['wellId']))
+        return labels.get(key) or labels.get(str(row['wellId'])) or None
+    series = embeddings.apply(_lookup, axis=1)
     unlabeled = series.isna().to_numpy()
     wt = (series == _WT_LABEL).to_numpy()
     other = ~unlabeled & ~wt
