@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytest.importorskip('umap', reason='install with: pip install -e .[umap]')
+
 from multiWellAnalysis.analysis.embedding import (
     applyBiomassFloor,
     fitUmapGrid,
