@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QProgressBar, QTextEdit, QMessageBox,
 )
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 
 
 def _fmtTime(seconds):
@@ -950,6 +951,14 @@ class RunTab(QWidget):
         self.stopBtn.setEnabled(False)
         self.stopBtn.clicked.connect(self._stop)
         btnRow.addWidget(self.stopBtn)
+
+        self.openAnalysisBtn = QPushButton('Open analysis folder')
+        self.openAnalysisBtn.setToolTip(
+            'Opens the <outputRoot>/analysis directory containing UMAP outputs.'
+        )
+        self.openAnalysisBtn.clicked.connect(self._openAnalysisFolder)
+        btnRow.addWidget(self.openAnalysisBtn)
+
         btnRow.addStretch()
         layout.addLayout(btnRow)
 
@@ -1003,6 +1012,19 @@ class RunTab(QWidget):
         self._stopEvent.set()
         self.logText.append('Stopping...')
         self.stopBtn.setEnabled(False)
+
+    def _openAnalysisFolder(self):
+        outputRoot = self.state.get('outputDir', '')
+        if not outputRoot:
+            QMessageBox.information(
+                self, 'No output directory',
+                'Set an output directory in the Setup tab first.'
+            )
+            return
+        target = os.path.join(outputRoot, 'analysis')
+        if not os.path.isdir(target):
+            target = outputRoot  # fall back to outputRoot if analysis/ not yet made
+        QDesktopServices.openUrl(QUrl.fromLocalFile(target))
 
     def _onOverallProgress(self, done, total, desc):
         self.progressBar.setMaximum(max(total, 1))
