@@ -19,14 +19,21 @@ from .static_plot import plotGrid, plotStatic
 from .wide_table import buildWideTable
 
 
-def _resolveLabels(plateIds, plateDirMap, conditionsMap, columnName):
-    """Build a {(plateId, wellId): label} dict by calling loadLabels per plate."""
+def _resolveLabels(plateIds, plateDirMap, conditionsByPlate, columnName):
+    """Build a {(plateId, wellId): label} dict by calling loadLabels per plate.
+
+    conditionsByPlate may be keyed by plateId; each value is the
+    {conditionName: [wellIds]} dict for that plate. When a plate has no entry,
+    label resolution falls back to its layout CSV (if any) and otherwise yields
+    no labels for that plate.
+    """
     out = {}
+    cbp = conditionsByPlate or {}
     for plateId in plateIds:
         plateDir = (plateDirMap or {}).get(plateId)
         perPlate = loadLabels(
             plateDir=plateDir,
-            conditionsMap=conditionsMap,
+            conditionsMap=cbp.get(plateId),
             columnName=columnName,
         )
         for wellId, label in perPlate.items():
@@ -70,7 +77,7 @@ def runUmap(
     doStatic=True,
     doInteractive=True,
     plateDirMap=None,
-    conditionsMap=None,
+    conditionsByPlate=None,
     columnName=None,
     plateMeta=None,
     framesRange=None,
@@ -90,9 +97,9 @@ def runUmap(
     plateDirMap : dict[str, str] or None
         Maps plateId -> raw plate directory, used to find per-plate
         *layout*.csv sidecars for coloring.
-    conditionsMap : dict[str, list[str]] or None
-        Fallback {conditionName: [wellIds]} from the GUI Conditions tab.
-        Used for any plate without a layout CSV.
+    conditionsByPlate : dict[str, dict[str, list[str]]] or None
+        Per-plate {conditionName: [wellIds]} from the GUI Conditions tab,
+        keyed by plateId. Used for any plate without a layout CSV.
     columnName : str or None
         Column in the layout CSV to color by; defaults to col index 1.
     plateMeta : dict or None
@@ -133,7 +140,7 @@ def runUmap(
     log(f'  [UMAP {objLabel}] embedded {len(embeddings)} wells; {len(excluded)} below biomass floor')
 
     plateIds = sorted(embeddings['plateId'].astype(str).unique())
-    labels = _resolveLabels(plateIds, plateDirMap, conditionsMap, columnName)
+    labels = _resolveLabels(plateIds, plateDirMap, conditionsByPlate, columnName)
     nLabeled = sum(1 for v in labels.values() if v)
     log(f'  [UMAP {objLabel}] resolved labels for {nLabeled}/{len(embeddings)} wells')
 

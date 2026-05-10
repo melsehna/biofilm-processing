@@ -109,6 +109,27 @@ def test_runUmap_resolves_labels_from_per_plate_layout_csv():
         assert '"plate": "plate0", "well": "A1", "label": "WT"' in html
 
 
+def test_runUmap_resolves_per_plate_conditions():
+    with tempfile.TemporaryDirectory() as td:
+        outputRoot = os.path.join(td, 'run_out')
+        os.makedirs(outputRoot)
+        _writeMaster(outputRoot, nPlates=2, wellsPerPlate=20)
+        # different conditions for the same wellId across plates
+        conditionsByPlate = {
+            'plate0': {'WT': ['A1', 'A2'], 'mut0': ['A11', 'A12']},
+            'plate1': {'WT': ['A11', 'A12'], 'mut1': ['A1', 'A2']},
+        }
+
+        out = runUmap(outputRoot, magnification='_03',
+                      doStatic=False, doInteractive=True,
+                      conditionsByPlate=conditionsByPlate)
+
+        html = open(out['interactive']).read()
+        # plate0 A1 -> WT, plate1 A1 -> mut1
+        assert '"plate": "plate0", "well": "A1", "label": "WT"' in html
+        assert '"plate": "plate1", "well": "A1", "label": "mut1"' in html
+
+
 def test_runUmap_resolves_overlay_paths_when_files_exist():
     with tempfile.TemporaryDirectory() as td:
         outputRoot = os.path.join(td, 'run_out')
