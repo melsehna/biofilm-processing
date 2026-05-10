@@ -3,7 +3,7 @@ import re
 import glob
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLineEdit, QLabel, QListWidget, QScrollArea,
+    QPushButton, QLineEdit, QLabel, QListWidget, QScrollArea, QComboBox,
 )
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QMouseEvent
@@ -192,8 +192,18 @@ class ConditionsTab(QWidget):
         self.state = state
         self._current_format = (0, 0)
         self._grid_widget = None
+        self._currentPlate = None
 
         self._layout = QVBoxLayout(self)
+
+        # plate selector
+        plate_row = QHBoxLayout()
+        plate_row.addWidget(QLabel('Plate:'))
+        self.plateCombo = QComboBox()
+        self.plateCombo.setMinimumWidth(280)
+        self.plateCombo.currentIndexChanged.connect(self._on_plate_changed)
+        plate_row.addWidget(self.plateCombo, stretch=1)
+        self._layout.addLayout(plate_row)
 
         # condition name + save
         name_row = QHBoxLayout()
@@ -248,11 +258,12 @@ class ConditionsTab(QWidget):
 
         # Build initial grid and listen for state changes
         self._rebuild_grid(8, 12)
+        self._refresh_plate_combo()
         self._refresh_list()
         self.state.changed.connect(self._on_state_changed)
 
     def _on_state_changed(self):
-        """Rebuild grid if plate format changed."""
+        """Rebuild grid if plate format changed; refresh plate dropdown."""
         if not self.isVisible():
             self._stale = True
             return
@@ -265,6 +276,34 @@ class ConditionsTab(QWidget):
 
         if (rows, cols) != self._current_format:
             self._rebuild_grid(rows, cols)
+
+        self._refresh_plate_combo()
+
+    def _refresh_plate_combo(self):
+        """Sync the plate dropdown with state['plates']."""
+        plates = self.state.get('plates', [])
+        prev = self._currentPlate
+        self.plateCombo.blockSignals(True)
+        self.plateCombo.clear()
+        if not plates:
+            self.plateCombo.addItem('(no plates selected — choose in Setup)', None)
+            self.plateCombo.setEnabled(False)
+            self._currentPlate = None
+        else:
+            self.plateCombo.setEnabled(True)
+            for p in plates:
+                self.plateCombo.addItem(os.path.basename(os.path.normpath(p)), p)
+            idx = self.plateCombo.findData(prev) if prev else 0
+            self.plateCombo.setCurrentIndex(max(0, idx))
+            self._currentPlate = self.plateCombo.currentData()
+        self.plateCombo.blockSignals(False)
+        self._refresh_list()
+
+    def _on_plate_changed(self, _idx):
+        self._currentPlate = self.plateCombo.currentData()
+        if self._grid_widget:
+            self._grid_widget.clear_selection()
+        self._refresh_list()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -298,7 +337,7 @@ class ConditionsTab(QWidget):
 
     def _save_condition(self):
         name = self.nameEdit.text().strip()
-        if not name or not self._grid_widget:
+        if not name or not self._grid_widget or not self._currentPlate:
             return
 
         selected = self._grid_widget.get_selected()
@@ -306,7 +345,10 @@ class ConditionsTab(QWidget):
             return
 
         conditions = self.state.get('conditions', {})
-        conditions[name] = selected
+        plateConds = dict(conditions.get(self._currentPlate, {}))
+        plateConds[name] = selected
+        conditions = dict(conditions)
+        conditions[self._currentPlate] = plateConds
         self.state.set('conditions', conditions)
 
         self.nameEdit.clear()
@@ -315,25 +357,33 @@ class ConditionsTab(QWidget):
 
     def _delete_condition(self):
         item = self.conditions_list.currentItem()
-        if item is None:
+        if item is None or not self._currentPlate:
             return
         name = item.text().split(':')[0].strip()
         conditions = self.state.get('conditions', {})
-        conditions.pop(name, None)
+        plateConds = dict(conditions.get(self._currentPlate, {}))
+        plateConds.pop(name, None)
+        conditions = dict(conditions)
+        if plateConds:
+            conditions[self._currentPlate] = plateConds
+        else:
+            conditions.pop(self._currentPlate, None)
         self.state.set('conditions', conditions)
         self._refresh_list()
 
     def _highlight_condition(self, item):
         """When clicking a saved condition, highlight its wells on the grid."""
-        if not self._grid_widget:
+        if not self._grid_widget or not self._currentPlate:
             return
         name = item.text().split(':')[0].strip()
-        conditions = self.state.get('conditions', {})
-        wells = conditions.get(name, [])
+        plateConds = self.state.get('conditions', {}).get(self._currentPlate, {})
+        wells = plateConds.get(name, [])
         self._grid_widget.set_selected(wells)
 
     def _refresh_list(self):
         self.conditions_list.clear()
-        conditions = self.state.get('conditions', {})
-        for name, wells in conditions.items():
+        if not self._currentPlate:
+            return
+        plateConds = self.state.get('conditions', {}).get(self._currentPlate, {})
+        for name, wells in plateConds.items():
             self.conditions_list.addItem(f'{name}: {", ".join(sorted(wells))}')

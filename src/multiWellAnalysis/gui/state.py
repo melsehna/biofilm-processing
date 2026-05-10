@@ -2,6 +2,21 @@ import json
 from PySide6.QtCore import QObject, Signal
 
 
+def _migrateConditions(conditions):
+    """Drop pre-per-plate conditions dicts.
+
+    Conditions changed from {conditionName: [wellIds]} to
+    {platePath: {conditionName: [wellIds]}}. Old configs would otherwise
+    crash the per-plate UI; the old-format plate scoping is ambiguous so
+    we drop rather than guess.
+    """
+    if not conditions:
+        return {}
+    if any(isinstance(v, list) for v in conditions.values()):
+        return {}
+    return conditions
+
+
 DEFAULTS = {
     'rootDir':          '',
     'plates':           [],
@@ -57,7 +72,10 @@ class AppState(QObject):
     def from_dict(self, d):
         # Only accept keys we know about — silently drops renamed/removed
         # fields from older configs (e.g. 'suffixObjective' → 'plateMeta').
-        self._data.update({k: v for k, v in d.items() if k in DEFAULTS})
+        accepted = {k: v for k, v in d.items() if k in DEFAULTS}
+        if 'conditions' in accepted:
+            accepted['conditions'] = _migrateConditions(accepted['conditions'])
+        self._data.update(accepted)
         self.changed.emit()
 
     def cache_get(self, key, default=None):
