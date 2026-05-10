@@ -703,8 +703,38 @@ class ProcessingWorker(QObject):
             except Exception as e:
                 self.log.emit(f'  [master CSV] ERROR: {e}')
 
+            if masterOk:
+                self._exportConditionsCsvs(outputRoot, s)
+
             if masterOk and (s.get('umapStatic') or s.get('umapInteractive')):
                 self._runUmapStep(outputRoot, s)
+
+    def _exportConditionsCsvs(self, outputRoot, s):
+        """Write <outputRoot>/<plateName>/conditions.csv for each plate that
+        has conditions defined in the GUI."""
+        conditions = s.get('conditions', {})
+        if not conditions:
+            return
+        for platePath, plateConds in conditions.items():
+            if not plateConds:
+                continue
+            plateName = os.path.basename(os.path.normpath(platePath))
+            plateOutDir = os.path.join(outputRoot, plateName)
+            if not os.path.isdir(plateOutDir):
+                continue
+            rows = []
+            for condName, wells in plateConds.items():
+                for w in wells:
+                    rows.append({'wellId': w, 'condition': condName})
+            if not rows:
+                continue
+            try:
+                import pandas as pd
+                csvPath = os.path.join(plateOutDir, 'conditions.csv')
+                pd.DataFrame(rows).to_csv(csvPath, index=False)
+                self.log.emit(f'  [conditions] wrote {csvPath} ({len(rows)} rows)')
+            except Exception as e:
+                self.log.emit(f'  [conditions] ERROR writing for {plateName}: {e}')
 
     def _runUmapStep(self, outputRoot, s):
         """Generate UMAP outputs after master CSV assembly. Failures are logged
@@ -734,6 +764,10 @@ class ProcessingWorker(QObject):
 
         plates = self._state.get('plates', [])
         plateDirMap = {os.path.basename(os.path.normpath(p)): p for p in plates}
+        # state['conditions'] is keyed by full platePath; runner expects plateId
+        rawConditions = self._state.get('conditions', {}) or {}
+        conditionsByPlate = {os.path.basename(os.path.normpath(p)): c
+                             for p, c in rawConditions.items()}
         columnName = self._state.get('umapColumnName') or None
 
         for mag in mags:
@@ -747,7 +781,7 @@ class ProcessingWorker(QObject):
                     doStatic=self._state.get('umapStatic', False),
                     doInteractive=self._state.get('umapInteractive', False),
                     plateDirMap=plateDirMap,
-                    conditionsMap=self._state.get('conditions'),
+                    conditionsByPlate=conditionsByPlate,
                     columnName=columnName,
                     plateMeta=self._state.get('plateMeta'),
                     logFn=self.log.emit,
