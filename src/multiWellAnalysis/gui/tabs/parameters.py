@@ -1,7 +1,7 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QLabel, QComboBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QLabel, QLineEdit, QComboBox,
     QPushButton, QListWidget,
 )
 
@@ -133,6 +133,34 @@ class ParametersTab(QWidget):
         )
         layout.addWidget(self.colonyParamsGroup)
 
+        umapGroup = QGroupBox('UMAP Generation')
+        umapForm = QFormLayout()
+
+        umapHint = QLabel(
+            'Embeds wells from master_frame_features.csv with UMAP. '
+            'Coloring uses a per-plate "*layout*.csv" sidecar if present, '
+            'else falls back to the Conditions tab.'
+        )
+        umapHint.setWordWrap(True)
+        umapHint.setStyleSheet('color: gray; font-size: 11px;')
+        umapForm.addRow(umapHint)
+
+        self.umapStatic = QCheckBox('Generate static UMAP (canonical PNG + 3x3 grid)')
+        self.umapStatic.setChecked(self.state.get('umapStatic', False))
+        umapForm.addRow(self.umapStatic)
+
+        self.umapInteractive = QCheckBox('Generate interactive UMAP (HTML viewer)')
+        self.umapInteractive.setChecked(self.state.get('umapInteractive', False))
+        umapForm.addRow(self.umapInteractive)
+
+        self.umapColumnName = QLineEdit()
+        self.umapColumnName.setPlaceholderText('blank = first non-wellId column')
+        self.umapColumnName.setText(self.state.get('umapColumnName', ''))
+        umapForm.addRow('Color by column:', self.umapColumnName)
+
+        umapGroup.setLayout(umapForm)
+        layout.addWidget(umapGroup)
+
         perfGroup = QGroupBox('Performance')
         perfForm = QFormLayout()
 
@@ -195,6 +223,13 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('minColonyAreaPx', v))
         self.propRadius.valueChanged.connect(
             lambda v: self.state.set('propRadiusPx', v))
+
+        self.umapStatic.toggled.connect(
+            lambda v: self.state.set('umapStatic', v))
+        self.umapInteractive.toggled.connect(
+            lambda v: self.state.set('umapInteractive', v))
+        self.umapColumnName.editingFinished.connect(
+            lambda: self.state.set('umapColumnName', self.umapColumnName.text().strip()))
 
         self.workers.valueChanged.connect(
             lambda v: self.state.set('workers', v))
@@ -364,6 +399,7 @@ class ParametersTab(QWidget):
             self.saveProcessed, self.saveMasks, self.copyRaw,
             self.blockDiam, self.fixedThresh,
             self.minColonyArea, self.propRadius, self.workers,
+            self.umapStatic, self.umapInteractive, self.umapColumnName,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -382,6 +418,9 @@ class ParametersTab(QWidget):
         self.minColonyArea.setValue(self.state.get('minColonyAreaPx', 200))
         self.propRadius.setValue(self.state.get('propRadiusPx', 25))
         self.workers.setValue(min(self.state.get('workers', 4), _maxWorkers()))
+        self.umapStatic.setChecked(self.state.get('umapStatic', False))
+        self.umapInteractive.setChecked(self.state.get('umapInteractive', False))
+        self.umapColumnName.setText(self.state.get('umapColumnName', ''))
 
         for w in widgets:
             w.blockSignals(False)
