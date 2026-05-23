@@ -607,6 +607,26 @@ class ProcessingWorker(QObject):
                         except Exception:
                             pass
 
+                    # Disk reconciliation: index.csv is only written at end of
+                    # plate, so a stop mid-stage-1 leaves no CSV — but the
+                    # wells that DID finish have _processed.tif on disk. Fill
+                    # their standard output paths into the index so stages 2-4
+                    # see them instead of silently skipping with KeyError.
+                    for wellId in list(index):
+                        target = index[wellId]
+                        if target.get('processed'):
+                            continue
+                        candidates = {
+                            'processed':      os.path.join(outdir, f'{wellId}_processed.tif'),
+                            'registered_raw': os.path.join(outdir, f'{wellId}_registered_raw.tif'),
+                            'masks':          os.path.join(outdir, f'{wellId}_masks.npz'),
+                            'biomass':        os.path.join(outdir, f'{wellId}_biomass.csv'),
+                        }
+                        if os.path.exists(candidates['processed']):
+                            for k, p in candidates.items():
+                                if os.path.exists(p):
+                                    target[k] = p
+
                     skipped = []
                     remaining = []
                     for wellId, files in wellItems:
