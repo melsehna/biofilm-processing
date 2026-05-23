@@ -2,7 +2,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QLabel, QLineEdit, QComboBox,
-    QPushButton, QListWidget,
+    QPushButton, QListWidget, QScrollArea,
 )
 
 
@@ -18,10 +18,10 @@ class _CollapsibleGroupBox(QGroupBox):
     tucking away advanced/rarely-changed parameters so they don't clutter
     the main form but are still discoverable.
     """
-    def __init__(self, title, parent=None):
+    def __init__(self, title, parent=None, expanded=False):
         super().__init__(title, parent)
         self.setCheckable(True)
-        self.setChecked(False)
+        self.setChecked(expanded)
         self.toggled.connect(self._onToggle)
 
     def setLayout(self, layout):
@@ -50,9 +50,20 @@ class ParametersTab(QWidget):
         self._connectSignals()
 
     def _buildUi(self):
-        layout = QVBoxLayout(self)
+        # Wrap the form in a QScrollArea so the tab is scrollable when content
+        # overflows vertically (which it does once you have several collapsible
+        # sections open at the same time).
+        rootLayout = QVBoxLayout(self)
+        rootLayout.setContentsMargins(0, 0, 0, 0)
+        scrollArea = QScrollArea()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
+        innerWidget = QWidget()
+        layout = QVBoxLayout(innerWidget)
+        scrollArea.setWidget(innerWidget)
+        rootLayout.addWidget(scrollArea)
 
-        analysisGroup = QGroupBox('Analysis')
+        analysisGroup = _CollapsibleGroupBox('Analysis', expanded=True)
         analysisForm = QFormLayout()
 
         self.doBiomass = QCheckBox('Biofilm biomass (preprocessing + registration + masking)')
@@ -94,7 +105,7 @@ class ParametersTab(QWidget):
         analysisGroup.setLayout(analysisForm)
         layout.addWidget(analysisGroup)
 
-        preprocGroup = QGroupBox('Preprocessing Parameters')
+        preprocGroup = _CollapsibleGroupBox('Preprocessing Parameters', expanded=True)
         preprocForm = QFormLayout()
 
         self.blockDiam = QSpinBox()
@@ -157,7 +168,7 @@ class ParametersTab(QWidget):
         advGroup.setLayout(advForm)
         layout.addWidget(advGroup)
 
-        magGroup = QGroupBox('Per-Magnification Overrides')
+        magGroup = _CollapsibleGroupBox('Per-Magnification Overrides', expanded=False)
         magLayout = QVBoxLayout()
 
         magHint = QLabel(
@@ -199,7 +210,10 @@ class ParametersTab(QWidget):
         self._refreshMagOverridesList()
         self.state.changed.connect(self._onStateChangedMag)
 
-        self.colonyParamsGroup = QGroupBox('Colony Tracking Parameters')
+        # Expanded by default because this group is already conditionally
+        # shown only when colony tracking is enabled — if you've turned it on
+        # you almost certainly want to see the parameters.
+        self.colonyParamsGroup = _CollapsibleGroupBox('Colony Tracking Parameters', expanded=True)
         colonyForm = QFormLayout()
 
         self.minColonyArea = QSpinBox()
@@ -219,7 +233,7 @@ class ParametersTab(QWidget):
         )
         layout.addWidget(self.colonyParamsGroup)
 
-        umapGroup = QGroupBox('UMAP Generation')
+        umapGroup = _CollapsibleGroupBox('UMAP Generation', expanded=False)
         umapForm = QFormLayout()
 
         umapHint = QLabel(
@@ -247,7 +261,7 @@ class ParametersTab(QWidget):
         umapGroup.setLayout(umapForm)
         layout.addWidget(umapGroup)
 
-        perfGroup = QGroupBox('Performance')
+        perfGroup = _CollapsibleGroupBox('Performance', expanded=False)
         perfForm = QFormLayout()
 
         cap = _maxWorkers()
@@ -263,7 +277,7 @@ class ParametersTab(QWidget):
         perfGroup.setLayout(perfForm)
         layout.addWidget(perfGroup)
 
-        outputGroup = QGroupBox('Saved Outputs (Advanced)')
+        outputGroup = _CollapsibleGroupBox('Saved Outputs (Advanced)', expanded=False)
         outputForm = QFormLayout()
 
         # NOTE: saveRegistered / saveProcessed / saveMasks are stored
