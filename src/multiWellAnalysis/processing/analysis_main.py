@@ -74,6 +74,7 @@ def timelapseProcessing(
     downsample=2,
     skipOverlay=False,
     saveProcessedVideo=False,
+    saveFpHalf=False,
     label=None,
     workers=4,
     progressFn=None,
@@ -189,5 +190,23 @@ def timelapseProcessing(
         processedVideoPath = os.path.join(processedDir, f'{filename}_processed.mp4')
         writeProcessedVideo(displayStack, processedVideoPath, label=label)
         _registerImage('processed_mp4', processedVideoPath)
+
+    # Optional second rendering with fixed fpMean=0.5 for cross-batch
+    # comparison. The local-contrast term carries all the biological signal;
+    # the additive fpMean just picks the gray level at which background
+    # renders. A fixed value gives every well a uniform background gray,
+    # independent of its own dynamic range. See ISSUES.md (Issue 2).
+    if saveFpHalf:
+        displayStackFpHalf = np.clip(
+            normalizeLocalContrastOutput(rawCropped, blockDiameter, 0.5),
+            0.0, 1.0,
+        )
+        saveStack(displayStackFpHalf, processedDir, f"{filename}_processed_fpHalf")
+        if not skipOverlay:
+            overlayFpHalfPath = os.path.join(processedDir, f'{filename}_overlay_fpHalf.mp4')
+            writeOverlayVideo(displayStackFpHalf, masks, overlayFpHalfPath, label=label)
+        if saveProcessedVideo:
+            processedFpHalfPath = os.path.join(processedDir, f'{filename}_processed_fpHalf.mp4')
+            writeProcessedVideo(displayStackFpHalf, processedFpHalfPath, label=label)
 
     return masks, biomass, odMean
