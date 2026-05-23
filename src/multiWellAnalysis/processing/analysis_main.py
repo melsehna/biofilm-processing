@@ -9,7 +9,7 @@ from .io_utils import saveStack
 from .preprocessing import normalizeLocalContrast, normalizeLocalContrastOutput
 from .segmentation import computeMaskInplace, dustCorrectInplace
 from .registration import registerStackNormblur
-from .overlay import writeOverlayVideo
+from .overlay import writeOverlayVideo, writeProcessedVideo
 
 
 from typing import Optional
@@ -73,6 +73,7 @@ def timelapseProcessing(
     fftStride=3,
     downsample=2,
     skipOverlay=False,
+    saveProcessedVideo=False,
     label=None,
     workers=4,
     progressFn=None,
@@ -183,5 +184,10 @@ def timelapseProcessing(
         overlayPath = os.path.join(processedDir, f'{filename}_overlay.mp4')
         writeOverlayVideo(displayStack, masks, overlayPath, label=label)
         _registerImage('overlay_mp4', overlayPath)
+
+    if saveProcessedVideo:
+        processedVideoPath = os.path.join(processedDir, f'{filename}_processed.mp4')
+        writeProcessedVideo(displayStack, processedVideoPath, label=label)
+        _registerImage('processed_mp4', processedVideoPath)
 
     return masks, biomass, odMean

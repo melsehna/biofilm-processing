@@ -33,6 +33,10 @@ class ParametersTab(QWidget):
         self.saveOverlays.setChecked(self.state.get('saveOverlays', True))
         analysisForm.addRow(self.saveOverlays)
 
+        self.saveProcessedVideo = QCheckBox('Processed videos (.mp4, no mask overlay)')
+        self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
+        analysisForm.addRow(self.saveProcessedVideo)
+
         self.wholeImage = QCheckBox('Whole-image texture features')
         self.wholeImage.setChecked(self.state.get('wholeImageFeats', False))
         analysisForm.addRow(self.wholeImage)
@@ -191,7 +195,7 @@ class ParametersTab(QWidget):
         outputGroup = QGroupBox('Saved Outputs (Advanced)')
         outputForm = QFormLayout()
 
-        # NOTE: saveRegistered / saveProcessed / saveMasks / copyRaw are stored
+        # NOTE: saveRegistered / saveProcessed / saveMasks are stored
         # in state and respected by the dependency-enforcement logic, but
         # post-run file cleanup is not yet implemented — the pipeline always
         # writes all outputs.  These checkboxes are placeholders for that feature.
@@ -208,9 +212,6 @@ class ParametersTab(QWidget):
         self.saveMasks.setChecked(self.state.get('saveMasks', True))
         outputForm.addRow(self.saveMasks)
 
-        self.copyRaw = QCheckBox('Copy raw frames as stacked TIFF (.tif)')
-        self.copyRaw.setChecked(self.state.get('copyRaw', False))
-        outputForm.addRow(self.copyRaw)
 
         outputGroup.setLayout(outputForm)
         layout.addWidget(outputGroup)
@@ -253,8 +254,8 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('saveProcessed', v))
         self.saveMasks.toggled.connect(
             lambda v: self.state.set('saveMasks', v))
-        self.copyRaw.toggled.connect(
-            lambda v: self.state.set('copyRaw', v))
+        self.saveProcessedVideo.toggled.connect(
+            lambda v: self.state.set('saveProcessedVideo', v))
 
         self.saveProcessed.toggled.connect(self._enforceOutputDeps)
         self.saveRegistered.toggled.connect(self._enforceOutputDeps)
@@ -409,7 +410,7 @@ class ParametersTab(QWidget):
         widgets = [
             self.saveOverlays, self.wholeImage, self.colonyTracking,
             self.colonyFeats, self.dustCorrection, self.saveRegistered,
-            self.saveProcessed, self.saveMasks, self.copyRaw,
+            self.saveProcessed, self.saveMasks, self.saveProcessedVideo,
             self.blockDiam, self.fixedThresh, self.fftStride,
             self.minColonyArea, self.propRadius, self.workers,
             self.umapStatic, self.umapInteractive, self.umapColumnName,
@@ -425,7 +426,7 @@ class ParametersTab(QWidget):
         self.saveRegistered.setChecked(self.state.get('saveRegistered', True))
         self.saveProcessed.setChecked(self.state.get('saveProcessed', True))
         self.saveMasks.setChecked(self.state.get('saveMasks', True))
-        self.copyRaw.setChecked(self.state.get('copyRaw', False))
+        self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
         self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
         self.fftStride.setValue(self.state.get('fftStride', 6))

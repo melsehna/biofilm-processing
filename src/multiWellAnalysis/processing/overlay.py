@@ -71,6 +71,48 @@ def writeOverlayVideo(
         os.remove(tmpPath)
 
 
+def writeProcessedVideo(
+    displayStack,
+    outPath,
+    fps=2,
+    label=None,
+):
+    """Write a grayscale MP4 from a display stack — no mask overlay.
+
+    Parameters
+    ----------
+    displayStack : ndarray, shape (H, W, T), float32 in [0, 1]
+    outPath : str
+    fps : int
+    label : str or None
+    """
+    h, w, nFrames = displayStack.shape
+
+    grayAll = np.clip(displayStack * 255, 0, 255).astype(np.uint8)
+    frames = np.stack([grayAll, grayAll, grayAll], axis=-1)
+    frames = np.moveaxis(frames, 2, 0)
+
+    if label:
+        labelOverlay = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(labelOverlay, label, (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+        labelMask = labelOverlay.any(axis=-1)
+        for t in range(nFrames):
+            frames[t][labelMask] = labelOverlay[labelMask]
+
+    tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
+    os.close(tmpFd)
+    try:
+        _writeWithImageio(frames, tmpPath, fps)
+    except Exception:
+        _writeWithCv2(frames, tmpPath, fps, w, h)
+    try:
+        shutil.move(tmpPath, outPath)
+    except Exception:
+        shutil.copy2(tmpPath, outPath)
+        os.remove(tmpPath)
+
+
 def _writeWithImageio(frames, path, fps):
     """Write frames using imageio-ffmpeg (RGB input)."""
     import imageio.v3 as iio

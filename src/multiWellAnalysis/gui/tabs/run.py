@@ -39,7 +39,7 @@ def _fmtTime(seconds):
 _paramKeys = [
     'blockDiam', 'fixedThresh', 'dustCorrection',
     'shiftThresh', 'fftStride', 'downsample',
-    'magnification', 'magParams', 'copyRaw',
+    'magnification', 'magParams',
 ]
 
 _runParamsFile = 'run_params.json'
@@ -116,6 +116,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             fftStride=params.get('fftStride', 6),
             downsample=params.get('downsample', 4),
             skipOverlay=not params.get('saveOverlays', True),
+            saveProcessedVideo=params.get('saveProcessedVideo', False),
             workers=1,
         )
         del stack
@@ -494,8 +495,8 @@ class ProcessingWorker(QObject):
         self.log.emit(f'  wholeImageFeats={s.get("wholeImageFeats")}, '
                       f'colonyTracking={s.get("colonyTracking")}, '
                       f'colonyFeats={s.get("colonyFeats")}, '
-                      f'copyRaw={s.get("copyRaw")}, '
-                      f'saveOverlays={s.get("saveOverlays")}')
+                      f'saveOverlays={s.get("saveOverlays")}, '
+                      f'saveProcessedVideo={s.get("saveProcessedVideo")}')
 
         self._overallDone = 0
         self._totalTasks = 1
@@ -874,6 +875,7 @@ class ProcessingWorker(QObject):
             'fftStride': state.get('fftStride', 6),
             'downsample': state.get('downsample', 4),
             'saveOverlays': state.get('saveOverlays', True),
+            'saveProcessedVideo': state.get('saveProcessedVideo', False),
         }
         magParams = state.get('magParams', {})
         if mag and mag in magParams:
