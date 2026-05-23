@@ -68,6 +68,17 @@ class ParametersTab(QWidget):
         self.dustCorrection.setChecked(self.state.get('dustCorrection', True))
         preprocForm.addRow(self.dustCorrection)
 
+        self.fftStride = QSpinBox()
+        self.fftStride.setRange(1, 30)
+        self.fftStride.setValue(self.state.get('fftStride', 6))
+        self.fftStride.setToolTip(
+            'Keyframe spacing for phase-correlation registration. 1 = register '
+            'every frame (most accurate, slowest). Higher values speed up '
+            'phase 1 but let sub-pixel drift accumulate between keyframes, '
+            'which can cause downstream colony-label flips.'
+        )
+        preprocForm.addRow('FFT stride (registration keyframe step):', self.fftStride)
+
         preprocGroup.setLayout(preprocForm)
         layout.addWidget(preprocGroup)
 
@@ -218,6 +229,8 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('fixedThresh', v))
         self.dustCorrection.toggled.connect(
             lambda v: self.state.set('dustCorrection', v))
+        self.fftStride.valueChanged.connect(
+            lambda v: self.state.set('fftStride', v))
 
         self.minColonyArea.valueChanged.connect(
             lambda v: self.state.set('minColonyAreaPx', v))
@@ -397,7 +410,7 @@ class ParametersTab(QWidget):
             self.saveOverlays, self.wholeImage, self.colonyTracking,
             self.colonyFeats, self.dustCorrection, self.saveRegistered,
             self.saveProcessed, self.saveMasks, self.copyRaw,
-            self.blockDiam, self.fixedThresh,
+            self.blockDiam, self.fixedThresh, self.fftStride,
             self.minColonyArea, self.propRadius, self.workers,
             self.umapStatic, self.umapInteractive, self.umapColumnName,
         ]
@@ -415,6 +428,7 @@ class ParametersTab(QWidget):
         self.copyRaw.setChecked(self.state.get('copyRaw', False))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
         self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
+        self.fftStride.setValue(self.state.get('fftStride', 6))
         self.minColonyArea.setValue(self.state.get('minColonyAreaPx', 200))
         self.propRadius.setValue(self.state.get('propRadiusPx', 25))
         self.workers.setValue(min(self.state.get('workers', 4), _maxWorkers()))
