@@ -202,7 +202,13 @@ def _trackOneWell(plateName, row, trackingParams=None):
 
 
 def _wholeImageOneWell(plateName, row):
-    """Run whole-image feature extraction on a single well."""
+    """Run whole-image feature extraction on a single well.
+
+    Prefers the fixed-fpMean rendering (`_processed_fpHalf.tif`) when present
+    on disk, because intensity-based features (incl. Haralick) are sensitive
+    to the additive fpMean offset under the adaptive rendering — see
+    CLAUDE.md "fpMean policy" for the rationale.
+    """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
@@ -211,9 +217,11 @@ def _wholeImageOneWell(plateName, row):
     try:
         from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
         outdir = os.path.dirname(row['processed'])
+        fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
+        inputPath = fpHalfPath if os.path.exists(fpHalfPath) else row['processed']
         t0 = time.perf_counter()
         status = extractWholeImageFeatures(
-            row['processed'], plateName, wellId, outdir
+            inputPath, plateName, wellId, outdir
         )
         elapsed = time.perf_counter() - t0
         featsPath = os.path.join(outdir, f'{wellId}_wholeImageFeatures.csv')
@@ -229,7 +237,15 @@ def _wholeImageOneWell(plateName, row):
 
 
 def _colonyFeatsOneWell(plateName, row):
-    """Run colony feature extraction on a single well."""
+    """Run colony feature extraction on a single well.
+
+    Reads intensity from the fixed-fpMean processed rendering
+    (`_processed_fpHalf.tif`) when present on disk, falling back to
+    `_registered_raw.tif` only if the fpHalf rendering is missing. Using
+    the processed stack means intensity-based and Haralick features speak
+    the same "language" as whole-image features and are cross-batch
+    comparable without an Imin flat-field. See CLAUDE.md "fpMean policy".
+    """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
@@ -241,9 +257,11 @@ def _colonyFeatsOneWell(plateName, row):
         labelsPath = row['tracked_labels']
         rawPath = row['registered_raw']
         outdir = os.path.dirname(rawPath)
+        fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
+        intensityPath = fpHalfPath if os.path.exists(fpHalfPath) else rawPath
 
         data = np.load(labelsPath)
-        rawStack = tifffile.imread(rawPath)
+        rawStack = tifffile.imread(intensityPath)
         if rawStack.ndim == 3 and rawStack.shape[0] < rawStack.shape[1]:
             rawStack = np.transpose(rawStack, (1, 2, 0))
 
@@ -262,10 +280,11 @@ def _colonyFeatsOneWell(plateName, row):
                     'error': f'invalid pxToUm={pxToUm!r}'}
 
         t0 = time.perf_counter()
+        # Pass intensityPath (actual file read) for provenance, not rawPath.
         colonyDf, wellDf = extractAndSave(
             rawStack, labels, frames,
             plateName, wellId, wasTracked,
-            labelsPath, rawPath,
+            labelsPath, intensityPath,
             outdir=outdir,
             pxToUm=pxToUm,
         )
