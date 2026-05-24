@@ -49,6 +49,13 @@ DEFAULTS = {
     # {platePath: {suffix: {'objective': int, 'pxToUm': float}}}
     # Per-plate because objective slots can differ across microscopes.
     'plateMeta':        {},
+
+    # NAS mirror: write outputs to local outputDir during processing, then
+    # rsync each plate's outputs to nasMirrorDir after that plate completes,
+    # and delete the local copy. Massively faster on NAS-backed setups because
+    # batched sequential transfers beat per-file writes on SMB.
+    'nasMirrorEnabled': False,
+    'nasMirrorDir':     '',
 }
 
 

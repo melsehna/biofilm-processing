@@ -502,6 +502,14 @@ class ProcessingWorker(QObject):
         outputRoot = s.get('outputDir', '')
         magSetting = s.get('magnification', 'all')
 
+        nasMirror = bool(s.get('nasMirrorEnabled', False)) and bool(s.get('nasMirrorDir', '').strip())
+        if nasMirror:
+            nasMirrorDir = s['nasMirrorDir'].strip()
+            self.log.emit(f'\nNAS mirror enabled — outputs will be rsynced to {nasMirrorDir} '
+                          f'after each plate and the local copy deleted.')
+            if not self._preflightNasMirror(outputRoot, nasMirrorDir):
+                return
+
         doWhole = s.get('wholeImageFeats', False)
         doTracking = s.get('colonyTracking', False) or s.get('colonyFeats', False)
         doColonyFeats = s.get('colonyFeats', False)
@@ -736,6 +744,18 @@ class ProcessingWorker(QObject):
                 except Exception as e:
                     self.log.emit(f'  [numericalData] ERROR: {e}')
 
+                if nasMirror:
+                    nasPlateDir = self._computeNasPlateDir(
+                        outputRoot, outdir, s['nasMirrorDir'].strip(),
+                    )
+                    if self._syncPlateToNas(outdir, nasPlateDir):
+                        # update plateOutdirs so the final master CSV reads
+                        # from NAS (local copy is gone)
+                        for i, p in enumerate(plateOutdirs):
+                            if p == outdir:
+                                plateOutdirs[i] = nasPlateDir
+                                break
+
                 plateIdx += 1
 
         if outputRoot and plateOutdirs and not self._stop.is_set():
@@ -756,6 +776,127 @@ class ProcessingWorker(QObject):
 
             if masterOk and (s.get('umapStatic') or s.get('umapInteractive')):
                 self._runUmapStep(outputRoot, s)
+
+            # After master CSV + UMAP, mirror the top-level master CSVs and
+            # any other outputRoot-level artifacts to NAS. Per-plate dirs were
+            # already mirrored + deleted, so what's left at outputRoot is just
+            # the master_*.csv files plus the embeddings/ directory if any.
+            if nasMirror:
+                self._syncOutputRootToNas(outputRoot, s['nasMirrorDir'].strip())
+
+    def _preflightNasMirror(self, outputRoot, nasMirrorDir):
+        """Sanity checks before starting a NAS-mirror run.
+
+        Returns True if OK to proceed, False to abort (and emits a log line).
+        Checks: rsync available, outputDir set + writable, NAS target reachable,
+        enough local free space for at least one plate.
+        """
+        import shutil
+        if not outputRoot or not os.path.isdir(outputRoot):
+            self.log.emit(f'  ERROR: outputDir {outputRoot!r} is not set or does not exist; '
+                          f'NAS mirror mode needs a local outputDir to stage to.')
+            return False
+        if shutil.which('rsync') is None:
+            self.log.emit('  ERROR: rsync not found on PATH; install rsync or disable NAS mirror.')
+            return False
+        if outputRoot.rstrip('/') == nasMirrorDir.rstrip('/'):
+            self.log.emit(f'  ERROR: outputDir and nasMirrorDir are the same ({outputRoot}); '
+                          f'NAS mirror mode requires a distinct local staging dir.')
+            return False
+        try:
+            os.makedirs(nasMirrorDir, exist_ok=True)
+            probe = os.path.join(nasMirrorDir, '.mtv_nas_write_probe')
+            with open(probe, 'w') as f:
+                f.write('ok')
+            os.remove(probe)
+        except Exception as e:
+            self.log.emit(f'  ERROR: NAS mirror dir {nasMirrorDir!r} not writable: {e}')
+            return False
+
+        usage = shutil.disk_usage(outputRoot)
+        freeGb = usage.free / (1024 ** 3)
+        # ~50 GB per typical 96-well plate with saveFpHalf=True. Warn at
+        # <100 GB, abort at <20 GB (probably can't fit even one plate).
+        if freeGb < 20:
+            self.log.emit(f'  ERROR: only {freeGb:.1f} GB free at {outputRoot}; '
+                          f'need at least ~50 GB per plate. Aborting.')
+            return False
+        if freeGb < 100:
+            self.log.emit(f'  WARNING: only {freeGb:.1f} GB free at {outputRoot} '
+                          f'(typical plate ~50 GB). Per-plate mirror+delete should '
+                          f'keep up but the headroom is tight.')
+        else:
+            self.log.emit(f'  Local free space at outputDir: {freeGb:.0f} GB — plenty.')
+        return True
+
+    def _computeNasPlateDir(self, outputRoot, localPlateDir, nasMirrorDir):
+        """Compute the NAS-side path that mirrors a local plate dir.
+
+        Preserves the relative structure under outputRoot, so a local
+        outputRoot/<drawer>/<plate>/processedImages becomes
+        nasMirrorDir/<drawer>/<plate>/processedImages.
+        """
+        rel = os.path.relpath(localPlateDir, outputRoot)
+        return os.path.join(nasMirrorDir, rel)
+
+    def _syncPlateToNas(self, localPlateDir, nasPlateDir):
+        """rsync local plate dir → NAS, then delete the local copy on success.
+
+        Returns True if sync + delete succeeded, False otherwise.
+        On failure, local dir is preserved so a re-run can pick up.
+        """
+        import shutil, subprocess
+        if not os.path.isdir(localPlateDir):
+            self.log.emit(f'  [NAS sync] skip — local plate dir missing: {localPlateDir}')
+            return False
+        os.makedirs(os.path.dirname(nasPlateDir.rstrip('/')) or nasPlateDir, exist_ok=True)
+        self.log.emit(f'  [NAS sync] {localPlateDir} → {nasPlateDir}')
+        # Trailing slashes matter: rsync src/ → dst means "contents of src into dst"
+        srcArg = localPlateDir.rstrip('/') + '/'
+        dstArg = nasPlateDir.rstrip('/') + '/'
+        try:
+            result = subprocess.run(
+                ['rsync', '-a', '--info=progress2', srcArg, dstArg],
+                capture_output=True, text=True, timeout=3600,
+            )
+            if result.returncode != 0:
+                self.log.emit(f'  [NAS sync] rsync FAILED (rc={result.returncode}): '
+                              f'{result.stderr.strip()[:500]}')
+                return False
+        except subprocess.TimeoutExpired:
+            self.log.emit(f'  [NAS sync] rsync timed out (>1h) for {localPlateDir}')
+            return False
+        except Exception as e:
+            self.log.emit(f'  [NAS sync] rsync exception: {e}')
+            return False
+        try:
+            shutil.rmtree(localPlateDir)
+            self.log.emit(f'  [NAS sync] local copy deleted: {localPlateDir}')
+        except Exception as e:
+            self.log.emit(f'  [NAS sync] WARNING: rsync OK but local delete failed: {e}')
+        return True
+
+    def _syncOutputRootToNas(self, outputRoot, nasMirrorDir):
+        """Mirror outputRoot-level files (master CSVs, etc.) to NAS at the
+        end of a run. Skips already-mirrored per-plate subdirectories."""
+        import subprocess
+        self.log.emit(f'\n[NAS sync] mirroring outputRoot-level artifacts → {nasMirrorDir}')
+        srcArg = outputRoot.rstrip('/') + '/'
+        dstArg = nasMirrorDir.rstrip('/') + '/'
+        try:
+            # update-only rsync; per-plate dirs were already deleted locally
+            # so only the master_*.csv and any embeddings/ etc. remain
+            result = subprocess.run(
+                ['rsync', '-a', srcArg, dstArg],
+                capture_output=True, text=True, timeout=3600,
+            )
+            if result.returncode != 0:
+                self.log.emit(f'  [NAS sync] outputRoot rsync FAILED: '
+                              f'{result.stderr.strip()[:500]}')
+                return
+            self.log.emit('  [NAS sync] outputRoot mirror complete.')
+        except Exception as e:
+            self.log.emit(f'  [NAS sync] outputRoot rsync exception: {e}')
 
     def _exportConditionsCsvs(self, outputRoot, s):
         """Write <outputRoot>/<plateName>/conditions.csv for each plate that

@@ -2,7 +2,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QLabel, QLineEdit, QComboBox,
-    QPushButton, QListWidget, QScrollArea,
+    QPushButton, QListWidget, QScrollArea, QFileDialog,
 )
 
 
@@ -35,11 +35,18 @@ class _CollapsibleGroupBox(QGroupBox):
         layout = self.layout()
         if layout is None:
             return
+        self._walkAndSetVisible(layout, visible)
+
+    def _walkAndSetVisible(self, layout, visible):
         for i in range(layout.count()):
             item = layout.itemAt(i)
             w = item.widget()
             if w:
                 w.setVisible(visible)
+                continue
+            sub = item.layout()
+            if sub is not None:
+                self._walkAndSetVisible(sub, visible)
 
 
 class ParametersTab(QWidget):
@@ -277,6 +284,38 @@ class ParametersTab(QWidget):
         perfGroup.setLayout(perfForm)
         layout.addWidget(perfGroup)
 
+        # ── NAS Mirror — collapsed by default ──────────────────────────────
+        nasGroup = _CollapsibleGroupBox('NAS Mirror', expanded=False)
+        nasLayout = QVBoxLayout()
+
+        nasHint = QLabel(
+            'Write phase-1 outputs to the local outputDir during processing, '
+            'then rsync each plate to the NAS mirror after that plate completes '
+            'and delete the local copy. Much faster than writing directly to NAS '
+            'because batched sequential transfers beat per-file SMB writes.'
+        )
+        nasHint.setWordWrap(True)
+        nasHint.setStyleSheet('color: gray; font-size: 11px;')
+        nasLayout.addWidget(nasHint)
+
+        self.nasMirrorEnabled = QCheckBox('Mirror outputs to NAS after each plate (then delete local)')
+        self.nasMirrorEnabled.setChecked(self.state.get('nasMirrorEnabled', False))
+        nasLayout.addWidget(self.nasMirrorEnabled)
+
+        nasPathRow = QHBoxLayout()
+        nasPathRow.addWidget(QLabel('NAS mirror dir:'))
+        self.nasMirrorDir = QLineEdit()
+        self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
+        self.nasMirrorDir.setPlaceholderText('/mnt/bridgeslab/path/to/destination')
+        nasPathRow.addWidget(self.nasMirrorDir, stretch=1)
+        nasBrowseBtn = QPushButton('Browse…')
+        nasBrowseBtn.clicked.connect(self._browseNasMirrorDir)
+        nasPathRow.addWidget(nasBrowseBtn)
+        nasLayout.addLayout(nasPathRow)
+
+        nasGroup.setLayout(nasLayout)
+        layout.addWidget(nasGroup)
+
         outputGroup = _CollapsibleGroupBox('Saved Outputs (Advanced)', expanded=False)
         outputForm = QFormLayout()
 
@@ -347,6 +386,10 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('saveProcessedVideo', v))
         self.saveFpHalf.toggled.connect(
             lambda v: self.state.set('saveFpHalf', v))
+        self.nasMirrorEnabled.toggled.connect(
+            lambda v: self.state.set('nasMirrorEnabled', v))
+        self.nasMirrorDir.editingFinished.connect(
+            lambda: self.state.set('nasMirrorDir', self.nasMirrorDir.text().strip()))
 
         self.saveProcessed.toggled.connect(self._enforceOutputDeps)
         self.saveRegistered.toggled.connect(self._enforceOutputDeps)
@@ -496,12 +539,20 @@ class ParametersTab(QWidget):
         self.state.set('magParams', magParams)
         self._refreshMagOverridesList()
 
+    def _browseNasMirrorDir(self):
+        start = self.nasMirrorDir.text() or self.state.get('rootDir', '') or os.path.expanduser('~')
+        d = QFileDialog.getExistingDirectory(self, 'Select NAS mirror destination', start)
+        if d:
+            self.nasMirrorDir.setText(d)
+            self.state.set('nasMirrorDir', d)
+
     def refreshFromState(self):
         """Sync all widgets to current state (call after loading a config)."""
         widgets = [
             self.saveOverlays, self.wholeImage, self.colonyTracking,
             self.colonyFeats, self.dustCorrection, self.saveRegistered,
             self.saveProcessed, self.saveMasks, self.saveProcessedVideo, self.saveFpHalf,
+            self.nasMirrorEnabled, self.nasMirrorDir,
             self.blockDiam, self.fixedThresh,
             self.fftStride, self.downsample, self.shiftThresh,
             self.minColonyArea, self.propRadius, self.workers,
@@ -520,6 +571,8 @@ class ParametersTab(QWidget):
         self.saveMasks.setChecked(self.state.get('saveMasks', True))
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
         self.saveFpHalf.setChecked(self.state.get('saveFpHalf', False))
+        self.nasMirrorEnabled.setChecked(self.state.get('nasMirrorEnabled', False))
+        self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
         self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
         self.fftStride.setValue(self.state.get('fftStride', 6))
