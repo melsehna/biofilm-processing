@@ -503,12 +503,21 @@ class ProcessingWorker(QObject):
         magSetting = s.get('magnification', 'all')
 
         nasMirror = bool(s.get('nasMirrorEnabled', False)) and bool(s.get('nasMirrorDir', '').strip())
+        self._stagingAutoCreated = False
         if nasMirror:
             nasMirrorDir = s['nasMirrorDir'].strip()
             self.log.emit(f'\nNAS mirror enabled — outputs will be rsynced to {nasMirrorDir} '
                           f'after each plate and the local copy deleted.')
             if not self._preflightNasMirror(outputRoot, nasMirrorDir):
                 return
+            # Auto-stage to a fresh local dir if the user-provided outputDir is
+            # empty or appears to live on the same mount as nasMirrorDir
+            # (in which case mirroring would be a same-mount copy and provide
+            # no speedup).
+            outputRoot, self._stagingAutoCreated = self._resolveLocalStagingDir(
+                outputRoot, nasMirrorDir,
+            )
+            self.log.emit(f'  [NAS mirror] local staging dir: {outputRoot}')
 
         doWhole = s.get('wholeImageFeats', False)
         doTracking = s.get('colonyTracking', False) or s.get('colonyFeats', False)
@@ -783,23 +792,31 @@ class ProcessingWorker(QObject):
             # the master_*.csv files plus the embeddings/ directory if any.
             if nasMirror:
                 self._syncOutputRootToNas(outputRoot, s['nasMirrorDir'].strip())
+                # If the staging dir was auto-created under home, tear it down
+                # entirely after the final sync. User-provided outputDirs are
+                # left alone.
+                if self._stagingAutoCreated:
+                    import shutil
+                    try:
+                        shutil.rmtree(outputRoot)
+                        self.log.emit(f'  [NAS mirror] cleaned up auto-staging dir: {outputRoot}')
+                    except Exception as e:
+                        self.log.emit(f'  [NAS mirror] WARNING: failed to clean auto-staging dir '
+                                      f'{outputRoot}: {e}')
 
     def _preflightNasMirror(self, outputRoot, nasMirrorDir):
         """Sanity checks before starting a NAS-mirror run.
 
         Returns True if OK to proceed, False to abort (and emits a log line).
-        Checks: rsync available, outputDir set + writable, NAS target reachable,
-        enough local free space for at least one plate.
+        Note: outputRoot may be empty here — _resolveLocalStagingDir will
+        auto-create one if so. We only fail if rsync is missing or NAS is
+        unwritable.
         """
         import shutil
-        if not outputRoot or not os.path.isdir(outputRoot):
-            self.log.emit(f'  ERROR: outputDir {outputRoot!r} is not set or does not exist; '
-                          f'NAS mirror mode needs a local outputDir to stage to.')
-            return False
         if shutil.which('rsync') is None:
             self.log.emit('  ERROR: rsync not found on PATH; install rsync or disable NAS mirror.')
             return False
-        if outputRoot.rstrip('/') == nasMirrorDir.rstrip('/'):
+        if outputRoot and outputRoot.rstrip('/') == nasMirrorDir.rstrip('/'):
             self.log.emit(f'  ERROR: outputDir and nasMirrorDir are the same ({outputRoot}); '
                           f'NAS mirror mode requires a distinct local staging dir.')
             return False
@@ -813,21 +830,58 @@ class ProcessingWorker(QObject):
             self.log.emit(f'  ERROR: NAS mirror dir {nasMirrorDir!r} not writable: {e}')
             return False
 
-        usage = shutil.disk_usage(outputRoot)
-        freeGb = usage.free / (1024 ** 3)
-        # ~50 GB per typical 96-well plate with saveFpHalf=True. Warn at
-        # <100 GB, abort at <20 GB (probably can't fit even one plate).
-        if freeGb < 20:
-            self.log.emit(f'  ERROR: only {freeGb:.1f} GB free at {outputRoot}; '
-                          f'need at least ~50 GB per plate. Aborting.')
-            return False
-        if freeGb < 100:
-            self.log.emit(f'  WARNING: only {freeGb:.1f} GB free at {outputRoot} '
-                          f'(typical plate ~50 GB). Per-plate mirror+delete should '
-                          f'keep up but the headroom is tight.')
-        else:
-            self.log.emit(f'  Local free space at outputDir: {freeGb:.0f} GB — plenty.')
+        # Disk-space check happens against the resolved staging dir, not
+        # outputRoot — which may be empty at this point. Defer to the
+        # post-resolve helper.
         return True
+
+    def _onSameMount(self, a, b):
+        """Are paths a and b on the same filesystem mount? Used to detect
+        when a user-provided outputDir is on the NAS (which would defeat
+        the purpose of NAS-mirror staging)."""
+        try:
+            return os.stat(a).st_dev == os.stat(b).st_dev
+        except Exception:
+            return False
+
+    def _resolveLocalStagingDir(self, userOutputRoot, nasMirrorDir):
+        """Decide what local path to use as the NAS-mirror staging area.
+
+        Logic:
+          - If userOutputRoot is set AND exists AND is on a different mount
+            from nasMirrorDir → use it as-is (assume user picked a fast
+            local disk deliberately).
+          - Otherwise → auto-create a fresh dir under $HOME and use that.
+
+        Returns (resolvedPath, autoCreatedBool). autoCreatedBool is True
+        when the dir was auto-created, so the caller knows to delete it
+        at the very end of the run.
+        """
+        import datetime, shutil
+        if userOutputRoot and os.path.isdir(userOutputRoot):
+            if not self._onSameMount(userOutputRoot, nasMirrorDir):
+                # Verify space on user's chosen dir
+                freeGb = shutil.disk_usage(userOutputRoot).free / (1024 ** 3)
+                if freeGb < 20:
+                    self.log.emit(f'  [NAS mirror] WARNING: only {freeGb:.1f} GB free '
+                                  f'at {userOutputRoot}; per-plate sync should keep up '
+                                  f'but headroom is tight.')
+                return userOutputRoot, False
+            self.log.emit(f'  [NAS mirror] outputDir {userOutputRoot} is on the same mount '
+                          f'as nasMirrorDir — auto-creating local staging dir under home '
+                          f'instead so the mirror actually buys you speed.')
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        staging = os.path.expanduser(f'~/biofilm-staging-{stamp}')
+        os.makedirs(staging, exist_ok=True)
+        # Sanity-check free space at auto-created location
+        freeGb = shutil.disk_usage(staging).free / (1024 ** 3)
+        if freeGb < 20:
+            self.log.emit(f'  [NAS mirror] WARNING: only {freeGb:.1f} GB free at '
+                          f'{staging}; per-plate sync may not keep up. Consider '
+                          f'pointing outputDir at a larger local disk.')
+        else:
+            self.log.emit(f'  [NAS mirror] auto-created staging dir has {freeGb:.0f} GB free.')
+        return staging, True
 
     def _computeNasPlateDir(self, outputRoot, localPlateDir, nasMirrorDir):
         """Compute the NAS-side path that mirrors a local plate dir.
