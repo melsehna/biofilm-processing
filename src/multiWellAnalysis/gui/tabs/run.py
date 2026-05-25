@@ -754,15 +754,23 @@ class ProcessingWorker(QObject):
                     self.log.emit(f'  [numericalData] ERROR: {e}')
 
                 if nasMirror:
+                    # Sync the WHOLE plate dir (parent of processedImages) so
+                    # numericalData/ and run_params.json get mirrored too. The
+                    # old code synced just processedImages, which both lost
+                    # numericalData on NAS AND left the plate dir partially
+                    # populated locally → disk accumulating across plates.
+                    plateDirLocal = os.path.dirname(outdir)
                     nasPlateDir = self._computeNasPlateDir(
-                        outputRoot, outdir, s['nasMirrorDir'].strip(),
+                        outputRoot, plateDirLocal, s['nasMirrorDir'].strip(),
                     )
-                    if self._syncPlateToNas(outdir, nasPlateDir):
-                        # update plateOutdirs so the final master CSV reads
-                        # from NAS (local copy is gone)
+                    if self._syncPlateToNas(plateDirLocal, nasPlateDir):
+                        # plateOutdirs entries are processedImages paths, but
+                        # the local copy is gone now. Repoint at NAS so the
+                        # final master CSV finds the data.
+                        nasProcessedImages = os.path.join(nasPlateDir, 'processedImages')
                         for i, p in enumerate(plateOutdirs):
                             if p == outdir:
-                                plateOutdirs[i] = nasPlateDir
+                                plateOutdirs[i] = nasProcessedImages
                                 break
 
                 plateIdx += 1
