@@ -66,6 +66,24 @@ def _loadRunParams(outdir):
         return None
 
 
+def _paramsMatch(saved, current):
+    """Lenient comparison: saved having extra keys we don't track is OK.
+
+    Strict `saved == current` would break cross-GUI resume because the two
+    GUIs historically wrote slightly different key sets (e.g. microTyper-Vision's
+    `copyRaw` doesn't exist here). What we actually care about is whether the
+    *current* preprocessing knobs were the ones used to produce the existing
+    outputs. So: every key in `current` must exist in `saved` with the same
+    value. Extra keys in `saved` are ignored.
+    """
+    if not isinstance(saved, dict):
+        return False
+    for k, v in current.items():
+        if k not in saved or saved[k] != v:
+            return False
+    return True
+
+
 def _wellAlreadyProcessed(outdir, wellId):
     return os.path.exists(os.path.join(outdir, f'{wellId}_processed.tif'))
 
@@ -592,7 +610,7 @@ class ProcessingWorker(QObject):
                 # per-plate resume: check if output already exists with same params
                 saved = _loadRunParams(outdir)
                 resume = False
-                if saved is not None and saved == runParams:
+                if _paramsMatch(saved, runParams):
                     resume = True
                 _saveRunParams(outdir, runParams)
 
