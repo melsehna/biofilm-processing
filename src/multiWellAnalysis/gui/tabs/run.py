@@ -804,13 +804,11 @@ class ProcessingWorker(QObject):
                 # entirely after the final sync. User-provided outputDirs are
                 # left alone.
                 if self._stagingAutoCreated:
-                    import shutil
-                    try:
-                        shutil.rmtree(outputRoot)
+                    if self._forceDeleteDir(outputRoot):
                         self.log.emit(f'  [NAS mirror] cleaned up auto-staging dir: {outputRoot}')
-                    except Exception as e:
-                        self.log.emit(f'  [NAS mirror] WARNING: failed to clean auto-staging dir '
-                                      f'{outputRoot}: {e}')
+                    else:
+                        self.log.emit(f'  [NAS mirror] ERROR: failed to clean auto-staging dir '
+                                      f'{outputRoot}; manual cleanup: rm -rf "{outputRoot}"')
 
     def _preflightNasMirror(self, outputRoot, nasMirrorDir):
         """Sanity checks before starting a NAS-mirror run.
@@ -931,12 +929,37 @@ class ProcessingWorker(QObject):
         except Exception as e:
             self.log.emit(f'  [NAS sync] rsync exception: {e}')
             return False
-        try:
-            shutil.rmtree(localPlateDir)
+        # Robust delete: try shutil.rmtree first, fall back to `rm -rf`,
+        # then verify the dir is actually gone. The whole point of NAS
+        # mirror mode is bounded local disk, so loud-failing on a stuck
+        # local copy is the right behavior.
+        self.log.emit(f'  [NAS sync] rsync OK — deleting local copy: {localPlateDir}')
+        deleted = self._forceDeleteDir(localPlateDir)
+        if deleted:
             self.log.emit(f'  [NAS sync] local copy deleted: {localPlateDir}')
-        except Exception as e:
-            self.log.emit(f'  [NAS sync] WARNING: rsync OK but local delete failed: {e}')
+        else:
+            self.log.emit(f'  [NAS sync] ERROR: rsync OK but LOCAL COPY STILL PRESENT at '
+                          f'{localPlateDir}. NAS data is safe but disk will fill up. '
+                          f'Manual cleanup: rm -rf "{localPlateDir}"')
         return True
+
+    def _forceDeleteDir(self, path):
+        """Robust recursive delete. Tries shutil.rmtree first; if that fails
+        or leaves anything behind, falls back to `rm -rf`. Returns True only
+        when the directory is verified gone."""
+        import shutil, subprocess
+        if not os.path.exists(path):
+            return True
+        try:
+            shutil.rmtree(path)
+        except Exception as e:
+            self.log.emit(f'    [delete] shutil.rmtree failed ({e}) — falling back to rm -rf')
+        if os.path.exists(path):
+            try:
+                subprocess.run(['rm', '-rf', path], check=True, timeout=600)
+            except Exception as e:
+                self.log.emit(f'    [delete] rm -rf failed: {e}')
+        return not os.path.exists(path)
 
     def _syncOutputRootToNas(self, outputRoot, nasMirrorDir):
         """Mirror outputRoot-level files (master CSVs, etc.) to NAS at the
