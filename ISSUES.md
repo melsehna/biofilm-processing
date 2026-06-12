@@ -600,3 +600,14 @@ Before flipping the pipeline to fpHalf-only, validate the fixed render on the ra
 3. If both look good, **retire adaptive fpMean**: make `fpHalf` the sole `_processed.tif`
    rendering and feature input, regenerate overlays from it, drop the `_fpHalf` suffix.
    (This is the migration already foreshadowed in CLAUDE.md "fpMean policy".)
+4. **End-to-end cross-batch validation — process from RAW.** Run the full fixed
+   pipeline (registration → fpHalf render → feature extraction) starting from the
+   **raw TIFFs** — not the `registered_raw` shortcut the Phase 3 test used — for
+   matched biology in two batch pairs, then compare cross-batch to confirm the batch
+   effect is actually gone end-to-end:
+   - **reimaging ↔ clean-deletions** (WT control + gene pairs BioD↔bioD, ManA↔manA,
+     PdhE2↔pdhE2)
+   - **training ↔ reimaging** (shared controls / overlapping strains, e.g. WT)
+   Going from raw also exercises any **registration/preprocessing** version drift, not
+   just the render (Phase 3 held registration constant by starting from `registered_raw`).
+   Success = matched biology overlaps in feature distributions / UMAP across batches.
