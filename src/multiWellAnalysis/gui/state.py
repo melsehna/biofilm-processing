@@ -1,6 +1,8 @@
 import json
 from PySide6.QtCore import QObject, Signal
 
+from .buildinfo import buildRecord
+
 
 def _migrateConditions(conditions):
     """Drop pre-per-plate conditions dicts.
@@ -99,8 +101,12 @@ class AppState(QObject):
             self._cache.pop(key, None)
 
     def save(self, path):
+        # Stamp pipeline build/version provenance into the saved config. Written
+        # under '_pipelineVersion'; from_dict ignores it on load (not in
+        # DEFAULTS), so it records provenance without round-tripping into state.
+        payload = {**self.to_dict(), '_pipelineVersion': buildRecord()}
         with open(path, 'w') as f:
-            json.dump(self.to_dict(), f, indent=2)
+            json.dump(payload, f, indent=2)
 
     def load(self, path):
         with open(path, 'r') as f:

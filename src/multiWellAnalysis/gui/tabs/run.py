@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 
+from ..buildinfo import buildRecord
+
 
 def _fmtTime(seconds):
     seconds = max(0, int(seconds))
@@ -44,6 +46,12 @@ _paramKeys = [
 
 _runParamsFile = 'run_params.json'
 
+# Metadata key carrying the pipeline build/version provenance. Underscore-
+# prefixed and deliberately NOT in `_paramKeys`, so `_paramsMatch` ignores it
+# (a code-version bump records provenance without forcing a full reprocess on
+# resume — the warning at the resume site surfaces the drift instead).
+_versionStampKey = '_pipelineVersion'
+
 
 def _extractRunParams(state):
     return {k: state.get(k) for k in _paramKeys}
@@ -51,8 +59,9 @@ def _extractRunParams(state):
 
 def _saveRunParams(outdir, params):
     path = os.path.join(outdir, _runParamsFile)
+    payload = {**params, _versionStampKey: buildRecord()}
     with open(path, 'w') as f:
-        json.dump(params, f, indent=2)
+        json.dump(payload, f, indent=2)
 
 
 def _loadRunParams(outdir):
@@ -612,6 +621,17 @@ class ProcessingWorker(QObject):
                 resume = False
                 if _paramsMatch(saved, runParams):
                     resume = True
+                    # Surface pipeline-version drift: resuming over outputs that
+                    # a different code version produced mixes feature provenance.
+                    savedVer = (saved or {}).get(_versionStampKey) or {}
+                    curVer = buildRecord()
+                    if savedVer.get('gitCommit') != curVer.get('gitCommit') or \
+                            savedVer.get('version') != curVer.get('version'):
+                        self.log.emit(
+                            f'  WARNING: resuming over outputs from a different '
+                            f'pipeline version (existing: {savedVer.get("build", "unstamped")} '
+                            f'| current: {curVer.get("build")}). Features may mix '
+                            f'across versions; consider a clean reprocess.')
                 _saveRunParams(outdir, runParams)
 
                 wellItems = list(wells.items())
