@@ -55,6 +55,142 @@ Outstanding work is tracked in **`TODO.md`**.
 
 ---
 
+## Mechanisms — what each contributor is, what it computes, how it becomes a batch effect
+
+The *why* behind the inventory: for each contributor, what it is, what it is
+computing, and how an acquisition/version difference turns into a **feature**
+difference for *identical biology*. Issue numbers cross-reference the A/B/C inventory
+below; `(TODO)` items are detailed in the 2026-04-30 processing audit in `TODO.md`.
+
+### Rendering & texture
+
+**fpMean — adaptive vs fixed `fpHalf` (Issues 2/3).**
+- *What:* the processed image is `clip(img − localMean(img) + fpMean, 0, 1)`. The
+  `img − localMean` term is a high-pass residual that carries the biology (centered
+  near 0); `fpMean` is one additive constant setting the background gray level — it has
+  no biological meaning.
+- *Computing:* adaptive `fpMean = 0.5·(max+min)` of each well's own stack (drifts
+  well-to-well / batch-to-batch); fixed `fpHalf = 0.5` always (pinned).
+- *Effect:* the biology term is identical between the two; only the constant differs,
+  but features read the *rendered* image, so it leaks in three ways: (1) intensity-location
+  features (`mean`, `median`, percentiles) shift by ~fpMean; (2) it places the image in a
+  different uint8 band → different Haralick quantization; (3) the `clip` makes it
+  *nonlinear* — a low/high fpMean clips more of the residual at 0/1, an asymmetric per-well
+  distortion. NOTE: the historical old↔new gap is larger than adaptive-vs-fpHalf — the
+  *old atlas render added ~0 offset* (near-zero-centered, ~[−0.05, 0.21]); that
+  render-formula change is the dominant version drift.
+
+**GLCM gray-levels keyed to `max(img)` (`extractWholeImageFeats.py:62`).**
+- *What:* Haralick features summarize a Gray-Level Co-occurrence Matrix (how often value
+  *i* is adjacent to *j*). `mahotas.features.haralick(img)` is called with no `levels=`,
+  so mahotas sizes the GLCM to `0..max(img)`.
+- *Computing:* the GLCM dimension/resolution tracks the image's max gray value.
+- *Effect:* a render placing the image in a narrow low band (old atlas → uint8 max ≈ 53)
+  → small, coarse GLCM → texture features saturate with tiny variance — **the std ≈ 0.01
+  "ceiling compression" that let the StandardScaler amplify a modest delta into ~50σ**.
+  Same biology, different band → different texture. This is the feature-extraction-level
+  root of the render sensitivity.
+
+**`img_as_ubyte` (`extractWholeImageFeats.py:38`).**
+- *What:* fixed `[0,1]→[0,255]` map (×255, round) — not adaptive.
+- *Computing:* quantizes to 256 levels.
+- *Effect:* harmless alone, but it is the *conduit* — where fpMean/render places the image
+  in [0,1] decides where it lands in [0,255], and thus the GLCM.
+
+**No flat-field / photometric anchor (Issue 1).**
+- *What:* an absence — nothing corrects lamp/exposure/gain; the Beer-Lambert OD path
+  exists (`analysis_main.py:155-159`) but is never fed `Imin`/`Imax`.
+- *Computing:* raw values carry whatever the optics produced.
+- *Effect:* exposure/gain is **multiplicative** — a dimmer/brighter session scales every
+  pixel *and* the residual amplitude → intensity and texture drift. fpHalf (additive)
+  cannot fix it; only dividing by background or OD would.
+
+### Registration & preprocessing
+
+**Registration `BORDER_REFLECT` (TODO A).**
+- *What:* the empty edge created when a frame is shifted to align it is filled by mirroring
+  interior pixels instead of NaN; this also defeats `cropStack` (which only trims NaN
+  borders → no-ops).
+- *Computing:* fabricates biofilm-like content at the drifted edges.
+- *Effect:* fake texture/biomass enters mask/biomass/texture at edges, proportional to how
+  much each well drifted → drift-dependent batch effect.
+
+**`fftStride` + silently dropped shifts (TODO C/F).**
+- *What:* a real phase-correlation shift is computed only every `fftStride`-th frame
+  (default 6) and reused between; any shift > `shiftThresh` (50px) is discarded with no log.
+- *Computing:* 5/6 frames inherit a stale shift; large real drifts are ignored.
+- *Effect:* residual mis-registration smears edges (Haralick is edge/sharpness-sensitive)
+  and computes whole-image stats over a slightly shifting field of view.
+
+**`blockDiameter` + per-mag `magParams` overrides.**
+- *What:* the local-contrast kernel size; can be overridden per magnification.
+- *Computing:* sets the spatial scale of the high-pass `localMean`.
+- *Effect:* if defaults/overrides differ across versions or magnifications, the whole
+  normalization (hence render, threshold, texture) differs.
+
+### Segmentation & thresholds
+
+**Fixed mask threshold (Issue 5).**
+- *What:* `mask = normalized > fixedThresh` (0.04).
+- *Computing:* decides which pixels are biofilm.
+- *Effect:* the residual amplitude depends on contrast/illumination, so a fixed cut catches
+  a different boundary across batches → mask size → biomass, colony area/count, all geometry
+  shift.
+
+**Pixel-unit segmentation/tracking (`minColonyAreaPx=200`, `propRadiusPx=25`).**
+- *What:* drop colonies < 200 **px**, link within 25 **px** — decisions made in pixels,
+  before the µm conversion (`runTrackingGUI.py:29-30`, `segmentation.py:36`).
+- *Computing:* filters/links colonies by pixel size.
+- *Effect:* at different magnifications/pixel sizes, 200px = a different *physical* area →
+  a different set of colonies survives → colony count, density, and every aggregate shift.
+
+**Absolute biomass thresholds + growth filter (Issue 6).**
+- *What:* seed frame and well inclusion gated at biomass ≥ 0.005; biomass =
+  `mean((1−raw)·mask)`.
+- *Computing:* selects which frames are tracked and which wells enter the dataset.
+- *Effect:* biomass scale is render/threshold/exposure-dependent, so the absolute cut admits
+  a *different population* of wells/frames across batches — a **composition** batch effect
+  (which data exists), invisible in per-feature comparisons.
+
+**Dust correction frame-0 assumption (TODO D).**
+- *What:* a pixel masked at t=0 and ever off later is zeroed across all frames.
+- *Computing:* removes persistent specks present at the start.
+- *Effect:* misses dust arriving mid-run, and erases pre-existing biofilm if imaging starts
+  after formation — both depend on acquisition timing.
+
+### Metadata & environment
+
+**`pxToUm` (Issue 7).**
+- *What:* pixel→micron factor from TIFF metadata; geometry features × it.
+- *Computing:* scales `*_um` features.
+- *Effect:* if objective/scope/metadata differs, µm features shift proportionally while
+  pixel-space features don't (a telltale signature).
+
+**Library-version drift.**
+- *What:* mahotas / skimage / numpy / opencv / scipy versions at processing time (current:
+  mahotas 1.4.18, skimage 0.24.0, numpy 2.0.2, cv2 4.12.0, scipy 1.13.1).
+- *Computing:* the *same code* can compute slightly different haralick/regionprops/entropy
+  across library versions.
+- *Effect:* silent value drift across processing dates. The version stamp records the git
+  commit but **not** these — extend `buildRecord()` to capture key dependency versions.
+
+**Bit-depth scaling heuristic (Issue 4).**
+- *What:* float inputs scaled by an `amax>1.5` heuristic instead of declared bit depth.
+- *Computing:* infers 8/16-bit from the observed max.
+- *Effect:* a float stack whose true range is 16-bit but maxes ≤255 is over-scaled 256×.
+  Rare (the uint16 path guards it) but catastrophic when triggered.
+
+### Acquisition (raw data — not fixable downstream)
+
+**Sensor saturation / clipping (Issue 8).** Bright low-biomass wells rail at the sensor
+ceiling in early frames; clipped values are unrecoverable, and a flat-topped field starves
+the local-contrast residual.
+
+**Cadence / timelapse length + camera restart (Issue 9).** Different frame counts and a
+mid-run restart misalign frame-indexed (`_t<frame>`) features across campaigns.
+
+---
+
 ## A. Photometric & rendering drift
 
 ### Issue 1 — No cross-session photometric normalization (no flat-field) — **HIGH (umbrella)**
