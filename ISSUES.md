@@ -1,0 +1,602 @@
+# ISSUES.md — Cross-Session Batch Artifacts
+
+Audit of `src/` (image processing + feature extraction) for sources of **batch
+artifacts**: why data collected in a later session does not look like / does not
+align with data collected earlier, even for biologically equivalent samples.
+
+**Root theme:** the pipeline has **no cross-session photometric anchor**. There is
+no flat-field / illumination correction step. The Beer-Lambert OD path exists
+(`processing/analysis_main.py:155-159`) but the GUI never passes `Imin`/`Imax`, so
+processing always falls into the `1.0 - rawCropped` branch (`analysis_main.py:161`).
+Consequently every absolute-intensity quantity is free to drift with lamp age,
+exposure, gain, and focus between sessions. Layered on top of that, the *rendering
+provenance* feeding feature extraction is **inconsistent** (adaptive vs. fixed vs.
+raw fallback), which is the single most likely reason newer plates don't line up
+with older ones.
+
+Issues are grouped into **(A) photometric / rendering drift** (the dominant cause)
+and **(B) thresholds & metadata that silently retune per session**.
+
+Severity legend: **CRITICAL** (systematic, affects most intensity/texture features),
+**HIGH**, **MEDIUM** (conditional or structural), **LOW**.
+
+---
+
+## HEADLINE STATUS (2026-06-08) — read this first
+
+The investigation below ranged across many candidate causes (photometric anchor,
+saturation, thresholds). **The dominant, confirmed cause is narrower than the
+original "Root theme" above suggests:** it is **processing-version drift in the
+`_processed.tif` rendering** (Issues 2/3), i.e. different pipeline versions rendered
+the display stack differently, and intensity/texture features (esp. `whole_haralick_*`)
+read that rendering.
+
+**Proof (Phase 3, see below):** rendering the clean-deletion and reimaging batches
+from the same `registered_raw` through one fixed-fpMean (`fpHalf`) render + the same
+extraction collapses the WT↔WT haralick batch effect from **z ≈ 50 → z ≈ 2**. The
+old atlas render compressed `haralick_12` against a ceiling (std ~0.01), and the
+analysis-side StandardScaler amplified any cross-batch delta into ~50σ. This is
+**fixable processing-version drift, not irreducible acquisition optics** (which
+contradicts the earlier `biofilm-analysis/cleanDeletions_hand/ISSUES.md` conclusion).
+
+**Status:**
+- ✅ **Version stamping** implemented (`buildRecord` → `run_params.json` +
+  `experiment_config.json`; resume warns on version mismatch). Prevents *future*
+  untraceable drift.
+- ⬜ **The render-consistency fix** (make fixed `fpHalf` the single feature input,
+  retire adaptive `_processed.tif`, remove silent fallbacks) is **validated but not
+  yet implemented** — it changes feature values and invalidates the current atlas.
+- ⬜ **Reprocess** atlas + clean-del (+ training) through the pinned render — the step
+  that actually closes the effect.
+- ⏸️ **De-prioritized** (investigated, shown *not* dominant): photometric anchor
+  (Issue 1), saturation (Issue 8), relative thresholds (Issues 5/6).
+
+Outstanding work is tracked in **`TODO.md`**.
+
+---
+
+## A. Photometric & rendering drift
+
+### Issue 1 — No cross-session photometric normalization (no flat-field) — **HIGH (umbrella)**
+
+There is no flat-field or illumination-correction step anywhere in the pipeline.
+
+- `processing/analysis_main.py:155-161` — OD/Beer-Lambert branch requires `Imin`/`Imax`
+  reference images; the GUI run path never supplies them, so biomass is always
+  `np.nanmean((1.0 - rawCropped) * masks, axis=(0, 1))` — an **absolute** quantity.
+- The local-contrast normalization (`preprocessing.py:normalizeLocalContrast`,
+  `blurred − img`) is a high-pass: it removes slow illumination **gradients** but
+  **not** the overall brightness/exposure level.
+
+**Mechanism:** any change in lamp output, exposure, or gain between sessions flows
+straight into every absolute-intensity feature and into biomass. The high-pass
+protects *shape/texture geometry* but not *intensity level*.
+
+**Affected outputs:** biomass curve, all colony/background intensity features,
+whole-image intensity stats — i.e. most of `master_frame_features.csv` and
+`master_colony_features.csv`, hence the UMAP.
+
+**Detection:** plot `bgMeanIntensity` (a raw-illumination proxy) for
+biologically-equivalent control wells across the two eras. A clean level shift with
+unchanged spread ⇒ photometric drift.
+
+**Remediation direction:** add a per-session background-normalization anchor (e.g.
+normalize each frame's background mode/percentile to a fixed reference), or capture
+and apply `Imin`/`Imax` flat-field references so the OD path is used.
+
+---
+
+### Issue 2 — Adaptive `fpMean` bakes each stack's own dynamic range into `_processed.tif` — **CRITICAL**
+
+`processing/analysis_main.py:171`
+```python
+fpMean = 0.5 * (np.nanmax(rawCropped) + np.nanmin(rawCropped))
+```
+
+This midpoint is computed **per-well, per-session** from the stack's own min/max,
+then added into the saved `_processed.tif` and the overlay video
+(`analysis_main.py:172-186`). Two wells with identical biology but different
+illumination/dynamic range render at different gray levels.
+
+**Mechanism:** the additive offset has no biological meaning — it is purely a
+display-centering choice — but it enters every intensity-based feature computed off
+`_processed.tif`. `img_as_ubyte` (see Issue 3) then quantizes those shifted values,
+so Haralick graycomatrix bins shift too.
+
+**Affected outputs:** `_processed.tif`, `_overlay.mp4`, and any feature read from the
+adaptive rendering.
+
+**Mitigation present:** `_processed_fpHalf.tif` uses fixed `fpMean = 0.5`
+(`analysis_main.py:199-210`), eliminating the rendering-centering drift. But it is
+only written when `saveFpHalf=True`, and feature workers only use it when the file
+exists (see Issue 3).
+
+**Cross-references:** CLAUDE.md "fpMean policy (2026-05-23)";
+`JULIA_REFERENCE_COMPARISON.md` in microTyper-Vision.
+
+---
+
+### Issue 3 — Feature inputs read from *inconsistent* renderings depending on what is on disk — **CRITICAL (most likely "old vs new" smoking gun)**
+
+Feature workers pick their input file by existence check, not by a single guaranteed
+product:
+
+- Whole-image: `gui/tabs/run.py:238-239`
+  ```python
+  fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
+  inputPath = fpHalfPath if os.path.exists(fpHalfPath) else row['processed']  # adaptive fallback
+  ```
+- Colony / background intensity: `gui/tabs/run.py:278-279`
+  ```python
+  fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
+  intensityPath = fpHalfPath if os.path.exists(fpHalfPath) else rawPath  # _registered_raw.tif fallback
+  ```
+
+`saveFpHalf` only recently became default `True` in `gui/state.py:34`, **but several
+call sites still default it to `False` when the key is absent**: `run.py:138`,
+`run.py:1144`, `parameters.py:90`, `parameters.py:581`.
+
+**Mechanism / why old ≠ new:**
+- Plates processed *before* the fpHalf era have only adaptive `_processed.tif`.
+  Their whole-image features were computed on the **adaptive** rendering (Issue 2
+  drift); their colony features fell back to **`_registered_raw.tif`** (fully
+  uncorrected raw intensities).
+- Plates processed *with* fpHalf compute whole-image features on the **fixed-0.5**
+  rendering and colony features on **fpHalf**.
+
+So earlier and later plates are literally measured off **different image products**.
+That alone produces a systematic batch shift in every intensity, percentile,
+entropy, and Haralick feature — independent of biology.
+
+**Affected outputs:** all of `_wholeImageFeatures.csv`, `_perColonyFeatures.csv`,
+`_wellColonyFeatures.csv` → master CSVs → UMAP.
+
+**Detection (check this first):** for a sample of "earlier" vs "later" plates,
+confirm whether `_processed_fpHalf.tif` exists per well. Mixed presence across eras
+explains a systematic offset by itself.
+
+**Remediation direction:** require a single canonical feature input (fpHalf) and
+fail loudly if missing rather than silently falling back; regenerate fpHalf for
+legacy plates before comparing across eras.
+
+---
+
+### Issue 4 — `_toBitDepthScaled` infers bit depth from one stack's max for float inputs — **MEDIUM (conditional, catastrophic when triggered)**
+
+`processing/analysis_main.py:27-34`
+```python
+if np.issubdtype(arr.dtype, np.integer):
+    return arr.astype(np.float32) / float(np.iinfo(arr.dtype).max)   # safe
+arr = arr.astype(np.float32, copy=False)
+amax = float(arr.max()) if arr.size else 0.0
+if amax > 1.5:
+    bitDepthScale = 255.0 if amax <= 255.0 else 65535.0             # content-dependent
+    return arr / bitDepthScale
+return arr
+```
+
+Integer inputs are safe. But a **float** stack whose true range is 12/16-bit yet
+happens to max out ≤ 255 is divided by 255 instead of 65535 — a **256× scale error**
+that depends on the data's content, not its true bit depth.
+
+**Mechanism / why old ≠ new:** if any session exported float TIFFs (or a different
+bit depth) while others exported integers, the float sessions can land on a different
+photometric axis than the integer sessions.
+
+**Affected outputs:** everything downstream — biomass, OD, all intensity features.
+
+**Detection:** check the dtype (and value range) of the raw TIFFs across the two
+eras.
+
+**Remediation direction:** resolve bit depth from TIFF metadata rather than the
+observed max; reject/flag ambiguous float stacks.
+
+---
+
+## B. Thresholds & metadata that retune per session
+
+### Issue 5 — Fixed mask threshold applied to the normalized image — **HIGH (propagates everywhere)**
+
+`processing/analysis_main.py:143` → `processing/segmentation.py`:
+```python
+masks[:] = stack > float(fixedThresh)   # fixedThresh default 0.04
+```
+
+The normalized residual magnitude depends on contrast/illumination, so a fixed cut
+yields different masks across sessions.
+
+**Mechanism:** mask differences cascade into biomass, dust correction, colony
+seeding, and **every geometry feature**. The high-pass reduces but does not remove
+sensitivity to background/contrast level.
+
+**Affected outputs:** `_masks.npz`, biomass, all colony geometry, colony counts,
+tracking.
+
+**Remediation direction:** consider an adaptive/relative threshold (e.g. percentile
+of the normalized residual) or per-session calibration of `fixedThresh`.
+
+---
+
+### Issue 6 — Absolute biomass seed threshold gates which frames exist — **MEDIUM (structural, easy to miss)**
+
+`colony/runTrackingGUI.py` — `BIOMASS_THRESHOLD = 0.005`, applied in `findSeedFrame`
+to `biomass = nanmean((1 - rawCropped) * masks)` (`analysis_main.py:161`).
+
+**Mechanism:** because `1 - raw` is exposure-dependent (Issue 1), a dimmer or
+brighter session crosses 0.005 at a different frame → different `seedFrame` →
+different tracked-frame set. This does **not** shift a column value; it changes
+**which rows exist** in the output, which is invisible until you compare
+distributions or frame counts.
+
+**Affected outputs:** `trackedFrames`/`seedFrame` in the labels NPZ → which frames
+feed feature extraction.
+
+**Detection:** compare seed-frame index and tracked-frame counts for equivalent
+wells across eras.
+
+**Remediation direction:** derive the seed threshold from a normalized biomass or a
+per-session baseline rather than an absolute constant.
+
+---
+
+### Issue 7 — `pxToUm` scales ~14 µm features and varies by scope/objective/metadata — **MEDIUM (only if acquisition setup differs)**
+
+`colony/colonyFeatsMicrons.py` — `area_um2`, `perimeter_um`, major/minor axis
+lengths, `distanceToCenter_um`, `nnDistance*_um`, `mstEdge*_um` all multiply by
+`pxToUm` / `pxToUm²`. The value comes from per-plate TIFF metadata
+(`gui/tabs/run.py:290-308`, stored in `experiment_config.json`).
+
+**Mechanism / why old ≠ new:** the lab runs multiple Cytation5s where the same
+filename suffix can map to different objectives. If "earlier" and "later" data came
+off different microscopes — or metadata parsed/rounded differently — all µm-scaled
+geometry shifts proportionally while pixel-space features stay put. That divergence
+(µm features shift, pixel features don't) is itself a diagnostic signature.
+
+**Affected outputs:** all `*_um` / `*_um2` colony geometry and spatial features.
+
+**Detection:** confirm objective + `pxToUm` recorded in each plate's
+`experiment_config.json` / `index.csv` match across the two eras.
+
+**Remediation direction:** already partly handled (metadata-driven, fails loudly if
+missing); add a cross-plate consistency check / warning when `pxToUm` differs for the
+same nominal objective.
+
+---
+
+## C. Acquisition-level artifacts (raw data, not fixable downstream)
+
+### Issue 8 — Sensor saturation on low-biomass (bright) wells from insufficient exposure headroom — **CRITICAL (unrecoverable)**
+
+Discovered and characterized in Phase 2 (see results below). NOT a global
+over-exposure and NOT a save-format bug — both were investigated and ruled out:
+
+- Capture + display settings are **byte-for-byte identical** to 2024 training
+  (CameraGain=4, LEDIntensity=3, BrightnessLevel=50, ContrastLevel=33,
+  SaturationLevel=65504). So it is not "they cranked the exposure."
+- A quantization-gap test (mid-range integer histogram) shows the 2025 pixels are
+  **genuine sensor integers with no periodic comb** — there is no baked-in
+  multiplicative save-scaling. The unclipped 2025 well B5 has the same
+  integer-population structure as training.
+
+**Actual mechanism:** the 2025 exposure lacks **headroom for the brightest wells**.
+A bright, high-transmission well (low biomass) exceeds the sensor full well and rails
+at the SaturationLevel (65504): in the 250513 Drawer5 plate, ~86% of such a well's
+pixels sit in the top 5 counts (65500–65504). Wells with enough biomass to absorb
+light stay below the ceiling and never clip. Once the bright field rails, the
+transmission above the clip is flattened and **lost** — no anchor or normalization
+recovers it; a flat-topped field also starves the local-contrast residual
+(`raw − boxMean ≈ 0`) → weak masks on those frames.
+
+**Spatial + temporal structure (it is biology-correlated, not random):** clipping
+tracks **low biomass**. In Drawer5, columns 1–3 (growth-defect mutants — little
+biofilm, bright wells) clip at frame 0; columns 4–6 (normal growers) do not — a clean
+left/right split across all rows. It clears within ~4–8 frames as even the defect
+wells accumulate a trace of material and drop a few counts below the ceiling.
+
+**Why this is the opposite of a harmless-blank artifact:** the wells it corrupts are
+the **growth-defect phenotype** — the biologically interesting low-biomass class — in
+exactly their early frames, where a low-biomass mutant most resembles a bright empty
+well. In 2024 (with headroom) the same phenotype recorded true intensities (~48000);
+in 2025 it rails at 65504. So low-biomass-well intensity/whole-image features differ
+between campaigns **purely from clipping** — a phenotype-specific old↔new artifact.
+
+**Masked in QC:** invisible in the overlay/processed videos, because the display
+normalization re-centers any flat-bright field to mid-gray. "Video looks fine" and
+"raw is railed" are both true.
+
+**Interaction with the anchor:** the chosen photometric anchor estimates background
+from *early frames* — exactly where low-biomass wells are clipped. The anchor must
+estimate from the earliest **unclipped** frame per well and refuse (flag, exclude)
+when none exists.
+
+**Affected outputs:** early-frame intensity / whole-image / background features of
+low-biomass wells; masks/biomass on clipped frames. Caveat: characterized on **one**
+reimaging plate (250513 Drawer5, 18 wells at 10x); raw data for other reimaging plates
+is not on the mounts (only overlays). Generality needs confirmation.
+
+**Remediation direction:** (1) detect clipped well-frames at ingest (fraction of
+pixels ≥ SaturationLevel above a threshold) and mark their intensity features
+invalid / exclude from cross-campaign comparison; (2) root fix is upstream —
+acquisition with enough headroom (lower LED/gain/integration) that the brightest
+low-biomass wells stay off the ceiling.
+
+### Issue 9 — Timelapse length / cadence mismatch across campaigns — **MEDIUM (breaks frame-indexed features)**
+
+2025 reimaging has **17 frames**; 2024 training has **31**. The wide-table pivot for
+UMAP (`analysis/wide_table.py`) keys features as `<feature>_t<frame>`. Different
+lengths/cadence misalign those columns across campaigns independent of photometry: the
+same wall-clock biology lands in different `t<frame>` bins, or columns simply don't
+exist for one campaign.
+
+**Affected outputs:** the collapsed wide table and every UMAP/model built on
+frame-indexed features that mixes campaigns.
+
+**Remediation direction:** align on real time (acquisition interval from metadata)
+rather than frame index, or resample to a common time grid, before pivoting.
+
+## Corrections to common assumptions
+
+- **`img_as_ubyte` is NOT an adaptive per-image stretch.** In
+  `wholeImage/extractWholeImageFeats.py:38`, for a float [0,1] image it is a *fixed*
+  `round(img * 255)`. So the uint8 cast and Haralick quantization are **stable as
+  long as the input rendering is stable**. The whole-image batch fragility is
+  entirely upstream (Issues 2 + 3), not the cast. Fixing input provenance fixes
+  Haralick for free.
+- **`fractalDimension` (`extractWholeImageFeats.py:13`) is defined but not called**
+  by `extractFrameFeats`, so its hard-coded `0.9 * z.max()` threshold is not an
+  active artifact in the GUI pipeline (but would be if that path were re-enabled).
+
+---
+
+## Diagnostic checklist (where to look first)
+
+1. **Inventory file products.** For "earlier" vs "later" plates, check whether
+   `_processed_fpHalf.tif` exists per well. Mixed presence ⇒ Issue 3 alone explains a
+   systematic offset.
+2. **Plot a session-invariant control.** Overlay distributions of `bgMeanIntensity`
+   and `whole_meanIntensity` for believed-equivalent wells. Level shift, unchanged
+   spread ⇒ photometric drift (Issues 1–3). Change in *which frames appear* ⇒
+   Issue 6.
+3. **Confirm scope/objective + `pxToUm`** match across eras (Issue 7).
+4. **Check raw TIFF dtype/range** across eras for the Issue 4 trap.
+
+## Priority ordering
+
+1. Issue 3 (inconsistent rendering provenance) — most likely direct cause of old ≠ new.
+2. Issue 2 (adaptive fpMean) — the drift Issue 3 exposes.
+3. Issue 1 (no flat-field) — underlying reason fpHalf alone is insufficient.
+4. Issue 5 (fixed mask threshold) — broad geometry propagation.
+5. Issue 4 (bit-depth heuristic) — rare but catastrophic.
+6. Issue 6 (absolute seed threshold) — structural, hard to spot.
+7. Issue 7 (pxToUm) — only if acquisition setup differs across eras.
+
+---
+
+# Remediation Plan
+
+## Decisions on record
+
+Three strategic questions drove the plan (answered 2026-06-05):
+
+1. **Raw TIFF data for earlier plates is fully available** → we can recompute every
+   plate to one consistent standard rather than only correcting frozen outputs.
+2. **Blank-field / empty-well references are not reliably available** → the
+   photometric anchor must be **in-silico** (Option B), not flat-field/Beer-Lambert
+   OD (Option A). The disabled `Imin`/`Imax` path stays disabled.
+3. **Downstream models / UMAPs trained on the old features must keep working** →
+   we **version, not mutate**. The current feature set is frozen as **v1**; the
+   anchored recipe becomes **v2**.
+
+## Strategy: version, don't mutate (v1 frozen, v2 anchored)
+
+- **v1** = the existing feature set and CSVs. Left untouched and reproducible so
+  current models/UMAPs keep running.
+- **v2** = the anchored recipe below, computed for **every** plate (old and new —
+  raw data exists for all). Because v2 reprocesses all eras through one recipe +
+  one photometric anchor, old and new finally land in the same space. That is where
+  the "old vs new" mismatch is actually resolved.
+- Downstream consumers migrate v1 → v2 on their own schedule. v2 outputs go to a
+  new schema version / new paths; nothing overwrites v1 in place.
+
+## The v2 recipe
+
+| # | Change | Issues addressed | Risk |
+|---|---|---|---|
+| 1 | fpHalf-only feature input; remove silent fallbacks at `run.py:239` (whole-image) and `run.py:279` (colony); error loudly if `_processed_fpHalf.tif` is missing | 2, 3 | Low |
+| 2 | Unify `saveFpHalf` default to `True` across `run.py:138`, `run.py:1144`, `parameters.py:90`, `parameters.py:581` (single source of truth) | 2, 3 | Low |
+| 3 | Resolve bit depth from TIFF `BitsPerSample` metadata; assert instead of guessing from `amax > 1.5` (`analysis_main.py:30-33`) | 4 | Low |
+| 4 | **In-silico photometric anchor** — new normalization stage in `analysis_main.py` (design below) | 1, 2-residual | **Needs validation** |
+| 5 | Keep `fixedThresh` / `BIOMASS_THRESHOLD` fixed initially, now applied to anchored input; revisit only with validation | 5, 6 | Deferred |
+| 6 | Warn when same nominal objective yields different `pxToUm` across plates in a run | 7 | Low |
+
+Adaptive `_processed.tif` survives **only** as the legacy overlay rendering, never
+as a feature source.
+
+## Why fpHalf alone is not enough (motivates change #4)
+
+The display rendering is `clip(raw − boxMean(raw) + fpMean)`. The subtraction removes
+an **additive** offset; fixing `fpMean = 0.5` nails the background gray level. But
+exposure / gain / lamp drift is **multiplicative**: if exposure doubles, `raw` and
+`boxMean` both double, so the residual `raw − boxMean` doubles too. fpHalf therefore
+stabilizes rendering-centering (and Haralick bins) but leaves intensity-feature
+amplitude riding on session gain. The photometric anchor (#4) is what removes that.
+
+## In-silico photometric anchor — design
+
+**Principle:** multiplicative gain cancels under division. Divide each frame by its
+**background (empty-agar) level** `B`; background-relative transmission is a
+blank-free Beer-Lambert with the in-frame agar acting as the blank. This unifies with
+biomass: `1 − raw/B` becomes an absorbance anchored to agar — exactly what the
+disabled `Imin`/`Imax` OD path computed.
+
+**CRITICAL pitfall (must not violate):** estimate `B` from **background pixels only**
+(bright agar mode / upper percentile) — **never** the global frame mean. As a biofilm
+grows it darkens the field and the global mean drops; that drop *is the biomass signal
+we measure*. Normalizing by global mean would regress out the signal. Agar brightness
+stays ~constant (only colony pixels darken), so a mode / high-percentile estimate is
+stable across the timelapse and safe.
+
+**Open design choices to validate before committing code:**
+- **Scope of `B`:** per-session vs per-well vs per-frame. Drift is mostly per-session;
+  per-well also catches vignetting; per-frame risks instability once the field
+  confluences and background pixels grow scarce. Leaning: estimate from early frames
+  (frame 0 mostly empty), apply per-well — pending stability measurement.
+- **Estimator:** histogram mode vs fixed high percentile (e.g. p90). Mode is more
+  principled; percentile more robust at small N.
+
+## Phased sequencing
+
+> **Phase 2 runs first** — pressure-test the anchor on Drawer 7 before any code is
+> committed (per decision 2026-06-05).
+
+- **Phase 2 — anchor pressure-test (NEXT, no code commits):** prototype the background
+  estimator on the Drawer 7 plate (B2 stall case, frames ~18, 10x/20x). Measure:
+  (a) background-mode/percentile stability across the full timelapse, including
+  confluent late frames; (b) old↔new control-well alignment under candidate
+  estimators; (c) per-session vs per-well vs per-frame behavior. Decide estimator +
+  scope from evidence.
+- **Phase 1 — recipe fixes (low-risk, can land once anchor design is settled):**
+  v2 recipe changes #1, #2, #3, #6 + the legacy `_processed_fpHalf.tif` backfill
+  script (regenerate from `_registered_raw.tif`, no re-registration). Removes the
+  recipe mismatch independent of the anchor.
+- **Phase 3 — reprocess + validate:** compute v2 for all plates; verify shared
+  controls overlay across eras; v1 left frozen.
+- **Phase 4 — thresholds (only if needed):** relative `fixedThresh` (Otsu /
+  percentile / k·MAD-above-background) and relative seed detection
+  (fraction-of-plateau / first-derivative), gated on Phase 3 residuals and validated
+  against the Drawer 7 stall cases.
+
+## Validation assets
+
+- **Drawer 7 plate:** `/mnt/bridgeslab/Good imaging data/Multi-phenotype training/
+  241011_183053_...Drawer7` — B2 frame 18 at 10x and 20x is a known stall case.
+- **Shared control wells** imaged across the two eras: the primary old↔new alignment
+  check (distributions of `bgMeanIntensity`, `whole_meanIntensity` should overlay
+  after anchoring).
+
+## Phase 2 results — anchor pressure-test (2026-06-07)
+
+Probe: `phase2_anchor/anchor_probe.py` on Drawer 7 wells **B5, B9** at 10x (`_03`)
+and 20x (`_04`), comparing sessions **241011 (Oct-11)** and **241017 (Oct-17)** —
+the same drawer imaged 6 days apart. Per-frame background-level estimators (histogram
+mode, p90/95/99, mean) measured on the bit-depth-scaled raw stacks.
+
+**Finding 1 — per-frame anchoring fails (confirms the pitfall).** Frames 0–6 are
+flat; from frame ~7 every estimator — including the mode — slides down as the biofilm
+confluences (B9 10x mode 0.78 → 0.64). Background pixel fraction collapses 0.37 →
+0.10. A per-frame divisor would regress out biomass signal. **Rejected.**
+
+**Finding 2 — early-frame per-well scalar anchor is stable and safe.** Frames 0–4 are
+flat to <0.5% within a session and agree across sessions. A single per-well constant
+only rescales the stack, so it cannot remove temporal/spatial biology by
+construction. **This is the chosen anchor.** Estimator = histogram mode (p95 gives
+the same answer to ~0.1%; either is acceptable). Background reference ≈ 0.78 in
+[0,1], consistent across wells and magnifications.
+
+**Finding 3 — true illumination drift on this pair is ~1%.** Measured on empty-agar
+early frames (frames 0–4, biology-independent), Oct-11 → Oct-17 background drift is
+−0.5% to −1.1% across all wells/mags/estimators (frame-0-only: −0.4% to −1.1%). The
+larger apparent drift seen when averaging over all frames was biology (Oct-17 is
+6-days-older, denser biofilm), not illumination.
+
+**Implication.** This session pair barely stresses the anchor — the multiplicative
+drift it removes is ~1% here. So (a) the anchor *design* is validated but its
+*impact* is not yet demonstrated on this pair; we need a higher-drift pair (different
+microscope, months apart, or across a lamp change) to prove it removes meaningful
+drift. (b) For closely-spaced sessions on a stable scope, the "old vs new" mismatch
+is likely dominated by the recipe/provenance (Issues 2, 3) and threshold (Issues 5,
+6) artifacts rather than photometric gain — which would raise the priority of
+Phase 1 relative to the anchor. Pending confirmation on a known-divergent pair.
+
+### Phase 2 part 2 — cross-campaign (2024 training vs 2025 reimaging) (2026-06-07)
+
+Probe: `phase2_anchor/cross_campaign_probe.py`. Added the 2025 reimaging campaign
+(250513 Drawer5, May-2025, single-10x BF_YL protocol) — the only reimaging plate with
+raw TIFFs on the mounts; all others under `vcReimaging/` are overlays-only. Same
+dtype/objective/pxToUm as training (Issue 4 not triggered). Early-frame background
+mode per well at 10x:
+
+| session | bg mode | within-session spread |
+|---|---|---|
+| 2024 train Oct-11 | 0.785 | 0.037 |
+| 2024 train Oct-17 | 0.777 | 0.025 |
+| 2025 reimg May-13 | 0.954 | **0.274** |
+
+Nominal drift 2024→2025 ≈ **+21.5%**, but the huge spread exposed the real cause:
+**saturation**, not smooth gain. 5/6 of the 2025 wells have 94–99% of pixels pinned
+at the sensor ceiling in early frames; the background mode rails at ~1.0. See
+**Issue 8**. Saturation self-corrects over the timelapse (B2: 99%→14%→0%). The 2025
+plate also has only 17 frames vs 31 (see **Issue 9**).
+
+**Revised Phase 2 verdict:**
+- The early-frame per-well background anchor is **sound for well-exposed data**
+  (training; within-2024 drift ~1%) but **fails on saturated sessions** because the
+  anchor frames are clipped. It must estimate from the earliest *unsaturated* frame
+  and refuse when none exists.
+- The dominant 2024↔2025 intensity mismatch is **sensor saturation on low-biomass
+  (bright) wells from insufficient exposure headroom (Issue 8)** — NOT a settings
+  crank and NOT a save bug (both ruled out: identical capture/display metadata; no
+  quantization comb). Genuine, unrecoverable clipping; re-ranks above the anchor for
+  the training-vs-reimaging case. Clipping is biology-correlated (tracks low biomass:
+  growth-defect mutants in cols 1–3 clip; normal growers in cols 4–6 do not) and
+  time-limited (clears in ~4–8 frames).
+- Confidence caveat: one reimaging plate / 18 wells at 10x. Confirm generality once
+  more reimaging raw data is locatable.
+
+### Phase 3 — root cause confirmed: rendering version drift (2026-06-08)
+
+Pivoted from the photometric/saturation hypotheses (which the data did not support
+as dominant) to the user's pipeline-version-drift hypothesis, using
+`biofilm-analysis` as the source of old-processing reference features
+(`reimagingIndex.csv` → `registered_raw` paths + `_wholeImage_mahotas_v2.csv`).
+
+**Test A — extraction code is unchanged.** Running *current* `extractWholeImageFeats`
+on the *stored* atlas `_processed.tif` reproduces the stored haralick **exactly**
+(`max|Δ| = 0.00000`). The feature-extraction code did not drift.
+
+**Test B — the render drifted catastrophically.** The stored atlas `_processed.tif`
+is a **near-zero-centered** local-contrast residual (range ~[−0.02, 0.09]); the
+*current* pipeline renders a **0.5-centered, fpMean-offset, clipped** display
+(~[0.45, 0.68]). Re-rendering the same `registered_raw` through the current pipeline
+moves `haralick_0` 0.73→0.003 and `haralick_12` 0.82→0.03 — a 100× shift. Haralick
+runs `img_as_ubyte` on `_processed.tif`, so the two renders quantize into entirely
+different graycomatrix regimes.
+
+**Reprocess-consistency test — the fix works.** Rendering BOTH the clean-deletion
+and reimaging batches from `registered_raw` through one **fixed-fpMean (`fpHalf`)**
+render + same extraction, the WT↔WT haralick batch effect collapses:
+
+| feature | reim-WT | cleanDel-WT | z (reim SD) | stored z |
+|---|---|---|---|---|
+| haralick_0 | 0.011 | 0.011 | **−0.05** | — |
+| haralick_2 | 0.289 | 0.670 | **2.56** | — |
+| haralick_12 | 0.345 | 0.716 | **2.28** | **≈ −50** |
+
+`z ≈ 50 → ≈ 2`. Two effects: the raw gap shrank (0.51→0.37) **and** the reim-WT
+`haralick_12` std went 0.01→0.16 — i.e. the old render had compressed haralick
+against a ceiling, manufacturing the tiny std that let the scaler amplify a modest
+delta into 50σ. Script: `phase2_anchor/reprocess_consistency_test.py`.
+
+Caveats: n=5 wells/batch, one clean-del plate, frames matched by index not real time
+(camera restart adds ~1h offset); the residual ~2σ is approximate (true optics /
+timing / small-n). The 50σ→2σ collapse is the robust result.
+
+**Conclusion.** The dominant clean-del↔atlas batch effect is **fixable
+processing-version drift in the render**, not acquisition optics. Fix = one pinned
+render (`fpHalf`) + reprocess; version stamp prevents recurrence.
+
+### Phase 4 — planned: validate fpHalf on training raw, then retire adaptive fpMean
+
+Before flipping the pipeline to fpHalf-only, validate the fixed render on the raw
+**training** data at `/mnt/bridgeslab/Good imaging data/Multi-phenotype training/`:
+
+1. Generate `fpHalf` `_processed.tif` renderings from the raw training stacks and
+   **visually QC** them — confirm the processed images look normal/good (not washed
+   out, biology clearly visible) across magnifications.
+2. Extract whole-image (+ colony) features under **fpHalf vs adaptive fpMean** on the
+   same wells and **compare** — quantify how much each feature shifts, confirm fpHalf
+   is well-behaved (no degenerate ceiling compression like the old atlas render) and
+   that biological signal is preserved.
+3. If both look good, **retire adaptive fpMean**: make `fpHalf` the sole `_processed.tif`
+   rendering and feature input, regenerate overlays from it, drop the `_fpHalf` suffix.
+   (This is the migration already foreshadowed in CLAUDE.md "fpMean policy".)
