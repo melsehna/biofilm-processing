@@ -370,7 +370,7 @@ class TestWellTab(QWidget):
                         outdir=tmpdir,
                         filename=wellId,
                         imageRecords=None,
-                        fftStride=s.get('fftStride', 6),
+                        fftStride=s.get('fftStride', 1),
                         downsample=s.get('downsample', 4),
                         skipOverlay=True,
                         workers=1,

@@ -27,10 +27,17 @@ def _apply_shift(image, shift):
         [0.0, 1.0, dy]
     ], dtype=np.float64)
 
+    # BORDER_CONSTANT with NaN — NOT BORDER_REFLECT. The strip vacated by the
+    # shift must be marked invalid, not filled with mirrored interior pixels:
+    # reflection fabricates biofilm-like texture at the edge AND defeats
+    # cropStack (which trims NaN borders and otherwise no-ops). The stack is
+    # float here, so NaN is representable; cropStack then trims the region
+    # invalid in any frame.
     return cv2.warpAffine(
         image, M, (w, h),
         flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_REFLECT
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=float('nan'),
     )
 
 
@@ -79,7 +86,7 @@ def registerStackNormblur(
     normBlurStack,
     rawStack,
     shiftThresh,
-    fftStride=3,
+    fftStride=1,
     downsample=2,
     workers=4,
 ):

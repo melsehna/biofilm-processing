@@ -141,7 +141,7 @@ class ParametersTab(QWidget):
 
         self.fftStride = QSpinBox()
         self.fftStride.setRange(1, 30)
-        self.fftStride.setValue(self.state.get('fftStride', 6))
+        self.fftStride.setValue(self.state.get('fftStride', 1))
         self.fftStride.setToolTip(
             'Keyframe spacing for phase-correlation registration. 1 = register '
             'every frame (most accurate, slowest). Higher values speed up '
@@ -583,7 +583,7 @@ class ParametersTab(QWidget):
         self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
         self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
-        self.fftStride.setValue(self.state.get('fftStride', 6))
+        self.fftStride.setValue(self.state.get('fftStride', 1))
         self.downsample.setValue(self.state.get('downsample', 4))
         self.shiftThresh.setValue(self.state.get('shiftThresh', 50))
         self.minColonyArea.setValue(self.state.get('minColonyAreaPx', 200))

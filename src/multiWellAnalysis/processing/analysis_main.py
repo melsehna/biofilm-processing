@@ -70,7 +70,7 @@ def timelapseProcessing(
     imageRecords,
     Imin: Optional[np.ndarray] = None,
     Imax: Optional[np.ndarray] = None,
-    fftStride=3,
+    fftStride=1,
     downsample=2,
     skipOverlay=False,
     saveProcessedVideo=False,
