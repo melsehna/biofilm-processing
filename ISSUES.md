@@ -747,3 +747,34 @@ Before flipping the pipeline to fpHalf-only, validate the fixed render on the ra
    Going from raw also exercises any **registration/preprocessing** version drift, not
    just the render (Phase 3 held registration constant by starting from `registered_raw`).
    Success = matched biology overlaps in feature distributions / UMAP across batches.
+
+### Phase 4 P0 results — fpHalf validated on training raw (2026-06-13)
+
+`phase2_anchor/training_fpHalf_validate.py` on 5 training wells (241011 Drawer7, 10x),
+rendering each from raw through BOTH adaptive and fixed fpHalf.
+
+- **QC: fpHalf renders look normal** (montage `phase2_anchor/training_fpHalf_qc/`) —
+  visually indistinguishable from adaptive, biology clearly visible in mature frames,
+  no washout / over-clipping.
+- **`haralick_0/2/12` + `entropy` identical** adaptive vs fpHalf (mean|Δ|=0.0000, same
+  cross-well spread) — they measure *relative* structure, invariant to the additive
+  fpMean offset when neither render clips.
+- **`meanIntensity` drifts with adaptive** (cross-well SD 5.25, tracking each well's
+  fpMean 0.564–0.618) and is **pinned by fpHalf** (SD 0.0001; every well at 127.5 =
+  0.5×255). fpHalf removes exactly this intensity-location drift.
+
+**Refined mechanism (updates the headline).** The historical 50σ haralick batch effect
+was NOT adaptive-vs-fixed fpMean — it was the OLD render **clipping** (fpMean ≈ 0 →
+negative residuals clipped to 0 → compressed GLCM). Both *modern* renders center the
+residual mid-range, never clip, and are texture-equivalent. Therefore:
+- The texture-batch fix is **reprocessing old data onto the modern non-clipping
+  render** (the atlas used the old clipping render) — a *consistency* fix satisfied by
+  either modern render.
+- fpHalf's *additional* benefit is pinning the intensity-LOCATION features
+  (`meanIntensity`, percentiles, `bg*`) that adaptive lets drift well-to-well.
+
+**Verdict: GO** — fpHalf is safe (identical texture, normal renders) and strictly
+better for intensity consistency. Proceed to retire adaptive + reprocess. Caveat: these
+5 wells did not trigger clipping under either render, so the edge case where adaptive
+mis-centers and clips (and fpHalf would not) is not exercised — but that only
+strengthens the case for fpHalf.
