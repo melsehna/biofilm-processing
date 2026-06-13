@@ -86,14 +86,14 @@ class ParametersTab(QWidget):
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
         analysisForm.addRow(self.saveProcessedVideo)
 
-        self.saveFpHalf = QCheckBox('Also save fixed-fpMean=0.5 outputs (_fpHalf.tif/.mp4)')
-        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', False))
+        self.saveFpHalf = QCheckBox('Save fixed-fpMean=0.5 render (_fpHalf) — required for features')
+        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', True))
         self.saveFpHalf.setToolTip(
-            'When checked, every processed .tif (and .mp4 if those are enabled) '
-            'is also written with fixed fpMean=0.5 alongside the adaptive '
-            'rendering, suffixed _fpHalf. Lets you compare cross-batch '
-            'consistency. See ISSUES.md / JULIA_REFERENCE_COMPARISON.md '
-            'in microTyper-Vision for motivation.'
+            'Writes the fixed fpMean=0.5 rendering (_fpHalf.tif). This is now the '
+            'REQUIRED input for whole-image and colony intensity/Haralick features: '
+            'the adaptive _processed.tif render drifts batch-to-batch and is retired '
+            'as a feature input. Leave checked — unchecking it makes feature '
+            'extraction error. See ISSUES.md "fpMean policy".'
         )
         analysisForm.addRow(self.saveFpHalf)
 
@@ -578,7 +578,7 @@ class ParametersTab(QWidget):
         self.saveProcessed.setChecked(self.state.get('saveProcessed', True))
         self.saveMasks.setChecked(self.state.get('saveMasks', True))
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
-        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', False))
+        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', True))
         self.nasMirrorEnabled.setChecked(self.state.get('nasMirrorEnabled', False))
         self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))

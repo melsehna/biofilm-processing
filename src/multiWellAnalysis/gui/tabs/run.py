@@ -144,7 +144,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             downsample=params.get('downsample', 4),
             skipOverlay=not params.get('saveOverlays', True),
             saveProcessedVideo=params.get('saveProcessedVideo', False),
-            saveFpHalf=params.get('saveFpHalf', False),
+            saveFpHalf=params.get('saveFpHalf', True),
             workers=1,
         )
         del stack
@@ -231,10 +231,13 @@ def _trackOneWell(plateName, row, trackingParams=None):
 def _wholeImageOneWell(plateName, row):
     """Run whole-image feature extraction on a single well.
 
-    Prefers the fixed-fpMean rendering (`_processed_fpHalf.tif`) when present
-    on disk, because intensity-based features (incl. Haralick) are sensitive
-    to the additive fpMean offset under the adaptive rendering — see
-    CLAUDE.md "fpMean policy" for the rationale.
+    REQUIRES the fixed-fpMean rendering (`_processed_fpHalf.tif`). Intensity and
+    Haralick features are computed on the display image, and the adaptive
+    `_processed.tif` render drifts batch-to-batch (different fpMean offset, and
+    it clips differently), corrupting cross-batch feature comparisons. The
+    adaptive render is therefore retired as a feature input — error loudly
+    rather than silently mixing renders across batches. See CLAUDE.md "fpMean
+    policy" and ISSUES.md.
     """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -245,7 +248,13 @@ def _wholeImageOneWell(plateName, row):
         from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
         outdir = os.path.dirname(row['processed'])
         fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
-        inputPath = fpHalfPath if os.path.exists(fpHalfPath) else row['processed']
+        if not os.path.exists(fpHalfPath):
+            return {'well': wellId, 'status': 'error',
+                    'error': f'missing fixed-fpMean render {wellId}_processed_fpHalf.tif'
+                             ' — whole-image features require it (adaptive '
+                             '_processed.tif retired as a feature input). Reprocess '
+                             'this well with saveFpHalf=True.'}
+        inputPath = fpHalfPath
         t0 = time.perf_counter()
         status = extractWholeImageFeatures(
             inputPath, plateName, wellId, outdir
@@ -266,12 +275,12 @@ def _wholeImageOneWell(plateName, row):
 def _colonyFeatsOneWell(plateName, row):
     """Run colony feature extraction on a single well.
 
-    Reads intensity from the fixed-fpMean processed rendering
-    (`_processed_fpHalf.tif`) when present on disk, falling back to
-    `_registered_raw.tif` only if the fpHalf rendering is missing. Using
-    the processed stack means intensity-based and Haralick features speak
-    the same "language" as whole-image features and are cross-batch
-    comparable without an Imin flat-field. See CLAUDE.md "fpMean policy".
+    REQUIRES the fixed-fpMean processed rendering (`_processed_fpHalf.tif`) for
+    intensity. The `_registered_raw.tif` fallback is retired: raw-stack
+    intensities are uncorrected and drift batch-to-batch, so mixing raw-read
+    wells with fpHalf-rendered wells corrupts cross-batch comparisons. Error
+    loudly if the fixed render is missing. See CLAUDE.md "fpMean policy" and
+    ISSUES.md.
     """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -285,7 +294,13 @@ def _colonyFeatsOneWell(plateName, row):
         rawPath = row['registered_raw']
         outdir = os.path.dirname(rawPath)
         fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
-        intensityPath = fpHalfPath if os.path.exists(fpHalfPath) else rawPath
+        if not os.path.exists(fpHalfPath):
+            return {'well': wellId, 'status': 'error',
+                    'error': f'missing fixed-fpMean render {wellId}_processed_fpHalf.tif'
+                             ' — colony intensity features require it (registered-raw '
+                             'fallback retired). Reprocess this well with '
+                             'saveFpHalf=True.'}
+        intensityPath = fpHalfPath
 
         data = np.load(labelsPath)
         rawStack = tifffile.imread(intensityPath)
@@ -1161,7 +1176,7 @@ class ProcessingWorker(QObject):
             'downsample': state.get('downsample', 4),
             'saveOverlays': state.get('saveOverlays', True),
             'saveProcessedVideo': state.get('saveProcessedVideo', False),
-            'saveFpHalf': state.get('saveFpHalf', False),
+            'saveFpHalf': state.get('saveFpHalf', True),
         }
         magParams = state.get('magParams', {})
         if mag and mag in magParams:
