@@ -92,7 +92,7 @@ The pipeline keeps **three** versions of each well's stack, used for different p
 |---|---|---|
 | **`_registered_raw.tif`** (signal) | phase-corrected, bit-depth-scaled raw, float32 `[0,1]` | **biomass** = `mean((1−raw)·mask)`; the source for both render renderings; (geometry comes from masks/labels, not this) |
 | **`_processed_fpHalf.tif`** (fixed render) | `clip(raw − localMean + 0.5, 0, 1)` — fixed background gray | **THE feature input**: whole-image (Haralick, intensity, entropy) **and** colony intensity features. **Required** — workers error if missing. |
-| **`_processed.tif`** (adaptive render) | same but `fpMean = 0.5·(max+min)` per stack | **display/overlay ONLY** — retired as a feature input (its per-stack offset drifts batch-to-batch). Overlay MP4 is built from it. |
+| **`_processed.tif`** (adaptive render) | same but `fpMean = 0.5·(max+min)` per stack | **display ONLY** — retired as a feature input (its per-stack offset drifts batch-to-batch). The primary `_overlay.mp4` is still built from it (an `_overlay_fpHalf.mp4` is also written from the fixed render; full migration to fpHalf-only overlay is pending — see ISSUES.md). |
 | **`_masks.npz`** | binary segmentation | biomass; seed/footprint for colony tracking |
 | **`_trackedLabels…npz`** | per-colony integer labels over time | colony geometry/intensity/spatial features |
 
