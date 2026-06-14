@@ -271,7 +271,7 @@ masks, biomass, odMean = timelapseProcessing(
     outdir='path/to/output',
     filename='A1',
     imageRecords=None,
-    fftStride=6,
+    fftStride=1,            # register every frame (frame-to-frame); default since v0.5.0
     downsample=4,
     label='mutantName  plateName-A1',
 )
