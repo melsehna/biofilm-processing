@@ -74,7 +74,7 @@ def timelapseProcessing(
     downsample=2,
     skipOverlay=False,
     saveProcessedVideo=False,
-    saveFpHalf=False,
+    saveFpHalf=True,
     label=None,
     workers=4,
     progressFn=None,
