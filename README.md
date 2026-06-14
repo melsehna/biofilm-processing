@@ -1,8 +1,8 @@
-# Phenotypr
+# biofilm-processing
 
 **Biofilm phenotyping from brightfield timelapse microscopy of 96-well plates.**
 
-Phenotypr takes the per-well image stacks produced by a Cytation5 microscope and turns them into clean biomass curves, mask overlay videos, tracked colony labels, and per-colony / whole-image feature tables — all driven from a desktop GUI.
+biofilm-processing takes the per-well image stacks produced by a Cytation5 microscope and turns them into clean biomass curves, mask overlay videos, tracked colony labels, and per-colony / whole-image feature tables — all driven from a desktop GUI.
 
 > **New here? Skip straight to [Quick start](#quick-start).** Installation takes ~10 minutes and you don't need any prior Python or command-line experience.
 
@@ -12,12 +12,12 @@ Phenotypr takes the per-well image stacks produced by a Cytation5 microscope and
 
 - [Quick start](#quick-start)
   - [1. Install Miniconda (one-time)](#1-install-miniconda-one-time)
-  - [2. Download Phenotypr](#2-download-phenotypr)
-  - [3. Install Phenotypr](#3-install-phenotypr)
+  - [2. Download biofilm-processing](#2-download-biofilm-processing)
+  - [3. Install biofilm-processing](#3-install-biofilm-processing)
   - [4. Make a desktop shortcut](#4-make-a-desktop-shortcut-optional-but-recommended)
 - [Using the GUI](#using-the-gui)
 - [What gets produced](#what-gets-produced)
-- [Updating Phenotypr](#updating-phenotypr)
+- [Updating biofilm-processing](#updating-biofilm-processing)
 - [Troubleshooting](#troubleshooting)
 - [Advanced: command line + Python API](#advanced-command-line--python-api)
 - [Authors & license](#authors--license)
@@ -28,13 +28,13 @@ Phenotypr takes the per-well image stacks produced by a Cytation5 microscope and
 
 ### 1. Install Miniconda (one-time)
 
-Miniconda gives you an isolated Python environment so Phenotypr's dependencies don't conflict with anything else on your computer. **If you already have Anaconda or Miniconda installed, skip to step 2.**
+Miniconda gives you an isolated Python environment so biofilm-processing's dependencies don't conflict with anything else on your computer. **If you already have Anaconda or Miniconda installed, skip to step 2.**
 
 - **Windows / macOS / Linux:** download and run the installer from <https://www.anaconda.com/download/success> (pick "Miniconda" — it's smaller than Anaconda and works exactly the same way).
 - Accept all defaults during install.
 - After install, open the **"Anaconda Prompt"** (Windows) or your normal **Terminal** (macOS / Linux). All commands below should be typed there.
 
-### 2. Download Phenotypr
+### 2. Download biofilm-processing
 
 Pick **one** option:
 
@@ -49,34 +49,34 @@ Pick **one** option:
 git clone https://github.com/melsehna/biofilm-processing.git
 ```
 
-### 3. Install Phenotypr
+### 3. Install biofilm-processing
 
 In your terminal, navigate **into** the folder you just downloaded and run the install commands. Copy these one block at a time:
 
 ```bash
 cd biofilm-processing
-conda create -n phenotypr python=3.11 -y
-conda activate phenotypr
+conda create -n biofilm-processing python=3.11 -y
+conda activate biofilm-processing
 pip install -e .
 ```
 
 What these do:
 - `cd biofilm-processing` — moves into the project folder. If you put it on your Desktop, you may need `cd Desktop/biofilm-processing` first.
-- `conda create -n phenotypr python=3.11 -y` — makes a new Python environment named `phenotypr`.
-- `conda activate phenotypr` — switches into that environment. **You'll need to do this every time you open a fresh terminal**, unless you use the desktop shortcut (step 4).
-- `pip install -e .` — installs Phenotypr and all its dependencies (numpy, scipy, scikit-image, opencv, mahotas, PySide6, etc.).
+- `conda create -n biofilm-processing python=3.11 -y` — makes a new Python environment named `biofilm-processing`.
+- `conda activate biofilm-processing` — switches into that environment. **You'll need to do this every time you open a fresh terminal**, unless you use the desktop shortcut (step 4).
+- `pip install -e .` — installs biofilm-processing and all its dependencies (numpy, scipy, scikit-image, opencv, mahotas, PySide6, etc.).
 
 Once that's finished, launch the app:
 
 ```bash
-phenotypr-gui
+biofilm-processing-gui
 ```
 
 > **Windows users — `mahotas` install error?** `mahotas` is a C library and needs a compiler. Easiest fix: before running `pip install -e .`, run `conda install -c conda-forge mahotas -y`. If you'd rather use the Microsoft compiler, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and check the "Desktop development with C++" box during setup.
 
 ### 4. Make a desktop shortcut (optional but recommended)
 
-If you don't want to open a terminal every time you launch Phenotypr:
+If you don't want to open a terminal every time you launch biofilm-processing:
 
 ```bash
 python scripts/installDesktopShortcut.py
@@ -87,7 +87,7 @@ This detects your conda environment and creates a clickable icon on your desktop
 | Platform | What it makes |
 |---|---|
 | Linux   | `.desktop` file on Desktop + entry in app menu |
-| macOS   | `Phenotypr.app` bundle on Desktop |
+| macOS   | `biofilm-processing.app` bundle on Desktop |
 | Windows | `.bat` launcher + `.lnk` shortcut on Desktop |
 
 Double-click the icon to launch — no terminal needed.
@@ -205,12 +205,12 @@ Run-level master CSVs (across all plates) land at the output root:
 
 ---
 
-## Updating Phenotypr
+## Updating biofilm-processing
 
 When a new version is available:
 
 ```bash
-conda activate phenotypr
+conda activate biofilm-processing
 cd /path/to/biofilm-processing
 git pull           # or: re-download the ZIP and replace the folder
 pip install -e .   # picks up any new dependencies
@@ -222,17 +222,17 @@ Your desktop shortcut keeps working — no need to re-make it.
 
 ## Troubleshooting
 
-**`phenotypr-gui: command not found`** — you forgot to activate the environment. Run `conda activate phenotypr` first.
+**`biofilm-processing-gui: command not found`** — you forgot to activate the environment. Run `conda activate biofilm-processing` first.
 
-**The GUI won't launch / closes immediately** — open a terminal, activate the env, and run `phenotypr-gui` from there. Any error message will print to the terminal so you can see what went wrong.
+**The GUI won't launch / closes immediately** — open a terminal, activate the env, and run `biofilm-processing-gui` from there. Any error message will print to the terminal so you can see what went wrong.
 
-**`mahotas` install fails on Windows** — see the note in [step 3](#3-install-phenotypr) about installing it via conda or installing the C++ Build Tools.
+**`mahotas` install fails on Windows** — see the note in [step 3](#3-install-biofilm-processing) about installing it via conda or installing the C++ Build Tools.
 
-**Output files are 0 KB on a network drive** — Phenotypr writes overlays to a local temp file first and then moves them, but make sure your network mount supports normal file moves. Avoid `cp -p` style metadata-preserving copies on SMB / NFS mounts that don't support them.
+**Output files are 0 KB on a network drive** — biofilm-processing writes overlays to a local temp file first and then moves them, but make sure your network mount supports normal file moves. Avoid `cp -p` style metadata-preserving copies on SMB / NFS mounts that don't support them.
 
-**Magnification not detected** — Phenotypr reads magnification from the TIFF metadata embedded by the Cytation. If the files have been re-saved or stripped of metadata, detection will fail loudly rather than guess. Re-export from the Cytation if needed.
+**Magnification not detected** — biofilm-processing reads magnification from the TIFF metadata embedded by the Cytation. If the files have been re-saved or stripped of metadata, detection will fail loudly rather than guess. Re-export from the Cytation if needed.
 
-**Colony tracking looks fragmented** — try increasing **min colony area** (Parameters tab) or **propagation radius**. Phenotypr already uses a frozen-snapshot strategy during stalled growth to avoid edge-noise fragmentation, but very thin or low-contrast biofilms may still need tuning.
+**Colony tracking looks fragmented** — try increasing **min colony area** (Parameters tab) or **propagation radius**. biofilm-processing already uses a frozen-snapshot strategy during stalled growth to avoid edge-noise fragmentation, but very thin or low-contrast biofilms may still need tuning.
 
 ---
 

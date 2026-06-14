@@ -23,12 +23,12 @@ CONFIG_FILENAME = 'experiment_config.json'
 CONFIG_FILTER = 'JSON files (*.json);;All files (*)'
 
 
-class PhenotyprApp(QMainWindow):
+class BiofilmProcessingApp(QMainWindow):
     def __init__(self):
         super().__init__()
 
         self._buildInfo = buildString()
-        self.setWindowTitle(f'Phenotypr  ·  {self._buildInfo}')
+        self.setWindowTitle(f'biofilm-processing  ·  {self._buildInfo}')
         self.resize(1000, 750)
         self.setMinimumSize(400, 300)
 
@@ -115,7 +115,7 @@ class PhenotyprApp(QMainWindow):
 
 def run():
     app = QApplication(sys.argv)
-    win = PhenotyprApp()
+    win = BiofilmProcessingApp()
     win.show()
     sys.exit(app.exec())
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a desktop shortcut for Phenotypr GUI.
+"""Create a desktop shortcut for biofilm-processing GUI.
 
 Works on Linux, macOS, and Windows.
 
@@ -43,7 +43,7 @@ def _findCondaBase():
 
 
 def _envNameFromBin(guiBin):
-    """Extract the conda env name from a phenotypr-gui path, or None."""
+    """Extract the conda env name from a biofilm-processing-gui path, or None."""
     parts = Path(guiBin).resolve().parts
     try:
         idx = parts.index('envs')
@@ -53,7 +53,7 @@ def _envNameFromBin(guiBin):
 
 
 def findGuiBin():
-    """Find the phenotypr-gui executable, preferring named conda envs over base."""
+    """Find the biofilm-processing-gui executable, preferring named conda envs over base."""
     # Search named conda envs first (not base) — these are more likely correct
     condaBase = _findCondaBase()
     if condaBase:
@@ -61,9 +61,9 @@ def findGuiBin():
         if os.path.isdir(envsDir):
             for envName in sorted(os.listdir(envsDir)):
                 if platform.system() == 'Windows':
-                    candidate = os.path.join(envsDir, envName, 'Scripts', 'phenotypr-gui.exe')
+                    candidate = os.path.join(envsDir, envName, 'Scripts', 'biofilm-processing-gui.exe')
                 else:
-                    candidate = os.path.join(envsDir, envName, 'bin', 'phenotypr-gui')
+                    candidate = os.path.join(envsDir, envName, 'bin', 'biofilm-processing-gui')
                 if os.path.isfile(candidate):
                     return candidate
 
@@ -72,13 +72,13 @@ def findGuiBin():
         prefix = os.environ.get(envVar)
         if prefix:
             if platform.system() == 'Windows':
-                candidate = os.path.join(prefix, 'Scripts', 'phenotypr-gui.exe')
+                candidate = os.path.join(prefix, 'Scripts', 'biofilm-processing-gui.exe')
             else:
-                candidate = os.path.join(prefix, subdir, 'phenotypr-gui')
+                candidate = os.path.join(prefix, subdir, 'biofilm-processing-gui')
             if os.path.isfile(candidate):
                 return candidate
 
-    gui = shutil.which('phenotypr-gui')
+    gui = shutil.which('biofilm-processing-gui')
     if gui:
         return gui
 
@@ -96,14 +96,14 @@ def getIconPath(fmt='png'):
     """Return path to the app icon in the requested format, or None."""
     repoDir = Path(__file__).resolve().parent.parent
     if fmt == 'icns':
-        icon = repoDir / 'assets' / 'phenotypr-icon.icns'
+        icon = repoDir / 'assets' / 'biofilm-processing-icon.icns'
         if icon.exists():
             return str(icon)
     if fmt == 'ico':
-        icon = repoDir / 'assets' / 'phenotypr-icon.ico'
+        icon = repoDir / 'assets' / 'biofilm-processing-icon.ico'
         if icon.exists():
             return str(icon)
-    icon = repoDir / 'assets' / 'phenotypr-icon.png'
+    icon = repoDir / 'assets' / 'biofilm-processing-icon.png'
     if icon.exists():
         return str(icon)
     return None
@@ -122,10 +122,10 @@ def installLinux(guiBin):
         condaBase = _findCondaBase() or os.path.join(str(Path.home()), 'anaconda3')
         execLine = (
             f'bash -c \'source "{condaBase}/etc/profile.d/conda.sh" '
-            f'&& conda activate {envName} && phenotypr-gui\''
+            f'&& conda activate {envName} && biofilm-processing-gui\''
         )
     elif venv:
-        execLine = f'bash -c \'source "{venv}/bin/activate" && phenotypr-gui\''
+        execLine = f'bash -c \'source "{venv}/bin/activate" && biofilm-processing-gui\''
     else:
         execLine = guiBin
 
@@ -134,7 +134,7 @@ def installLinux(guiBin):
 
     desktopEntry = (
         '[Desktop Entry]\n'
-        'Name=Phenotypr\n'
+        'Name=biofilm-processing\n'
         'Comment=High-throughput biofilm phenotyping GUI\n'
         f'Exec={execLine}\n'
         'Terminal=false\n'
@@ -144,14 +144,14 @@ def installLinux(guiBin):
     )
 
     os.makedirs(appDir, exist_ok=True)
-    appPath = os.path.join(appDir, 'phenotypr.desktop')
+    appPath = os.path.join(appDir, 'biofilm-processing.desktop')
     with open(appPath, 'w') as f:
         f.write(desktopEntry)
     os.chmod(appPath, os.stat(appPath).st_mode | stat.S_IXUSR)
     print(f'Created: {appPath}')
 
     if os.path.isdir(desktopDir):
-        deskPath = os.path.join(desktopDir, 'phenotypr.desktop')
+        deskPath = os.path.join(desktopDir, 'biofilm-processing.desktop')
         with open(deskPath, 'w') as f:
             f.write(desktopEntry)
         os.chmod(deskPath, os.stat(deskPath).st_mode | stat.S_IXUSR)
@@ -167,7 +167,7 @@ def installLinux(guiBin):
 def installMacos(guiBin):
     """Create a .app bundle for macOS."""
     desktopDir = getDesktopDir()
-    logPath = os.path.join(Path.home(), 'Library', 'Logs', 'Phenotypr.log')
+    logPath = os.path.join(Path.home(), 'Library', 'Logs', 'biofilm-processing.log')
 
     envName = _envNameFromBin(guiBin) or os.environ.get('CONDA_DEFAULT_ENV')
     condaPrefix = os.environ.get('CONDA_PREFIX')
@@ -188,26 +188,26 @@ def installMacos(guiBin):
     elif venv:
         activateLines = f'source "{venv}/bin/activate"\n'
 
-    macosDir = os.path.join(desktopDir, 'Phenotypr.app', 'Contents', 'MacOS')
+    macosDir = os.path.join(desktopDir, 'biofilm-processing.app', 'Contents', 'MacOS')
     os.makedirs(macosDir, exist_ok=True)
 
-    launcher = os.path.join(macosDir, 'phenotypr')
+    launcher = os.path.join(macosDir, 'biofilm-processing')
     with open(launcher, 'w') as f:
         f.write('#!/bin/zsh\n')
-        f.write(f'# Phenotypr GUI launcher — errors logged to {logPath}\n')
+        f.write(f'# biofilm-processing GUI launcher — errors logged to {logPath}\n')
         f.write(f'exec >> "{logPath}" 2>&1\n')
         f.write(f'echo "--- $(date) ---"\n')
         f.write(f'echo "PATH=$PATH"\n\n')
         f.write(activateLines)
-        f.write(f'\n# Try phenotypr-gui on PATH, then fall back to absolute path\n')
-        f.write(f'if command -v phenotypr-gui &>/dev/null; then\n')
-        f.write(f'    phenotypr-gui\n')
+        f.write(f'\n# Try biofilm-processing-gui on PATH, then fall back to absolute path\n')
+        f.write(f'if command -v biofilm-processing-gui &>/dev/null; then\n')
+        f.write(f'    biofilm-processing-gui\n')
         f.write(f'else\n')
         f.write(f'    "{guiBinAbs}"\n')
         f.write(f'fi\n')
     os.chmod(launcher, 0o755)
 
-    contentsDir = os.path.join(desktopDir, 'Phenotypr.app', 'Contents')
+    contentsDir = os.path.join(desktopDir, 'biofilm-processing.app', 'Contents')
     with open(os.path.join(contentsDir, 'Info.plist'), 'w') as f:
         f.write(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -216,15 +216,15 @@ def installMacos(guiBin):
             '<plist version="1.0">\n'
             '<dict>\n'
             '  <key>CFBundleName</key>\n'
-            '  <string>Phenotypr</string>\n'
+            '  <string>biofilm-processing</string>\n'
             '  <key>CFBundleExecutable</key>\n'
-            '  <string>phenotypr</string>\n'
+            '  <string>biofilm-processing</string>\n'
             '  <key>CFBundleIdentifier</key>\n'
-            '  <string>edu.cmu.phenotypr</string>\n'
+            '  <string>edu.cmu.biofilm-processing</string>\n'
             '  <key>CFBundleVersion</key>\n'
             '  <string>0.1.0</string>\n'
             '  <key>CFBundleIconFile</key>\n'
-            '  <string>phenotypr-icon</string>\n'
+            '  <string>biofilm-processing-icon</string>\n'
             '  <key>LSUIElement</key>\n'
             '  <false/>\n'
             '</dict>\n'
@@ -236,11 +236,11 @@ def installMacos(guiBin):
     icnsPath = getIconPath('icns')
     pngPath = getIconPath('png')
     if icnsPath:
-        shutil.copy2(icnsPath, os.path.join(resDir, 'phenotypr-icon.icns'))
+        shutil.copy2(icnsPath, os.path.join(resDir, 'biofilm-processing-icon.icns'))
     if pngPath:
-        shutil.copy2(pngPath, os.path.join(resDir, 'phenotypr-icon.png'))
+        shutil.copy2(pngPath, os.path.join(resDir, 'biofilm-processing-icon.png'))
 
-    appPath = os.path.join(desktopDir, 'Phenotypr.app')
+    appPath = os.path.join(desktopDir, 'biofilm-processing.app')
 
     subprocess.run(
         ['xattr', '-dr', 'com.apple.quarantine', appPath],
@@ -273,23 +273,23 @@ def installWindows(guiBin):
         activate = ''
 
     # hide the .bat launcher in AppData so only the .lnk shows on Desktop
-    appDataDir = os.path.join(os.environ.get('APPDATA', ''), 'Phenotypr')
+    appDataDir = os.path.join(os.environ.get('APPDATA', ''), 'biofilm-processing')
     os.makedirs(appDataDir, exist_ok=True)
-    batPath = os.path.join(appDataDir, 'phenotypr.bat')
+    batPath = os.path.join(appDataDir, 'biofilm-processing.bat')
     with open(batPath, 'w') as f:
         f.write('@echo off\n')
         f.write(activate)
-        f.write('phenotypr-gui\n')
+        f.write('biofilm-processing-gui\n')
     print(f'Created launcher: {batPath}')
 
-    lnkPath = os.path.join(desktopDir, 'Phenotypr.lnk')
+    lnkPath = os.path.join(desktopDir, 'biofilm-processing.lnk')
     iconPath = getIconPath('ico')
     iconArg = f'$s.IconLocation = "{iconPath}"; ' if iconPath else ''
     psScript = (
         f'$ws = New-Object -ComObject WScript.Shell; '
         f'$s = $ws.CreateShortcut("{lnkPath}"); '
         f'$s.TargetPath = "{batPath}"; '
-        f'$s.Description = "Phenotypr - Biofilm Phenotyping GUI"; '
+        f'$s.Description = "biofilm-processing - Biofilm Phenotyping GUI"; '
         f'{iconArg}'
         f'$s.WindowStyle = 7; '
         f'$s.Save()'
@@ -302,7 +302,7 @@ def installWindows(guiBin):
         print(f'Created shortcut: {lnkPath}')
     except Exception:
         # fallback: put .bat on Desktop if .lnk creation fails
-        fallback = os.path.join(desktopDir, 'Phenotypr.bat')
+        fallback = os.path.join(desktopDir, 'biofilm-processing.bat')
         shutil.copy2(batPath, fallback)
         print(f'Created: {fallback} (could not create .lnk shortcut)')
 
@@ -310,12 +310,12 @@ def installWindows(guiBin):
 def main():
     guiBin = findGuiBin()
     if not guiBin:
-        print('Error: phenotypr-gui not found.')
+        print('Error: biofilm-processing-gui not found.')
         print('Make sure you have run: pip install -e .')
         print('And that your conda/virtualenv is activated.')
         sys.exit(1)
 
-    print(f'Found phenotypr-gui at: {guiBin}')
+    print(f'Found biofilm-processing-gui at: {guiBin}')
     envName = _envNameFromBin(guiBin)
     if envName:
         print(f'Detected conda env: {envName}')
@@ -331,7 +331,7 @@ def main():
         print(f'Unsupported platform: {system}')
         sys.exit(1)
 
-    print('\nPhenotypr shortcut installed.')
+    print('\nbiofilm-processing shortcut installed.')
     print('You can launch it from your desktop or application menu.')
 
 

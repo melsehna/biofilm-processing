@@ -19,7 +19,7 @@ tracking → feature extraction, plus a PySide6 GUI and CLI tools.
 pip install -e .                 # editable install (also defines the GUI entry point)
 
 # GUI
-phenotypr-gui                    # or: python -m multiWellAnalysis.gui.app
+biofilm-processing-gui                    # or: python -m multiWellAnalysis.gui.app
 
 # CLI — single plate
 python scripts/runSinglePlate.py /path/to/plate -o /path/to/output -m _03

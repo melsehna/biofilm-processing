@@ -44,4 +44,4 @@ testpaths = ["src/multiWellAnalysis/tests"]
 pythonpath = ["src"]
 
 [project.scripts]
-phenotypr-gui = "multiWellAnalysis.gui.app:run"
+biofilm-processing-gui = "multiWellAnalysis.gui.app:run"

@@ -16,3 +16,8 @@ scripts/transposons/
 scripts/*.log
 CLAUDE.md
 TODO.md
+
+# Local-only validation/reference (keep out of the repo)
+PROC_TEST.md
+phase2_anchor/
+Brightfield-biofilm-assay/
