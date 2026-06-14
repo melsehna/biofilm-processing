@@ -824,3 +824,11 @@ microscopes are spatial-frequency effects a per-pixel ratio does NOT remove (the
 spatial-background-percentile normalization prototyped earlier (which did not help); the
 temporal frame-0 ratio is the right one. Additive: it does not disturb the current fpHalf
 features.
+
+**Status (2026-06-14):** the **biomass** half is implemented — the no-`Imin`/`Imax` path
+now computes `biomass = mean(OD·mask)` with `OD = −log10(I_t / mean(frames 0–4))`
+(`analysis_main.py`), so `numericalData/<mag>X_BF.csv` carries batch-invariant OD biomass.
+Validated on a real well: OD ≈ 0 at frames 0–4, same trajectory shape as the old
+`(1−raw)` measure, and the seed-frame threshold (0.005) fires within one frame of before.
+**Remaining:** the `planktonic = mean(OD·¬mask)` measure (own CSV + `<mag>X_planktonic.csv`)
+and OD-based intensity/Haralick texture features.

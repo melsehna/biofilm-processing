@@ -90,7 +90,7 @@ The pipeline keeps **three** versions of each well's stack, used for different p
 
 | Representation | What it is | Used for |
 |---|---|---|
-| **`_registered_raw.tif`** (signal) | phase-corrected, bit-depth-scaled raw, float32 `[0,1]` | **biomass** = `mean((1−raw)·mask)`; the source for both render renderings; (geometry comes from masks/labels, not this) |
+| **`_registered_raw.tif`** (signal) | phase-corrected, bit-depth-scaled raw, float32 `[0,1]` | **biomass** = `mean(OD·mask)` where `OD = −log10(I_t / mean(frames 0–4))` (frame-0..4 blank → batch-invariant absorbance; falls back to `Imin`/`Imax` flat-field if provided); the source for both render renderings; (geometry comes from masks/labels) |
 | **`_processed_fpHalf.tif`** (fixed render) | `clip(raw − localMean + 0.5, 0, 1)` — fixed background gray | **THE feature input**: whole-image (Haralick, intensity, entropy) **and** colony intensity features. **Required** — workers error if missing. |
 | **`_processed.tif`** (adaptive render) | same but `fpMean = 0.5·(max+min)` per stack | **display ONLY** — retired as a feature input (its per-stack offset drifts batch-to-batch). The primary `_overlay.mp4` is still built from it (an `_overlay_fpHalf.mp4` is also written from the fixed render; full migration to fpHalf-only overlay is pending — see ISSUES.md). |
 | **`_masks.npz`** | binary segmentation | biomass; seed/footprint for colony tracking |
@@ -105,10 +105,9 @@ batches — see `ISSUES.md`.
 high-pass, so it removes the slow background *level*; features on that render (plus the
 mask-restricted biomass) are blind to a uniform medium darkening from planktonic cells.
 Whole-image Haralick keeps background *texture* but not *level*. A dispersal mutant thus
-reads only as "less biofilm." Planned fix: a **frame-0 OD** path — `OD = −log10(I_t /
-mean(frames 0–4))` (frames 0–4 are biofilm-free by design, so no blank acquisition is
-needed) — giving a batch-invariant, level-preserving signal that also yields a
-`planktonic` measure. See `ISSUES.md` Phase 5.
+reads only as "less biofilm." **Biomass now uses the frame-0..4-blank OD** (`mean(OD·mask)`,
+batch-invariant); the complementary **`planktonic` = `mean(OD·¬mask)`** measure and
+OD-based texture features are the remaining additive steps. See `ISSUES.md` Phase 5.
 
 ### Feature extraction inputs in detail
 - **Whole-image** (`runWholeImageGUI` → `extractWholeImageFeats`): reads
@@ -117,8 +116,10 @@ needed) — giving a batch-invariant, level-preserving signal that also yields a
 - **Colony** (`runColonyFeatsGUI`): geometry from the tracked-label NPZ (converted to µm
   via `pxToUm` from metadata — fails loudly if missing); **intensity** read from
   `_processed_fpHalf.tif`. Outputs per-colony and well-aggregate CSVs.
-- **Biomass** (`_biomass.csv`): from `registered_raw` × mask; also read by tracking for
-  seed-frame detection.
+- **Biomass** (`_biomass.csv` → `numericalData/<mag>X_BF.csv`): `mean(OD·mask)` per frame,
+  OD computed from `registered_raw` against the frames 0–4 blank (batch-invariant; see
+  ISSUES.md Phase 5). Also read by tracking for seed-frame detection (threshold 0.005
+  still valid — OD starts ~0 and crosses at essentially the same frame).
 
 ## 7. Magnification detection (metadata-driven)
 
