@@ -174,6 +174,14 @@ checkboxes / state flags).
   then rsync each finished plate to the NAS and delete the local copy (batched transfers
   beat per-file SMB writes). Auto-staging under `~/biofilm-staging-<ts>/` when `outputDir`
   is empty or on a NAS.
+- **Disk gate (per plate):** output accumulates to a *full plate* before the per-plate
+  delete frees it, so before writing each plate the run estimates its output (~5× the raw
+  uint16 input — dominated by the two float32 stacks) and checks the target filesystem has
+  that much free plus a reserve (`max(15%, 5 GB)`). If a plate won't fit it **aborts before
+  writing** (no mid-stage `ENOSPC`/corrupt partial TIFFs); already-finished plates are kept
+  and master CSVs still assemble, so you can free space and resume. Fails open (warns, does
+  not block) if the size or free space can't be determined. Startup also logs a one-time
+  free-space warning at <20 GB.
 
 ## 12. Conventions
 
