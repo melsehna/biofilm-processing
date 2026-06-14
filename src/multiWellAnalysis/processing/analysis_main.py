@@ -158,7 +158,17 @@ def timelapseProcessing(
         biomass = np.nanmean(OD * masks, axis=(0, 1))
         odMean = biomass.copy()
     else:
-        biomass = np.nanmean((1.0 - rawCropped) * masks, axis=(0, 1))
+        # No Imin/Imax flat-field references: use the well's own early frames as a
+        # per-pixel blank. Biofilm never appears before ~frame 8, so frames 0-4 are
+        # biofilm-free. OD = -log10(I_t / blank) is a ratio against the same well's
+        # own blank, so it cancels exposure/gain and illumination/vignetting -> a
+        # batch-robust, level-preserving absorbance, with no calibration images.
+        # Biomass is therefore reported as mean OD. See ISSUES.md Phase 5.
+        nBlank = min(5, rawCropped.shape[2])
+        blank = np.maximum(np.nanmean(rawCropped[..., :nBlank], axis=2, keepdims=True), 1e-6)
+        OD = -np.log10(np.clip(rawCropped / blank, 1e-6, None))
+        biomass = np.nanmean(OD * masks, axis=(0, 1))
+        odMean = biomass.copy()
 
     _progress('Saving outputs...')
 
