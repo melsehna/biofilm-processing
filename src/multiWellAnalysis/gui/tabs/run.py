@@ -144,7 +144,6 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             downsample=params.get('downsample', 4),
             skipOverlay=not params.get('saveOverlays', True),
             saveProcessedVideo=params.get('saveProcessedVideo', False),
-            saveFpHalf=params.get('saveFpHalf', True),
             workers=1,
         )
         del stack
@@ -556,8 +555,7 @@ class ProcessingWorker(QObject):
                       f'colonyTracking={s.get("colonyTracking")}, '
                       f'colonyFeats={s.get("colonyFeats")}, '
                       f'saveOverlays={s.get("saveOverlays")}, '
-                      f'saveProcessedVideo={s.get("saveProcessedVideo")}, '
-                      f'saveFpHalf={s.get("saveFpHalf")}')
+                      f'saveProcessedVideo={s.get("saveProcessedVideo")}')
 
         self._overallDone = 0
         self._totalTasks = 1
@@ -1157,7 +1155,6 @@ class ProcessingWorker(QObject):
             'downsample': state.get('downsample', 4),
             'saveOverlays': state.get('saveOverlays', True),
             'saveProcessedVideo': state.get('saveProcessedVideo', False),
-            'saveFpHalf': state.get('saveFpHalf', True),
         }
         magParams = state.get('magParams', {})
         if mag and mag in magParams:

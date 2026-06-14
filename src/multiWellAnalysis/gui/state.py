@@ -33,7 +33,6 @@ DEFAULTS = {
     'saveMasks':        True,
     'saveOverlays':     True,
     'saveProcessedVideo': False,
-    'saveFpHalf':       True,
     'wholeImageFeats':  False,
     'colonyTracking':   False,
     'colonyFeats':      False,

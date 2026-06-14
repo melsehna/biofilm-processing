@@ -74,7 +74,6 @@ def timelapseProcessing(
     downsample=2,
     skipOverlay=False,
     saveProcessedVideo=False,
-    saveFpHalf=True,
     label=None,
     workers=4,
     progressFn=None,
@@ -175,8 +174,8 @@ def timelapseProcessing(
     # Display rendering: FIXED fpMean = 0.5 — the sole render. The per-stack
     # adaptive fpMean was retired: it drifts well-to-well / batch-to-batch and is
     # unsafe for cross-batch feature/embedding comparison. `_processed.tif` IS this
-    # fixed render (the separate adaptive render and the `_fpHalf` suffix are gone;
-    # the `saveFpHalf` arg is now vestigial). The local-contrast subtraction carries
+    # fixed render (the separate adaptive render and the `_fpHalf` suffix are gone).
+    # The local-contrast subtraction carries
     # all the biological signal; fpMean only sets the uniform background gray. Use
     # the version stamp (run_params.json) to tell fixed (new) from adaptive (old)
     # `_processed.tif`. See ISSUES.md "fpMean policy".

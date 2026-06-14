@@ -86,16 +86,6 @@ class ParametersTab(QWidget):
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
         analysisForm.addRow(self.saveProcessedVideo)
 
-        self.saveFpHalf = QCheckBox('Save fixed-fpMean=0.5 render (_fpHalf) — required for features')
-        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', True))
-        self.saveFpHalf.setToolTip(
-            'Writes the fixed fpMean=0.5 rendering (_fpHalf.tif). This is now the '
-            'REQUIRED input for whole-image and colony intensity/Haralick features: '
-            'the adaptive _processed.tif render drifts batch-to-batch and is retired '
-            'as a feature input. Leave checked — unchecking it makes feature '
-            'extraction error. See ISSUES.md "fpMean policy".'
-        )
-        analysisForm.addRow(self.saveFpHalf)
 
         self.wholeImage = QCheckBox('Whole-image texture features')
         self.wholeImage.setChecked(self.state.get('wholeImageFeats', False))
@@ -392,8 +382,6 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('saveMasks', v))
         self.saveProcessedVideo.toggled.connect(
             lambda v: self.state.set('saveProcessedVideo', v))
-        self.saveFpHalf.toggled.connect(
-            lambda v: self.state.set('saveFpHalf', v))
         self.nasMirrorEnabled.toggled.connect(
             lambda v: self.state.set('nasMirrorEnabled', v))
         self.nasMirrorDir.editingFinished.connect(
@@ -559,7 +547,7 @@ class ParametersTab(QWidget):
         widgets = [
             self.saveOverlays, self.wholeImage, self.colonyTracking,
             self.colonyFeats, self.dustCorrection, self.saveRegistered,
-            self.saveProcessed, self.saveMasks, self.saveProcessedVideo, self.saveFpHalf,
+            self.saveProcessed, self.saveMasks, self.saveProcessedVideo,
             self.nasMirrorEnabled, self.nasMirrorDir,
             self.blockDiam, self.fixedThresh,
             self.fftStride, self.downsample, self.shiftThresh,
@@ -578,7 +566,6 @@ class ParametersTab(QWidget):
         self.saveProcessed.setChecked(self.state.get('saveProcessed', True))
         self.saveMasks.setChecked(self.state.get('saveMasks', True))
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
-        self.saveFpHalf.setChecked(self.state.get('saveFpHalf', True))
         self.nasMirrorEnabled.setChecked(self.state.get('nasMirrorEnabled', False))
         self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
