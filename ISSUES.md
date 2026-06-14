@@ -43,11 +43,14 @@ contradicts the earlier `biofilm-analysis/cleanDeletions_hand/ISSUES.md` conclus
 - ✅ **Version stamping** implemented (`buildRecord` → `run_params.json` +
   `experiment_config.json`; resume warns on version mismatch). Prevents *future*
   untraceable drift.
-- ⬜ **The render-consistency fix** (make fixed `fpHalf` the single feature input,
-  retire adaptive `_processed.tif`, remove silent fallbacks) is **validated but not
-  yet implemented** — it changes feature values and invalidates the current atlas.
+- ✅ **The render-consistency fix** implemented: the adaptive render is **retired** —
+  `_processed.tif` is now the **sole fixed-fpMean(0.5) render** (no separate `_fpHalf`
+  file, no `saveFpHalf` flag); features read it directly; frame-to-frame registration +
+  NaN crop landed; biomass is now frame-0..4-blank OD. Changes feature values → the
+  atlas must be reprocessed.
 - ⬜ **Reprocess** atlas + clean-del (+ training) through the pinned render — the step
-  that actually closes the effect.
+  that actually closes the effect (the validation run on the matched panel confirmed
+  convergence; the full atlas reprocess + scaler refit is the remaining compute).
 - ⏸️ **De-prioritized** (investigated, shown *not* dominant): photometric anchor
   (Issue 1), saturation (Issue 8), relative thresholds (Issues 5/6).
 

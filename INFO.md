@@ -70,8 +70,7 @@ processedImages/
   index.csv                       per-well paths + pxToUm/objective metadata
   run_params.json                 serialized params + _pipelineVersion stamp (§8)
   {well}_registered_raw.tif       phase-corrected raw, float32 (H,W,T)   <- SIGNAL
-  {well}_processed.tif            adaptive-fpMean display render, float32 <- DISPLAY ONLY
-  {well}_processed_fpHalf.tif     fixed-fpMean(0.5) render, float32       <- FEATURE INPUT
+  {well}_processed.tif            fixed-fpMean(0.5) render, float32        <- DISPLAY + FEATURE INPUT
   {well}_masks.npz                key 'masks', bool (H,W,T)
   {well}_trackedLabels_allFrames_trackingVec_v3.npz   int labels + arrays
   {well}_overlay.mp4
@@ -90,16 +89,15 @@ The pipeline keeps **three** versions of each well's stack, used for different p
 
 | Representation | What it is | Used for |
 |---|---|---|
-| **`_registered_raw.tif`** (signal) | phase-corrected, bit-depth-scaled raw, float32 `[0,1]` | **biomass** = `mean(OD·mask)` where `OD = −log10(I_t / mean(frames 0–4))` (frame-0..4 blank → batch-invariant absorbance; falls back to `Imin`/`Imax` flat-field if provided); the source for both render renderings; (geometry comes from masks/labels) |
-| **`_processed_fpHalf.tif`** (fixed render) | `clip(raw − localMean + 0.5, 0, 1)` — fixed background gray | **THE feature input**: whole-image (Haralick, intensity, entropy) **and** colony intensity features. **Required** — workers error if missing. |
-| **`_processed.tif`** (adaptive render) | same but `fpMean = 0.5·(max+min)` per stack | **display ONLY** — retired as a feature input (its per-stack offset drifts batch-to-batch). The primary `_overlay.mp4` is still built from it (an `_overlay_fpHalf.mp4` is also written from the fixed render; full migration to fpHalf-only overlay is pending — see ISSUES.md). |
+| **`_registered_raw.tif`** (signal) | phase-corrected, bit-depth-scaled raw, float32 `[0,1]` | **biomass** = `mean(OD·mask)` where `OD = −log10(I_t / mean(frames 0–4))` (frame-0..4 blank → batch-invariant absorbance; falls back to `Imin`/`Imax` flat-field if provided); the source for the render; (geometry comes from masks/labels) |
+| **`_processed.tif`** (fixed render) | `clip(raw − localMean + 0.5, 0, 1)` — fixed background gray; the **sole** render (the per-stack adaptive fpMean was retired because it drifts batch-to-batch) | **THE feature input** (whole-image Haralick/intensity/entropy + colony intensity) **and** the `_overlay.mp4` source. |
 | **`_masks.npz`** | binary segmentation | biomass; seed/footprint for colony tracking |
 | **`_trackedLabels…npz`** | per-colony integer labels over time | colony geometry/intensity/spatial features |
 
-**Rule of thumb:** *signal* (`registered_raw`) → biomass; *fixed render* (`fpHalf`) →
-all intensity/texture features; *adaptive render* (`processed`) → human-facing display
-only. This separation (added in v0.5.0) is what keeps features comparable across
-batches — see `ISSUES.md`.
+**Rule of thumb:** *signal* (`registered_raw`) → biomass; *fixed render* (`_processed.tif`)
+→ all intensity/texture features **and** the overlay. The per-stack adaptive render was
+retired (it drifted batch-to-batch), so there is a single render — which is what keeps
+features comparable across batches. See `ISSUES.md`.
 
 **Known limitation (planktonic blind spot).** The local-contrast normalization is a
 high-pass, so it removes the slow background *level*; features on that render (plus the
@@ -111,11 +109,11 @@ OD-based texture features are the remaining additive steps. See `ISSUES.md` Phas
 
 ### Feature extraction inputs in detail
 - **Whole-image** (`runWholeImageGUI` → `extractWholeImageFeats`): reads
-  `_processed_fpHalf.tif`. Per frame: intensity stats (mean/std/median/MAD/IQR/skew/
+  `_processed.tif`. Per frame: intensity stats (mean/std/median/MAD/IQR/skew/
   kurtosis, percentiles, entropy) + 13 Haralick texture features. Columns `whole_*`.
 - **Colony** (`runColonyFeatsGUI`): geometry from the tracked-label NPZ (converted to µm
   via `pxToUm` from metadata — fails loudly if missing); **intensity** read from
-  `_processed_fpHalf.tif`. Outputs per-colony and well-aggregate CSVs.
+  `_processed.tif`. Outputs per-colony and well-aggregate CSVs.
 - **Biomass** (`_biomass.csv` → `numericalData/<mag>X_BF.csv`): `mean(OD·mask)` per frame,
   OD computed from `registered_raw` against the frames 0–4 blank (batch-invariant; see
   ISSUES.md Phase 5). Also read by tracking for seed-frame detection (threshold 0.005
@@ -147,7 +145,6 @@ reprocessing). This closes the "which code version produced these features?" gap
 | `fftStride` | **1** | register every frame (frame-to-frame). >1 strides keyframes (legacy) |
 | `downsample` | 4 | decimation factor for phase correlation |
 | `dustCorrection` | True | remove pixels ON in frame 0 but OFF later |
-| `saveFpHalf` | **True** | write the fixed render — required for features; leave on |
 | `minColonyAreaPx` | 200 | min connected-component size (**pixels**) to label a colony |
 | `propRadiusPx` | 25 | colony label-propagation radius (**pixels**) |
 | `workers` | 8 | parallel workers (hard-capped at 75% of cores) |
