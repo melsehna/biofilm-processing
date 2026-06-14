@@ -14,8 +14,9 @@ scripts/reimaging/
 scripts/training/
 scripts/transposons/
 scripts/*.log
-CLAUDE.md
-TODO.md
+*.md 
+!README.md
+
 
 # Local-only validation/reference (keep out of the repo)
 PROC_TEST.md
