@@ -172,15 +172,16 @@ def timelapseProcessing(
 
     _progress('Saving outputs...')
 
-    # Build the display rendering: re-run local-contrast on rawCropped with a
-    # midpoint bias (fpMean), then clip. This is the same path as the overlay,
-    # so the saved processed TIFF and the overlay are photometrically consistent
-    # — and unlike a min-max stretch, the local-contrast subtraction gives every
-    # well a shared "background = fpMean" reference rather than rescaling each
-    # well's range to fill [0,1] independently.
-    fpMean = 0.5 * (np.nanmax(rawCropped) + np.nanmin(rawCropped))
+    # Display rendering: FIXED fpMean = 0.5 — the sole render. The per-stack
+    # adaptive fpMean was retired: it drifts well-to-well / batch-to-batch and is
+    # unsafe for cross-batch feature/embedding comparison. `_processed.tif` IS this
+    # fixed render (the separate adaptive render and the `_fpHalf` suffix are gone;
+    # the `saveFpHalf` arg is now vestigial). The local-contrast subtraction carries
+    # all the biological signal; fpMean only sets the uniform background gray. Use
+    # the version stamp (run_params.json) to tell fixed (new) from adaptive (old)
+    # `_processed.tif`. See ISSUES.md "fpMean policy".
     displayStack = np.clip(
-        normalizeLocalContrastOutput(rawCropped, blockDiameter, fpMean),
+        normalizeLocalContrastOutput(rawCropped, blockDiameter, 0.5),
         0.0, 1.0,
     )
     saveStack(displayStack, processedDir, f"{filename}_processed")
@@ -200,23 +201,5 @@ def timelapseProcessing(
         processedVideoPath = os.path.join(processedDir, f'{filename}_processed.mp4')
         writeProcessedVideo(displayStack, processedVideoPath, label=label)
         _registerImage('processed_mp4', processedVideoPath)
-
-    # Optional second rendering with fixed fpMean=0.5 for cross-batch
-    # comparison. The local-contrast term carries all the biological signal;
-    # the additive fpMean just picks the gray level at which background
-    # renders. A fixed value gives every well a uniform background gray,
-    # independent of its own dynamic range. See ISSUES.md (Issue 2).
-    if saveFpHalf:
-        displayStackFpHalf = np.clip(
-            normalizeLocalContrastOutput(rawCropped, blockDiameter, 0.5),
-            0.0, 1.0,
-        )
-        saveStack(displayStackFpHalf, processedDir, f"{filename}_processed_fpHalf")
-        if not skipOverlay:
-            overlayFpHalfPath = os.path.join(processedDir, f'{filename}_overlay_fpHalf.mp4')
-            writeOverlayVideo(displayStackFpHalf, masks, overlayFpHalfPath, label=label)
-        if saveProcessedVideo:
-            processedFpHalfPath = os.path.join(processedDir, f'{filename}_processed_fpHalf.mp4')
-            writeProcessedVideo(displayStackFpHalf, processedFpHalfPath, label=label)
 
     return masks, biomass, odMean

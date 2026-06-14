@@ -231,13 +231,9 @@ def _trackOneWell(plateName, row, trackingParams=None):
 def _wholeImageOneWell(plateName, row):
     """Run whole-image feature extraction on a single well.
 
-    REQUIRES the fixed-fpMean rendering (`_processed_fpHalf.tif`). Intensity and
-    Haralick features are computed on the display image, and the adaptive
-    `_processed.tif` render drifts batch-to-batch (different fpMean offset, and
-    it clips differently), corrupting cross-batch feature comparisons. The
-    adaptive render is therefore retired as a feature input — error loudly
-    rather than silently mixing renders across batches. See CLAUDE.md "fpMean
-    policy" and ISSUES.md.
+    Reads `_processed.tif`, which is now the fixed-fpMean (0.5) render — the
+    adaptive render was retired, so there is a single render and no fallback.
+    Intensity/Haralick are computed on it. See ISSUES.md "fpMean policy".
     """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -246,15 +242,9 @@ def _wholeImageOneWell(plateName, row):
     wellId = row['well']
     try:
         from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
-        outdir = os.path.dirname(row['processed'])
-        fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
-        if not os.path.exists(fpHalfPath):
-            return {'well': wellId, 'status': 'error',
-                    'error': f'missing fixed-fpMean render {wellId}_processed_fpHalf.tif'
-                             ' — whole-image features require it (adaptive '
-                             '_processed.tif retired as a feature input). Reprocess '
-                             'this well with saveFpHalf=True.'}
-        inputPath = fpHalfPath
+        # _processed.tif is now the fixed-fpMean render (adaptive retired); read it
+        # directly. Provenance (fixed vs old adaptive) is the run_params version stamp.
+        inputPath = row['processed']
         t0 = time.perf_counter()
         status = extractWholeImageFeatures(
             inputPath, plateName, wellId, outdir
@@ -275,12 +265,9 @@ def _wholeImageOneWell(plateName, row):
 def _colonyFeatsOneWell(plateName, row):
     """Run colony feature extraction on a single well.
 
-    REQUIRES the fixed-fpMean processed rendering (`_processed_fpHalf.tif`) for
-    intensity. The `_registered_raw.tif` fallback is retired: raw-stack
-    intensities are uncorrected and drift batch-to-batch, so mixing raw-read
-    wells with fpHalf-rendered wells corrupts cross-batch comparisons. Error
-    loudly if the fixed render is missing. See CLAUDE.md "fpMean policy" and
-    ISSUES.md.
+    Reads intensity from `_processed.tif`, now the fixed-fpMean (0.5) render
+    (adaptive retired; single render, no fallback). Geometry comes from the
+    tracked-label NPZ + masks; µm from metadata. See ISSUES.md "fpMean policy".
     """
     os.environ.setdefault('OMP_NUM_THREADS', '1')
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -293,14 +280,8 @@ def _colonyFeatsOneWell(plateName, row):
         labelsPath = row['tracked_labels']
         rawPath = row['registered_raw']
         outdir = os.path.dirname(rawPath)
-        fpHalfPath = os.path.join(outdir, f'{wellId}_processed_fpHalf.tif')
-        if not os.path.exists(fpHalfPath):
-            return {'well': wellId, 'status': 'error',
-                    'error': f'missing fixed-fpMean render {wellId}_processed_fpHalf.tif'
-                             ' — colony intensity features require it (registered-raw '
-                             'fallback retired). Reprocess this well with '
-                             'saveFpHalf=True.'}
-        intensityPath = fpHalfPath
+        # Intensity from the fixed-fpMean processed render (now _processed.tif).
+        intensityPath = os.path.join(outdir, f'{wellId}_processed.tif')
 
         data = np.load(labelsPath)
         rawStack = tifffile.imread(intensityPath)
