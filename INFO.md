@@ -101,6 +101,15 @@ all intensity/texture features; *adaptive render* (`processed`) → human-facing
 only. This separation (added in v0.5.0) is what keeps features comparable across
 batches — see `ISSUES.md`.
 
+**Known limitation (planktonic blind spot).** The local-contrast normalization is a
+high-pass, so it removes the slow background *level*; features on that render (plus the
+mask-restricted biomass) are blind to a uniform medium darkening from planktonic cells.
+Whole-image Haralick keeps background *texture* but not *level*. A dispersal mutant thus
+reads only as "less biofilm." Planned fix: a **frame-0 OD** path — `OD = −log10(I_t /
+mean(frames 0–4))` (frames 0–4 are biofilm-free by design, so no blank acquisition is
+needed) — giving a batch-invariant, level-preserving signal that also yields a
+`planktonic` measure. See `ISSUES.md` Phase 5.
+
 ### Feature extraction inputs in detail
 - **Whole-image** (`runWholeImageGUI` → `extractWholeImageFeats`): reads
   `_processed_fpHalf.tif`. Per frame: intensity stats (mean/std/median/MAD/IQR/skew/

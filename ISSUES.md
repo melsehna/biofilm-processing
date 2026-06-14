@@ -778,3 +778,49 @@ better for intensity consistency. Proceed to retire adaptive + reprocess. Caveat
 5 wells did not trigger clipping under either render, so the edge case where adaptive
 mis-centers and clips (and fpHalf would not) is not exercised — but that only
 strengthens the case for fpHalf.
+
+### Phase 5 — planned: frame-0 OD signal path (the real signal-preserving fix)
+
+Resolves the architecture critique (features computed on a *display render*, not a
+signal), Issue 1 (no flat-field), and a newly-identified **planktonic blind spot**.
+
+**Planktonic blind spot (finding, 2026-06-14).** The local-contrast normalization is a
+high-pass (subtract a ~`blockDiameter`-blurred copy), so it removes the slow/large-scale
+background **level**. Features are computed on that render, and biomass is
+mask-restricted (`mean((1−raw)·mask)`), so the pipeline is **blind to a uniform medium
+darkening from planktonic cells**. Whole-image Haralick *does* keep background **texture**
+(it is whole-image and fine texture survives the high-pass) — but not the background
+*level*. The Julia reference computed `planktonic = mean(OD·¬mask)`; the Python pipeline
+dropped it. Consequence: a dispersal mutant reads only as "less biofilm" (biomass/area
+drop); the planktonic increase is invisible, so "never grew" can't be distinguished from
+"grew then dispersed."
+
+**The fix — frame-0 OD, no calibration images needed.** Growth starts from a biofilm-free
+well (biofilm never appears before ~frame 8), so **frame 0 — or a frames 0–4 average for
+robustness — is a valid per-well, per-pixel blank.** Proper optical density is therefore
+computable with NO `Imin`/`Imax` acquisition:
+
+    OD_t(x,y) = −log10( I_t(x,y) / I_blank(x,y) )     I_blank = mean(frames 0..4)
+
+(floor/`Imin`-subtract the denominator against dark/dead pixels).
+
+Properties:
+- **Batch-invariant** — a ratio against the well's own blank cancels exposure/gain
+  (num & denom scale together) and illumination/vignetting (per-pixel flat-field). This
+  is the exposure-invariance the fpHalf render only partially provides.
+- **Level-preserving** — keeps absolute absorbance, so it captures biomass
+  (`mean(OD·mask)`) AND planktonic (`mean(OD·¬mask)`) — the dispersal axis.
+- **One representation for everything** — OD can feed intensity, biomass, planktonic, and
+  Haralick (with fixed quantization) as a batch-invariant texture input.
+- **Retroactive** — frame 0 exists for every well in every dataset (training, reimaging,
+  clean-del), so OD is computable on all existing data without re-acquisition. Corrects
+  the earlier "OD needs blanks we don't have" framing.
+
+Caveats: requires good registration for the per-pixel ratio (the frame-to-frame + NaN-crop
+fix provides it); guard frame-0 dark/dead pixels; frame 0/0–4 must be clean (in-focus,
+dust-free — use the 0–4 average + dust correction); PSF/focus differences across
+microscopes are spatial-frequency effects a per-pixel ratio does NOT remove (the residual
+~2σ cross-scope texture difference would remain). Distinct from — and better than — the
+spatial-background-percentile normalization prototyped earlier (which did not help); the
+temporal frame-0 ratio is the right one. Additive: it does not disturb the current fpHalf
+features.
