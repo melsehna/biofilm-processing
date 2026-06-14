@@ -14,7 +14,7 @@ scripts/reimaging/
 scripts/training/
 scripts/transposons/
 scripts/*.log
-*.md 
+*.md
 !README.md
 
 
