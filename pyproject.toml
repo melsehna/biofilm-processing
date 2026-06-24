@@ -45,3 +45,5 @@ pythonpath = ["src"]
 
 [project.scripts]
 biofilm-processing-gui = "multiWellAnalysis.gui.app:run"
+biofilm-processing-run = "multiWellAnalysis.cli.run_pipeline:main"
+biofilm-processing-test-well = "multiWellAnalysis.cli.test_well:main"
