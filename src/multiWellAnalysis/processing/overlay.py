@@ -7,6 +7,21 @@ import numpy as np
 import cv2
 
 
+def _padFramesToEven(frames):
+    """Pad a (T, H, W, 3) stack so H and W are even.
+
+    H.264 (libx264 / yuv420p) requires even dimensions; registration crops can
+    leave odd ones (e.g. 1979x1975), which makes the encoder fail outright. Pad
+    one row/column by edge replication when needed so the last line isn't a
+    black border. Returns (frames, w, h) with the post-pad dimensions.
+    """
+    _, h, w, _ = frames.shape
+    padH, padW = h % 2, w % 2
+    if padH or padW:
+        frames = np.pad(frames, ((0, 0), (0, padH), (0, padW), (0, 0)), mode='edge')
+    return frames, frames.shape[2], frames.shape[1]
+
+
 def writeOverlayVideo(
     displayStack,
     masks,
@@ -55,6 +70,9 @@ def writeOverlayVideo(
         for t in range(nFrames):
             frames[t][labelMask] = labelOverlay[labelMask]
 
+    # even dimensions for H.264 (must be after label render, which uses h, w)
+    frames, w, h = _padFramesToEven(frames)
+
     # write to local temp file then move (avoids corrupt files on network mounts)
     tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
     os.close(tmpFd)
@@ -67,7 +85,9 @@ def writeOverlayVideo(
     try:
         shutil.move(tmpPath, outPath)
     except Exception:
-        shutil.copy2(tmpPath, outPath)
+        # copyfile, not copy2: CIFS/SMB mounts reject the metadata/permission
+        # preservation copy2 attempts, which previously produced 0 KB overlays.
+        shutil.copyfile(tmpPath, outPath)
         os.remove(tmpPath)
 
 
@@ -100,6 +120,9 @@ def writeProcessedVideo(
         for t in range(nFrames):
             frames[t][labelMask] = labelOverlay[labelMask]
 
+    # even dimensions for H.264 (must be after label render, which uses h, w)
+    frames, w, h = _padFramesToEven(frames)
+
     tmpFd, tmpPath = tempfile.mkstemp(suffix='.mp4')
     os.close(tmpFd)
     try:
@@ -109,7 +132,9 @@ def writeProcessedVideo(
     try:
         shutil.move(tmpPath, outPath)
     except Exception:
-        shutil.copy2(tmpPath, outPath)
+        # copyfile, not copy2: CIFS/SMB mounts reject the metadata/permission
+        # preservation copy2 attempts, which previously produced 0 KB overlays.
+        shutil.copyfile(tmpPath, outPath)
         os.remove(tmpPath)
 
 
