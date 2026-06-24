@@ -57,6 +57,13 @@ DEFAULTS = {
     # batched sequential transfers beat per-file writes on SMB.
     'nasMirrorEnabled': False,
     'nasMirrorDir':     '',
+    # Lean mirror: copy only the lightweight/keep outputs to the NAS (processed
+    # stack + videos + all CSVs/index/numericalData), skipping the big
+    # intermediates (registered_raw.tif ~485MB/well, masks.npz, trackedLabels
+    # .npz). Roughly halves NAS footprint. Local copy still holds everything
+    # until it is deleted post-sync. Trade-off: the mirror can no longer re-run
+    # tracking / colony-feature extraction (those need raw+masks+labels).
+    'nasMirrorLean':    False,
 }
 
 

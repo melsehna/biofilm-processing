@@ -308,6 +308,14 @@ class ParametersTab(QWidget):
         nasPathRow.addWidget(nasBrowseBtn)
         nasLayout.addLayout(nasPathRow)
 
+        self.nasMirrorLean = QCheckBox(
+            'Lean mirror: skip large intermediates on NAS '
+            '(registered_raw.tif, masks.npz, trackedLabels.npz — ~halves NAS footprint; '
+            'trade-off: NAS copy cannot re-run tracking / colony features)'
+        )
+        self.nasMirrorLean.setChecked(self.state.get('nasMirrorLean', False))
+        nasLayout.addWidget(self.nasMirrorLean)
+
         nasGroup.setLayout(nasLayout)
         layout.addWidget(nasGroup)
 
@@ -386,6 +394,8 @@ class ParametersTab(QWidget):
             lambda v: self.state.set('nasMirrorEnabled', v))
         self.nasMirrorDir.editingFinished.connect(
             lambda: self.state.set('nasMirrorDir', self.nasMirrorDir.text().strip()))
+        self.nasMirrorLean.toggled.connect(
+            lambda v: self.state.set('nasMirrorLean', v))
 
         self.saveProcessed.toggled.connect(self._enforceOutputDeps)
         self.saveRegistered.toggled.connect(self._enforceOutputDeps)
@@ -548,7 +558,7 @@ class ParametersTab(QWidget):
             self.saveOverlays, self.wholeImage, self.colonyTracking,
             self.colonyFeats, self.dustCorrection, self.saveRegistered,
             self.saveProcessed, self.saveMasks, self.saveProcessedVideo,
-            self.nasMirrorEnabled, self.nasMirrorDir,
+            self.nasMirrorEnabled, self.nasMirrorDir, self.nasMirrorLean,
             self.blockDiam, self.fixedThresh,
             self.fftStride, self.downsample, self.shiftThresh,
             self.minColonyArea, self.propRadius, self.workers,
@@ -568,6 +578,7 @@ class ParametersTab(QWidget):
         self.saveProcessedVideo.setChecked(self.state.get('saveProcessedVideo', False))
         self.nasMirrorEnabled.setChecked(self.state.get('nasMirrorEnabled', False))
         self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
+        self.nasMirrorLean.setChecked(self.state.get('nasMirrorLean', False))
         self.blockDiam.setValue(self.state.get('blockDiam', 101))
         self.fixedThresh.setValue(self.state.get('fixedThresh', 0.04))
         self.fftStride.setValue(self.state.get('fftStride', 1))

@@ -26,6 +26,19 @@ from PySide6.QtGui import QDesktopServices
 from ..buildinfo import buildRecord
 
 
+# CIFS/SMB mounts (e.g. /mnt/phenotyper) force uid/gid and a fixed file mode and
+# reject chown/chgrp/chmod AND utime. `rsync -a` (= -rlptgoD) is worse than just
+# losing metadata: with -p it stages each file through a temp file carrying the
+# source mode, and the mount rejects even that `mkstemp` ("Operation not
+# permitted") — so EVERY file fails before any data is written and nothing
+# transfers (rc=23). Strip every attribute-preserving op: no perms/owner/group
+# (lets the temp file be created) and no times (CIFS utime also fails). Compare
+# by size only, since without mtime the default size+time check re-copies
+# everything each run; pipeline outputs are immutable so size-only is safe.
+_NAS_RSYNC = ['rsync', '-rlD', '--partial', '--no-perms', '--no-owner',
+              '--no-group', '--no-times', '--size-only']
+
+
 def _fmtTime(seconds):
     seconds = max(0, int(seconds))
     if seconds < 60:
@@ -244,6 +257,7 @@ def _wholeImageOneWell(plateName, row):
         # _processed.tif is now the fixed-fpMean render (adaptive retired); read it
         # directly. Provenance (fixed vs old adaptive) is the run_params version stamp.
         inputPath = row['processed']
+        outdir = os.path.dirname(inputPath)
         t0 = time.perf_counter()
         status = extractWholeImageFeatures(
             inputPath, plateName, wellId, outdir
@@ -809,7 +823,8 @@ class ProcessingWorker(QObject):
                     nasPlateDir = self._computeNasPlateDir(
                         outputRoot, plateDirLocal, s['nasMirrorDir'].strip(),
                     )
-                    if self._syncPlateToNas(plateDirLocal, nasPlateDir):
+                    if self._syncPlateToNas(plateDirLocal, nasPlateDir,
+                                               lean=bool(s.get('nasMirrorLean', False))):
                         # plateOutdirs entries are processedImages paths, but
                         # the local copy is gone now. Repoint at NAS so the
                         # final master CSV finds the data.
@@ -1024,24 +1039,36 @@ class ProcessingWorker(QObject):
         rel = os.path.relpath(localPlateDir, outputRoot)
         return os.path.join(nasMirrorDir, rel)
 
-    def _syncPlateToNas(self, localPlateDir, nasPlateDir):
+    def _syncPlateToNas(self, localPlateDir, nasPlateDir, lean=False):
         """rsync local plate dir → NAS, then delete the local copy on success.
 
         Returns True if sync + delete succeeded, False otherwise.
         On failure, local dir is preserved so a re-run can pick up.
+
+        lean=True: exclude the large intermediates that are not needed for
+        downstream analysis (registered_raw.tif ~485MB/well, masks.npz,
+        trackedLabels*.npz). Roughly halves NAS footprint. Trade-off: the NAS
+        mirror cannot re-run tracking / colony-feature extraction.
         """
         import shutil, subprocess
         if not os.path.isdir(localPlateDir):
             self.log.emit(f'  [NAS sync] skip — local plate dir missing: {localPlateDir}')
             return False
         os.makedirs(os.path.dirname(nasPlateDir.rstrip('/')) or nasPlateDir, exist_ok=True)
-        self.log.emit(f'  [NAS sync] {localPlateDir} → {nasPlateDir}')
+        self.log.emit(f'  [NAS sync] {localPlateDir} → {nasPlateDir}'
+                      + (' (lean: skipping raw/masks/labels)' if lean else ''))
         # Trailing slashes matter: rsync src/ → dst means "contents of src into dst"
         srcArg = localPlateDir.rstrip('/') + '/'
         dstArg = nasPlateDir.rstrip('/') + '/'
+        leanExcludes = (
+            ['--exclude=*_registered_raw.tif',
+             '--exclude=*_masks.npz',
+             '--exclude=*_trackedLabels_*.npz']
+            if lean else []
+        )
         try:
             result = subprocess.run(
-                ['rsync', '-a', '--info=progress2', srcArg, dstArg],
+                [*_NAS_RSYNC, *leanExcludes, '--info=progress2', srcArg, dstArg],
                 capture_output=True, text=True, timeout=3600,
             )
             if result.returncode != 0:
@@ -1097,7 +1124,7 @@ class ProcessingWorker(QObject):
             # update-only rsync; per-plate dirs were already deleted locally
             # so only the master_*.csv and any embeddings/ etc. remain
             result = subprocess.run(
-                ['rsync', '-a', srcArg, dstArg],
+                [*_NAS_RSYNC, srcArg, dstArg],
                 capture_output=True, text=True, timeout=3600,
             )
             if result.returncode != 0:

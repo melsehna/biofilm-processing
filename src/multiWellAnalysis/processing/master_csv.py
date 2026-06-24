@@ -54,6 +54,22 @@ def _prefixCols(df, prefix, keep=('frame',)):
     return df.rename(columns={c: f'{prefix}{c}' for c in df.columns if c not in keep})
 
 
+def _resolveArtifact(outdir, storedPath):
+    """Resolve a per-well artifact path (biomass/feature CSV) relative to the
+    index.csv's own directory.
+
+    index.csv stores ABSOLUTE paths from processing time, which point at the
+    local staging dir. Under NAS-mirror mode that dir is synced + deleted, and
+    plateOutdirs is repointed at the NAS copy — but the paths inside the index
+    still reference the gone local staging. Every artifact lives next to the
+    index in processedImages/, so resolve by basename against outdir. Works
+    whether the index is read from local staging or the NAS mirror.
+    """
+    if not storedPath:
+        return ''
+    return os.path.join(outdir, os.path.basename(storedPath))
+
+
 def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
     """Read per-plate index files and write master CSVs to outputRoot.
 
@@ -88,19 +104,19 @@ def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
             mag       = irow.get('mag', '')
             drawerId  = drawerMap.get(plateName, plateName)
 
-            biomassPath = irow.get('biomass', '')
+            biomassPath = _resolveArtifact(outdir, irow.get('biomass', ''))
             if not biomassPath or not os.path.exists(biomassPath):
                 log(f'  [master CSV] {plateName}/{wellId}: no biomass CSV, skipping')
                 continue
 
             merged = pd.read_csv(biomassPath)[['frame', 'biomass']]
 
-            wiPath = irow.get('whole_image_feats', '')
+            wiPath = _resolveArtifact(outdir, irow.get('whole_image_feats', ''))
             if wiPath and os.path.exists(wiPath):
                 wi = _dropCols(pd.read_csv(wiPath), _wiIdentity)
                 merged = merged.merge(wi, on='frame', how='outer')
 
-            wcaPath = irow.get('well_colony_feats', '')
+            wcaPath = _resolveArtifact(outdir, irow.get('well_colony_feats', ''))
             if wcaPath and os.path.exists(wcaPath):
                 wca = _dropCols(pd.read_csv(wcaPath), _wcaIdentity)
                 wca = _prefixCols(wca, 'colAgg_')
@@ -113,7 +129,7 @@ def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
 
             frameRows.append(merged)
 
-            cfPath = irow.get('colony_feats', '')
+            cfPath = _resolveArtifact(outdir, irow.get('colony_feats', ''))
             if cfPath and os.path.exists(cfPath):
                 cf = _dropCols(pd.read_csv(cfPath), _colIdentity)
                 cf.insert(0, 'drawerID', drawerId)
