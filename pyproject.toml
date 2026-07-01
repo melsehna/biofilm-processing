@@ -10,26 +10,32 @@ authors = [
   { name="Seh Na S. Mellick" }
 ]
 requires-python = ">=3.9"
+# Version ranges below are "will it install and run" bounds. The EXACT, validated
+# versions used to produce published results are pinned in environment.yml (built
+# from conda-forge, Python 3.9.23). Upper bounds on numpy/scipy track the last
+# release supporting Python 3.9; the numerically-sensitive libs (numpy, scipy,
+# scikit-image, mahotas) are capped at the next minor because their internals
+# (label(), morphology, distance_transform_edt, Haralick) can shift feature values.
 dependencies = [
-    "numpy",
-    "scipy",
-    "scikit-image",
-    "scikit-learn",
-    "opencv-python",
-    "mahotas",
-    "pandas",
-    "matplotlib",
-    "tifffile",
-    "imageio",
-    "imageio-ffmpeg",
-    "tqdm",
-    "PySide6",
+    "numpy>=2.0,<2.1",
+    "scipy>=1.13,<1.14",
+    "scikit-image>=0.24,<0.25",
+    "scikit-learn>=1.6,<1.7",
+    "opencv-python>=4.9,<5",
+    "mahotas>=1.4,<1.5",
+    "pandas>=2.0,<3",
+    "matplotlib>=3.8,<4",
+    "tifffile>=2024.6",
+    "imageio>=2.34,<3",
+    "imageio-ffmpeg>=0.5,<1",
+    "tqdm>=4.66,<5",
+    "PySide6>=6.6,<7",
 ]
 
 [project.optional-dependencies]
 umap = [
-    "umap-learn",
-    "pyarrow",
+    "umap-learn>=0.5.5,<0.6",
+    "pyarrow>=15",
 ]
 
 [tool.setuptools]

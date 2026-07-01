@@ -1,0 +1,49 @@
+# Exact, validated environment for biofilm-processing.
+#
+# This is the reproducibility manifest: the precise versions used to produce
+# published results, built from conda-forge (which is what the numerics were
+# validated on — conda-forge numpy/scipy use a different BLAS than PyPI wheels
+# and can differ from them at the floating-point level). Prefer this over
+# `pip install -e .` when reproducing a paper's analysis.
+#
+# Create the env:
+#   conda env create -f environment.yml
+#   conda activate biofilm-processing
+#   pip install -e . --no-deps        # install the package itself, deps already solved
+#
+# For a fully-solved, cross-platform lock (best practice for archival), run:
+#   conda-lock -f environment.yml -p linux-64 -p osx-arm64
+# and commit the resulting conda-lock.yml alongside this file.
+#
+# NOTE: Python is pinned to 3.9.23 because that is the interpreter the results
+# were produced on (the `phenotypr2` env). Python 3.9 is end-of-life; the general
+# install path in README.md uses 3.11. numpy/scipy upper bounds in pyproject.toml
+# track the last releases that still support 3.9. When the validated stack is next
+# refreshed, bump this file and re-run the golden tests before publishing.
+name: biofilm-processing
+channels:
+  - conda-forge
+# Channel note: most packages come from conda-forge, but opencv-python and
+# imageio-ffmpeg were installed from PyPI (below, under `pip:`). This is faithful
+# to the validated env — the conda-forge `opencv` build differs from the PyPI
+# `opencv-python` wheel, so it is pinned as the pip wheel, not swapped for conda.
+dependencies:
+  - python=3.9.23
+  - numpy=2.0.2
+  - scipy=1.13.1
+  - scikit-image=0.24.0
+  - scikit-learn=1.6.1
+  - mahotas=1.4.18
+  - pandas=2.3.1
+  - matplotlib=3.9.4
+  - tifffile=2024.6.18
+  - imageio=2.37.0
+  - tqdm=4.67.1
+  - pyside6=6.9.0
+  # optional [umap] extra — comment out if not building embeddings
+  - umap-learn=0.5.9
+  - pyarrow=21.0.0
+  - pip
+  - pip:
+      - opencv-python==4.12.0.88
+      - imageio-ffmpeg==0.6.0

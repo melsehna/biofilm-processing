@@ -74,6 +74,14 @@ biofilm-processing-gui
 
 > **Windows users — `mahotas` install error?** `mahotas` is a C library and needs a compiler. Easiest fix: before running `pip install -e .`, run `conda install -c conda-forge mahotas -y`. If you'd rather use the Microsoft compiler, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and check the "Desktop development with C++" box during setup.
 
+> **Reproducing published results?** The command above installs *current* dependency versions, which may differ from the ones a paper was produced with. To reproduce the exact validated stack, create the environment from the pinned manifest instead:
+> ```bash
+> conda env create -f environment.yml
+> conda activate biofilm-processing
+> pip install -e . --no-deps
+> ```
+> See [Reproducibility & containers](#reproducibility--containers) for details.
+
 ### 4. Make a desktop shortcut (optional but recommended)
 
 If you don't want to open a terminal every time you launch biofilm-processing:
@@ -379,6 +387,40 @@ scripts/
     regenOverlays.py             CLI: regenerate overlay videos
     regenOverlaysFromIndex.py    CLI: bulk regen across many plates
 ```
+
+---
+
+## Reproducibility & containers
+
+Reproducibility is layered — pick the tier that matches your need:
+
+| Tier | Artifact | Guarantees | Use when |
+|---|---|---|---|
+| Ranges | `pyproject.toml` | Installs and runs | Day-to-day use, `pip install -e .` |
+| Exact env | `environment.yml` | Same Python package versions the results used | Reproducing a paper's analysis |
+| Full system | `Dockerfile` (→ image) | Same versions **and** OS libraries | Archival, HPC, sharing with reviewers |
+
+**Why the exact env matters.** The numerically-sensitive libraries (`numpy`, `scipy`, `scikit-image`, `mahotas`) can change segmentation counts and feature values across versions — `skimage.measure.label`, morphology, `distance_transform_edt`, and the Haralick implementation are not guaranteed stable release-to-release. `environment.yml` pins the exact versions (from conda-forge, the channel the numerics were validated on) so results are stable. It is pinned to Python 3.9.23, the interpreter the published results were produced on; the general install above uses a newer Python for convenience.
+
+**Why a container, not just a lockfile.** A `pip freeze` captures Python packages but not the system libraries `opencv` and Qt depend on (`libGL`, `libEGL`, `ffmpeg`) — the usual source of "works on my machine, `ImportError: libGL.so.1` on the cluster." The `Dockerfile` bakes those in and builds on a micromamba/conda-forge base so the in-container numerics match `environment.yml`. It targets the **headless CLI** (`biofilm-processing-run` / `-test-well`) — the GUI is not containerized (Qt GUIs need X forwarding; the reproducible science is the headless pipeline).
+
+```bash
+# Build a multi-arch image (x86 HPC + Apple Silicon) and push
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/melsehna/biofilm-processing:0.5.0 --push .
+
+# Run locally
+docker run --rm -v /data:/data -v /out:/out \
+  ghcr.io/melsehna/biofilm-processing:0.5.0 \
+  biofilm-processing-run --plates /data/plateA -o /out --mag _03 --workers 8
+
+# Run on an HPC cluster via Apptainer/Singularity (no root, no Docker daemon)
+apptainer pull biofilm.sif docker://ghcr.io/melsehna/biofilm-processing:0.5.0
+apptainer exec --bind /mnt/bridgeslab,/mnt/data biofilm.sif \
+  biofilm-processing-run --plates /mnt/.../plateA -o /mnt/data/out --mag _03 --workers 40
+```
+
+For an archival, fully-solved lock (all transitive deps, per-platform), generate `conda-lock.yml` from `environment.yml` with [`conda-lock`](https://github.com/conda/conda-lock) and commit it alongside — then a release image tagged to a Zenodo DOI gives a citable frozen artifact.
 
 ---
 

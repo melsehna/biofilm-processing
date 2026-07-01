@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "biofilm-processing: high-throughput biofilm phenotyping from brightfield timelapse microscopy"
+abstract: >-
+  A high-throughput pipeline for automated brightfield timelapse microscopy of
+  96-well plates. Processes per-well TIFF stacks through registration,
+  segmentation, colony tracking, and colony/whole-image feature extraction, with
+  a PySide6 GUI and headless CLI tools.
+type: software
+version: 0.5.0
+repository-code: "https://github.com/melsehna/biofilm-processing"
+authors:
+  - family-names: Mellick
+    given-names: "Seh Na S."
+    email: smellick@andrew.cmu.edu
+    affiliation: "Carnegie Mellon University"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"   # TODO: add ORCID
+keywords:
+  - biofilm
+  - microscopy
+  - image-analysis
+  - phenotyping
+  - colony-tracking
+# TODO: set `license:` (SPDX id, e.g. MIT / BSD-3-Clause / GPL-3.0-or-later) once
+#       decided with advisor; also set `date-released:` when a version is tagged.
+#
+# TODO: when the accompanying paper is published, add a `preferred-citation:`
+#       block (type: article, with doi/journal/year) so "Cite this repository"
+#       points at the paper rather than the software.
