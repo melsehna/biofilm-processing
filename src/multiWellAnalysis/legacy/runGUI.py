@@ -298,7 +298,7 @@ class ProcessingWorker(QObject):
         tif_files = sorted(glob.glob(os.path.join(plate_path, '*.tif')))
 
         # Try magnification-aware discovery first
-        from multiWellAnalysis.processing.batch_runner import discover_mag_groups
+        from multiWellAnalysis.legacy.batch_runner import discover_mag_groups
         from multiWellAnalysis.processing.analysis_main import frame_index_from_filename
 
         bf_files = [f for f in tif_files

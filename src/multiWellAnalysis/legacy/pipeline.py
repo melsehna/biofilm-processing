@@ -2,7 +2,7 @@ import os
 import json
 import glob
 from .batch_runner import batchRun
-from .plotting import plotting_main
+from multiWellAnalysis.processing.plotting import plotting_main
 
 def Pipeline(
     base_dir="/home/smellick/ImageLibrary/plates",
@@ -46,4 +46,4 @@ def Pipeline(
     print("\nPipeline complete.")
 
 if __name__ == "__main__":
-    pipeline()
+    Pipeline()

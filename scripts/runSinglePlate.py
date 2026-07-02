@@ -20,7 +20,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from multiWellAnalysis.processing.batch_runner import run_plate, discover_mag_groups
+from multiWellAnalysis.legacy.batch_runner import run_plate, discover_mag_groups
 from multiWellAnalysis.processing.helpers import round_odd
 import glob as globmod
 
@@ -99,7 +99,7 @@ def main():
     if args.mag:
         _orig_discover = discover_mag_groups.__wrapped__ if hasattr(discover_mag_groups, '__wrapped__') else None
 
-        import multiWellAnalysis.processing.batch_runner as br
+        import multiWellAnalysis.legacy.batch_runner as br
         _orig_fn = br.discover_mag_groups
 
         def _filtered_discover(plate_dir, tif_files):

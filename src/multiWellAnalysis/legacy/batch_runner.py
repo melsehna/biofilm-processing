@@ -7,9 +7,9 @@ import pandas as pd
 import imageio.v3 as iio
 from collections import defaultdict
 from tqdm import tqdm
-from .analysis_main import timelapseProcessing, frameIndexFromFilename
-from .io_utils import readImagesInplace
-from .helpers import roundOdd
+from multiWellAnalysis.processing.analysis_main import timelapseProcessing, frameIndexFromFilename
+from multiWellAnalysis.processing.io_utils import readImagesInplace
+from multiWellAnalysis.processing.helpers import roundOdd
 
 
 def _magGroupsFromProtocol(plateDir, tifFiles):
@@ -243,7 +243,7 @@ def batchRun(configPath, replicateCsv, force=False, skipOverlay=False):
 
     print("\nGenerating summary plots for all processed plates...")
     try:
-        from .plotting import plotting_main
+        from multiWellAnalysis.processing.plotting import plotting_main
         rootDir = os.path.dirname(replicateCsv)
         plotting_main(rootDir)
         print("Summary plots generated for all plates.")

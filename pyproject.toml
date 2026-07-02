@@ -44,6 +44,8 @@ dev = [
 
 [tool.ruff]
 line-length = 120
+# Quarantined, unsupported modules — not maintained, so not linted.
+extend-exclude = ["src/multiWellAnalysis/legacy"]
 
 [tool.ruff.lint]
 # The codebase is intentionally camelCase — do NOT enable pep8-naming (N).
