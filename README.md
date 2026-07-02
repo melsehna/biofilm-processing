@@ -1,5 +1,7 @@
 # biofilm-processing
 
+[![CI](https://github.com/melsehna/biofilm-processing/actions/workflows/ci.yml/badge.svg)](https://github.com/melsehna/biofilm-processing/actions/workflows/ci.yml)
+
 **Biofilm phenotyping from brightfield timelapse microscopy of 96-well plates.**
 
 biofilm-processing takes the per-well image stacks produced by a Cytation5 microscope and turns them into clean biomass curves, mask overlay videos, tracked colony labels, and per-colony / whole-image feature tables — all driven from a desktop GUI.

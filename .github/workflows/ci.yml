@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Job A — the exact validated stack (environment.yml, Python 3.9.23, conda-forge).
+  # Proves the reproducibility manifest solves on a clean machine AND that the
+  # tests pass on the precise versions published results came from.
+  reproduce:
+    name: reproduce (environment.yml)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}   # login shell so the conda env is active
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries (opencv, Qt, ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libegl1 libxkbcommon0 libdbus-1-3 ffmpeg
+
+      - name: Build environment from environment.yml
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Install package (deps already solved by conda) + test runner
+        run: |
+          pip install -e . --no-deps
+          pip install pytest
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -v
+
+  # Job B — a normal user's pip install, across the Python versions the pins allow.
+  # Makes `requires-python >= 3.9` a tested fact rather than an assertion.
+  install:
+    name: install (pip, py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries (opencv, Qt, ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libegl1 libxkbcommon0 libdbus-1-3 ffmpeg
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install package with umap + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[umap,dev]"
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -v
+
+  # Job C — lint, informational only (does not gate the build).
+  lint:
+    name: lint (ruff, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check .

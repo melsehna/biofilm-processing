@@ -37,6 +37,19 @@ umap = [
     "umap-learn>=0.5.5,<0.6",
     "pyarrow>=15",
 ]
+dev = [
+    "pytest>=7",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# The codebase is intentionally camelCase — do NOT enable pep8-naming (N).
+# Keep the high-value defaults (pyflakes F: unused imports / undefined names;
+# pycodestyle E) and drop line-length noise.
+extend-ignore = ["E501"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
