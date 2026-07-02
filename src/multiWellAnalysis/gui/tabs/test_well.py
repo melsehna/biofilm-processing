@@ -1,9 +1,6 @@
 import os
-import glob
-import re
 import threading
 import numpy as np
-from collections import defaultdict
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QSlider,
     QPushButton, QProgressBar,

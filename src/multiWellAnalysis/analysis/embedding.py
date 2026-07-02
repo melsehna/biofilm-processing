@@ -10,7 +10,6 @@ empirically add noise.
 import warnings
 
 import numpy as np
-import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from umap import UMAP
 

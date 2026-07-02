@@ -184,7 +184,7 @@ def installMacos(guiBin):
                 f'conda activate {envName}\n'
             )
         else:
-            activateLines = f'# conda base not found, using absolute path\n'
+            activateLines = '# conda base not found, using absolute path\n'
     elif venv:
         activateLines = f'source "{venv}/bin/activate"\n'
 
@@ -196,15 +196,15 @@ def installMacos(guiBin):
         f.write('#!/bin/zsh\n')
         f.write(f'# biofilm-processing GUI launcher — errors logged to {logPath}\n')
         f.write(f'exec >> "{logPath}" 2>&1\n')
-        f.write(f'echo "--- $(date) ---"\n')
-        f.write(f'echo "PATH=$PATH"\n\n')
+        f.write('echo "--- $(date) ---"\n')
+        f.write('echo "PATH=$PATH"\n\n')
         f.write(activateLines)
-        f.write(f'\n# Try biofilm-processing-gui on PATH, then fall back to absolute path\n')
-        f.write(f'if command -v biofilm-processing-gui &>/dev/null; then\n')
-        f.write(f'    biofilm-processing-gui\n')
-        f.write(f'else\n')
+        f.write('\n# Try biofilm-processing-gui on PATH, then fall back to absolute path\n')
+        f.write('if command -v biofilm-processing-gui &>/dev/null; then\n')
+        f.write('    biofilm-processing-gui\n')
+        f.write('else\n')
         f.write(f'    "{guiBinAbs}"\n')
-        f.write(f'fi\n')
+        f.write('fi\n')
     os.chmod(launcher, 0o755)
 
     contentsDir = os.path.join(desktopDir, 'biofilm-processing.app', 'Contents')

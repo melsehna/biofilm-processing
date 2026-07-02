@@ -18,7 +18,6 @@ a numericalData/ folder next to processedImages/:
 """
 
 import os
-import re
 import pandas as pd
 
 _wiIdentity  = {'plateid', 'wellid', 'processedpath'}

@@ -65,7 +65,6 @@ class ProcessingWorker(QObject):
             self.finished.emit()
 
     def _run_pipeline(self):
-        from multiWellAnalysis.processing.analysis_main import timelapse_processing
 
         plates = self._state['plates']
         total_plates = len(plates)
@@ -231,7 +230,7 @@ class ProcessingWorker(QObject):
         mask_path = os.path.join(outdir, f'{well_id}_masks.npz')
 
         if not os.path.exists(raw_path) or not os.path.exists(mask_path):
-            self.log.emit(f'    Skipping tracking: missing raw/mask files')
+            self.log.emit('    Skipping tracking: missing raw/mask files')
             return
 
         raw_stack = tifffile.imread(raw_path)
@@ -248,7 +247,7 @@ class ProcessingWorker(QObject):
         if npz_path:
             self.log.emit(f'    Saved tracked labels: {os.path.basename(npz_path)}')
         else:
-            self.log.emit(f'    Tracking produced no output')
+            self.log.emit('    Tracking produced no output')
 
     def _run_colony_feats(self, plate_name, outdir, well_id):
         from multiWellAnalysis.colony.runColonyFeatsGUI import extractAndSave
@@ -256,7 +255,7 @@ class ProcessingWorker(QObject):
         labels_paths = glob.glob(os.path.join(outdir, f'{well_id}_trackedLabels_*.npz'))
         raw_path = os.path.join(outdir, f'{well_id}_registered_raw.tif')
         if not labels_paths or not os.path.exists(raw_path):
-            self.log.emit(f'    Skipping colony feats: missing files')
+            self.log.emit('    Skipping colony feats: missing files')
             return
 
         data = np.load(labels_paths[0])
@@ -275,14 +274,14 @@ class ProcessingWorker(QObject):
         if colony_df is not None:
             self.log.emit(f'    Colony features: {len(colony_df)} rows')
         else:
-            self.log.emit(f'    No colonies found for feature extraction')
+            self.log.emit('    No colonies found for feature extraction')
 
     def _run_whole_image_feats(self, plate_name, outdir, well_id):
         from multiWellAnalysis.wholeImage.runWholeImageGUI import extractWholeImageFeatures
 
         proc_path = os.path.join(outdir, f'{well_id}_processed.tif')
         if not os.path.exists(proc_path):
-            self.log.emit(f'    Skipping whole-image: missing processed stack')
+            self.log.emit('    Skipping whole-image: missing processed stack')
             return
 
         status = extractWholeImageFeatures(

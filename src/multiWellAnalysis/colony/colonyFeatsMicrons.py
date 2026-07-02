@@ -4,7 +4,6 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import pdist, squareform
 from scipy.sparse.csgraph import minimum_spanning_tree
 from skimage.measure import regionprops, regionprops_table
-from scipy.stats import skew, kurtosis
 from scipy.ndimage import binary_dilation
 from skimage.morphology import disk
 

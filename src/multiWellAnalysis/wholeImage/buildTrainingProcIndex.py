@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import pandas as pd
-import tifffile
 from glob import glob
 
 root = '/mnt/data/trainingData'

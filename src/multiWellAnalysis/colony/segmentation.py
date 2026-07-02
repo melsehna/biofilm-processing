@@ -1,7 +1,6 @@
-import numpy as np
 from scipy.ndimage import binary_fill_holes
 from skimage.measure import label, regionprops
-from skimage.morphology import remove_small_objects, disk, binary_closing
+from skimage.morphology import remove_small_objects
 
 # def segmentColonies(
 #     rawImg,

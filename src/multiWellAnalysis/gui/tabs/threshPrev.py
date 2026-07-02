@@ -5,7 +5,6 @@ import imageio.v3 as iio
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from multiWellAnalysis.processing.preprocessing import normalizeLocalContrast
 class PreviewTab(QWidget):
     def __init__(self, state):
         super().__init__()

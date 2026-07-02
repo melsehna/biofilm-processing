@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLineEdit, QLabel, QListWidget, QScrollArea, QComboBox,
 )
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QMouseEvent
 
 

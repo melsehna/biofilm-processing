@@ -1,9 +1,6 @@
 import json
 import os
-import sys
-import io
 import time
-import glob
 import re
 import csv as csv_mod
 import threading
@@ -603,7 +600,7 @@ class ProcessingWorker(QObject):
 
                 self.log.emit(f'  Found {len(wells)} wells (mag={magSetting})')
                 if not wells:
-                    self.log.emit(f'  No wells found, skipping.')
+                    self.log.emit('  No wells found, skipping.')
                     plateIdx += 1
                     continue
 
@@ -614,7 +611,7 @@ class ProcessingWorker(QObject):
                 plateMeta = s.get('plateMeta', {})
                 suffixMeta = plateMeta.get(userPath) or plateMeta.get(resolvedPlate)
                 if not suffixMeta:
-                    self.log.emit(f'  No cached metadata for this plate — probing now')
+                    self.log.emit('  No cached metadata for this plate — probing now')
                     from multiWellAnalysis.processing.image_metadata import probePlateMeta
                     suffixMeta = probePlateMeta(resolvedPlate, logFn=self.log.emit)
 
@@ -764,7 +761,7 @@ class ProcessingWorker(QObject):
                             self._submitWholeImage, plateName
                         )
                     else:
-                        self.log.emit(f'\n  Stage 2 skipped: no wells in index')
+                        self.log.emit('\n  Stage 2 skipped: no wells in index')
                 else:
                     self.log.emit(f'\n  Stage 2 skipped: wholeImageFeats={s.get("wholeImageFeats")}')
 
@@ -781,7 +778,7 @@ class ProcessingWorker(QObject):
                             self._submitTracking, plateName, s
                         )
                     else:
-                        self.log.emit(f'\n  Stage 3 skipped: no wells in index')
+                        self.log.emit('\n  Stage 3 skipped: no wells in index')
 
                 if self._stop.is_set():
                     plateIdx += 1
@@ -797,7 +794,7 @@ class ProcessingWorker(QObject):
                             self._submitColonyFeats, plateName
                         )
                     else:
-                        self.log.emit(f'\n  Stage 4 skipped: no tracked labels in index')
+                        self.log.emit('\n  Stage 4 skipped: no tracked labels in index')
 
                 # log index summary before saving
                 indexCols = set()
@@ -1003,7 +1000,8 @@ class ProcessingWorker(QObject):
         when the dir was auto-created, so the caller knows to delete it
         at the very end of the run.
         """
-        import datetime, shutil
+        import datetime
+        import shutil
         if userOutputRoot and os.path.isdir(userOutputRoot):
             if not self._onSameMount(userOutputRoot, nasMirrorDir):
                 # Verify space on user's chosen dir
@@ -1050,7 +1048,7 @@ class ProcessingWorker(QObject):
         trackedLabels*.npz). Roughly halves NAS footprint. Trade-off: the NAS
         mirror cannot re-run tracking / colony-feature extraction.
         """
-        import shutil, subprocess
+        import subprocess
         if not os.path.isdir(localPlateDir):
             self.log.emit(f'  [NAS sync] skip — local plate dir missing: {localPlateDir}')
             return False
@@ -1099,7 +1097,8 @@ class ProcessingWorker(QObject):
         """Robust recursive delete. Tries shutil.rmtree first; if that fails
         or leaves anything behind, falls back to `rm -rf`. Returns True only
         when the directory is verified gone."""
-        import shutil, subprocess
+        import shutil
+        import subprocess
         if not os.path.exists(path):
             return True
         try:

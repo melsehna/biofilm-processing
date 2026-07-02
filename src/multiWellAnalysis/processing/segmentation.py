@@ -1,5 +1,4 @@
 import numpy as np
-import cv2
 
 def computeMaskInplace(stack, masks, fixedThresh):
     masks[:] = stack > float(fixedThresh)

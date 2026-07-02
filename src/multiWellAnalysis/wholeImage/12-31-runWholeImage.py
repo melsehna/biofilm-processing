@@ -224,7 +224,7 @@ if __name__ == '__main__':
         plate_log(args.outdir, plateID,
                   '=== START whole-image feature extraction ===')
         plate_log(args.outdir, plateID,
-                  f'params: startFrame=6 featureVersion=mahotas_v1')
+                  'params: startFrame=6 featureVersion=mahotas_v1')
 
         print(f'Running whole-image features for {plateID}')
         t0 = time.perf_counter()

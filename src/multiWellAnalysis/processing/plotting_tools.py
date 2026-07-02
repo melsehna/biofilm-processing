@@ -25,7 +25,6 @@ def save_biomass_curve(biomass, outdir, filename):
 def save_peak_panel(raw_peak, processed_peak, peak_mask, overlay, segmentation, outdir, filename, peak_t):
     """Save a 5-panel diagnostic figure for the peak biomass frame."""
     import matplotlib.pyplot as plt
-    from skimage import exposure
     import os
 
     fig, axes = plt.subplots(1, 5, figsize=(16, 4))

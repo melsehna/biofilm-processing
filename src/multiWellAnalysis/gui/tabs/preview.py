@@ -1,5 +1,4 @@
 import os
-import glob
 import re
 import threading
 import numpy as np
@@ -473,7 +472,7 @@ class PreviewTab(QWidget):
         self.axMask.imshow(overlay)
         self.axMask.set_title(
             f'Mask Overlay\nthresh={fixedThresh}'
-            + (f'  dust=on (full run only)' if dustCorrection else ''),
+            + ('  dust=on (full run only)' if dustCorrection else ''),
             fontsize=9,
         )
 

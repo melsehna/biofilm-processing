@@ -9,7 +9,6 @@ import json
 import os
 import pickle
 
-import pandas as pd
 
 from ..processing.master_csv import _magSuffixToObj
 from .embedding import fitUmapGrid

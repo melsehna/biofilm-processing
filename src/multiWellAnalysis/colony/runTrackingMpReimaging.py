@@ -11,7 +11,6 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import imageio.v2 as imageio
 
 
@@ -21,7 +20,6 @@ import pandas as pd
 from scipy.ndimage import distance_transform_edt, binary_fill_holes
 
 from skimage.measure import label
-from skimage.measure import label as cc_label
 
 from skimage.morphology import remove_small_objects
 

@@ -1,4 +1,5 @@
-import os, time
+import os
+import time
 p = "/Volumes/data/Good imaging data/Multi-phenotype training"
 t0 = time.time()
 e = os.listdir(p)

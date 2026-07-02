@@ -16,7 +16,6 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 import sys
 import argparse
 import time
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))

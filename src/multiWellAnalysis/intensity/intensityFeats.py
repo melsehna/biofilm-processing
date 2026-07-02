@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from skimage.measure import regionprops
 from scipy.stats import skew, kurtosis
 from scipy.ndimage import binary_dilation

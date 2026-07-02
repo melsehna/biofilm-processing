@@ -4,9 +4,7 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import pdist, squareform
 from scipy.sparse.csgraph import minimum_spanning_tree
 from skimage.measure import regionprops, regionprops_table
-from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 from scipy.stats import skew, kurtosis
-import numpy as np
 from scipy.ndimage import binary_dilation
 from skimage.morphology import disk
 
@@ -156,7 +154,6 @@ def addColonySpatialFeatures(colonyDf):
     return colonyDf
 
 
-from skimage.measure import regionprops
 
 def addColonyIntensityMassFeatures(colonyDf, labels, rawImg):
     props = regionprops(labels, intensity_image=rawImg)

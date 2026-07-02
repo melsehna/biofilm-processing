@@ -6,7 +6,6 @@ isn't available (e.g., installed via pip from a wheel), falls back to
 the package version alone.
 """
 
-import os
 import subprocess
 from pathlib import Path
 
