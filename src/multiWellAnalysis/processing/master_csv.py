@@ -18,6 +18,9 @@ a numericalData/ folder next to processedImages/:
 """
 
 import os
+import json
+from datetime import datetime, timezone
+
 import pandas as pd
 
 _wiIdentity  = {'plateid', 'wellid', 'processedpath'}
@@ -69,7 +72,7 @@ def _resolveArtifact(outdir, storedPath):
     return os.path.join(outdir, os.path.basename(storedPath))
 
 
-def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
+def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None, provenance=None):
     """Read per-plate index files and write master CSVs to outputRoot.
 
     Parameters
@@ -81,6 +84,11 @@ def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
     outputRoot : str
         Directory where master_*.csv files will be written.
     logFn : callable, optional
+    provenance : dict, optional
+        Pipeline build/version record (see gui/buildinfo.py:buildRecord). When
+        given, a run-level `provenance.json` sidecar is written next to the
+        master CSVs recording which pipeline produced them. Passed in by the
+        caller so this module stays decoupled from the GUI package.
     """
     def log(msg):
         if logFn:
@@ -156,6 +164,23 @@ def assembleMasterCsvs(plateOutdirs, drawerMap, outputRoot, logFn=None):
         master.to_csv(path, index=False)
         results['colony'] = (path, len(master))
         log(f'  Master CSV (colony): {path}  ({len(master):,} rows, {len(master.columns)} cols)')
+
+    # Run-level provenance sidecar: records which pipeline build produced these
+    # master CSVs. Written as a sidecar (not CSV columns) because
+    # master_frame_features.csv is pivoted frames-as-features by the UMAP step
+    # (analysis/wide_table.py) — any non-id column becomes <feature>_t<frame>, so
+    # provenance columns would corrupt the embedding.
+    if results:
+        provPath = os.path.join(outputRoot, 'provenance.json')
+        record = {
+            'generatedAtUtc': datetime.now(timezone.utc).isoformat(),
+            'pipeline': provenance,
+            'masterCsvs': {kind: {'file': os.path.basename(p), 'rows': n}
+                           for kind, (p, n) in results.items()},
+        }
+        with open(provPath, 'w') as f:
+            json.dump(record, f, indent=2)
+        log(f'  Provenance:          {provPath}')
 
     return results
 

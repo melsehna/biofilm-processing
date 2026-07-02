@@ -844,6 +844,7 @@ class ProcessingWorker(QObject):
                 assembleMasterCsvs(
                     plateOutdirs, drawerMap, outputRoot,
                     logFn=self.log.emit,
+                    provenance=buildRecord(),
                 )
                 masterOk = True
             except Exception as e:

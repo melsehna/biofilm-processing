@@ -174,3 +174,39 @@ def test_propagation_preserves_id_across_shift_and_allocates_new():
     assert labelsNext[6, 6] == 5         # shifted colony kept its id, not relabeled
     assert labelsNext[15, 15] == 6       # far colony got the fresh id
     assert nextLabelId == 7              # counter advanced once
+
+
+# ---------------------------------------------------------------------------
+# Provenance stamping (master_csv.assembleMasterCsvs): a run-level
+# provenance.json sidecar records which pipeline build produced the master CSVs.
+# (Also the first coverage of the master-CSV assembly itself.)
+# ---------------------------------------------------------------------------
+
+def test_master_csv_writes_provenance_sidecar(tmp_path):
+    import json
+    import pandas as pd
+    from multiWellAnalysis.processing.master_csv import assembleMasterCsvs
+
+    # Minimal per-plate layout: processedImages/index.csv + one biomass CSV.
+    proc = tmp_path / 'P1' / 'processedImages'
+    proc.mkdir(parents=True)
+    pd.DataFrame({'frame': [0, 1, 2], 'biomass': [0.0, 0.01, 0.02]}).to_csv(
+        proc / 'A1_biomass.csv', index=False)
+    pd.DataFrame([{'plate': 'P1', 'plate_path': str(tmp_path / 'P1'),
+                   'well': 'A1', 'mag': '_03', 'biomass': 'A1_biomass.csv'}]).to_csv(
+        proc / 'index.csv', index=False)
+
+    out = tmp_path / 'out'
+    out.mkdir()
+    prov = {'version': '9.9.9-test', 'gitCommit': 'deadbee'}
+    results = assembleMasterCsvs([str(proc)], {'P1': 'D1'}, str(out), provenance=prov)
+
+    # master frame CSV produced with our three biomass rows
+    assert (out / 'master_frame_features.csv').exists()
+    assert results['frame'][1] == 3
+
+    # provenance sidecar written and carries the injected pipeline record
+    rec = json.loads((out / 'provenance.json').read_text())
+    assert rec['pipeline'] == prov
+    assert rec['masterCsvs']['frame']['rows'] == 3
+    assert 'generatedAtUtc' in rec
