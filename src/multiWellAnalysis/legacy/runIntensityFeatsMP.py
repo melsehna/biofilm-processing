@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
-from multiWellAnalysis.intensity.io_utils import (
+from multiWellAnalysis.legacy.io_utils import (
     loadRawStack,
     loadProcessedStack,
     ensureDir,
@@ -24,13 +24,13 @@ from multiWellAnalysis.intensity.io_utils import (
     timestamp
 )
 
-from multiWellAnalysis.intensity.intensityFeats import (
+from multiWellAnalysis.legacy.intensityFeats import (
     addColonyIntensityFeatures,
     extractBackgroundIntensityFeatures
 )
 
-from multiWellAnalysis.colony.colonyFeats import extractColonyGeometry
-from multiWellAnalysis.colony.wellAgg import aggregateWellFeatures
+from multiWellAnalysis.legacy.colonyFeats import extractColonyGeometry
+from multiWellAnalysis.legacy.wellAgg import aggregateWellFeatures
 
 
 

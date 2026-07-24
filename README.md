@@ -379,10 +379,12 @@ python -m multiWellAnalysis.wholeImage.runWholeImage \
 ```
 src/multiWellAnalysis/
     gui/               PySide6 GUI (app.py is the entry point)
-    processing/        Core pipeline: preprocessing, registration, segmentation, overlay, batch runner
+    cli/               Headless entry points (biofilm-processing-run / -test-well)
+    processing/        Core pipeline: preprocessing, registration, segmentation, overlay, master CSVs
     colony/            Colony tracking + per-colony feature extraction
     wholeImage/        Whole-image (Haralick) texture features
-    intensity/         Per-pixel intensity features
+    analysis/          UMAP embedding of the run-level feature table
+    legacy/            Quarantined, unsupported modules (see legacy/README.md) — not imported by the pipeline
 scripts/
     installDesktopShortcut.py    Desktop shortcut creator (Linux/macOS/Windows)
     runSinglePlate.py            CLI: process one plate
