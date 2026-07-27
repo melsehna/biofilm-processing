@@ -26,7 +26,7 @@ shopt -s nullglob
 plates=( "$INPUT"/*_Discontinuous_Drawer* )
 echo "Plates matched: ${#plates[@]}  (expect 18)"
 
-biofilm-processing-run \
+/home/smellick/anaconda3/envs/phenotypr2/bin/biofilm-processing-run \
     --plates "${plates[@]}" \
     --output-dir    "$STAGING" \
     --nas-mirror-dir "$NAS" \
