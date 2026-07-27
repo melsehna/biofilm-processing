@@ -7,7 +7,9 @@ abstract: >-
   segmentation, colony tracking, and colony/whole-image feature extraction, with
   a PySide6 GUI and headless CLI tools.
 type: software
-version: 0.5.0
+version: 1.0.0
+date-released: 2026-07-27
+license: MIT
 repository-code: "https://github.com/melsehna/biofilm-processing"
 authors:
   - family-names: Mellick
@@ -21,9 +23,6 @@ keywords:
   - image-analysis
   - phenotyping
   - colony-tracking
-# TODO: set `license:` (SPDX id, e.g. MIT / BSD-3-Clause / GPL-3.0-or-later) once
-#       decided with advisor; also set `date-released:` when a version is tagged.
-#
 # TODO: when the accompanying paper is published, add a `preferred-citation:`
 #       block (type: article, with doi/journal/year) so "Cite this repository"
 #       points at the paper rather than the software.
