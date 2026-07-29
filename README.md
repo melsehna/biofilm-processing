@@ -1,6 +1,6 @@
 # biofilm-processing
 
-[![CI](https://github.com/melsehna/biofilm-processing/actions/workflows/ci.yml/badge.svg)](https://github.com/melsehna/biofilm-processing/actions/workflows/ci.yml)
+[![CI](https://github.com/BridgesLabCMU/uPULLI-I/actions/workflows/ci.yml/badge.svg)](https://github.com/BridgesLabCMU/uPULLI-I/actions/workflows/ci.yml)
 
 **Biofilm phenotyping from brightfield timelapse microscopy of 96-well plates.**
 
@@ -41,14 +41,14 @@ Miniconda gives you an isolated Python environment so biofilm-processing's depen
 Pick **one** option:
 
 **Option A — easiest, no Git needed:**
-1. Go to <https://github.com/melsehna/biofilm-processing>
+1. Go to <https://github.com/BridgesLabCMU/uPULLI-I>
 2. Click the green **"Code"** button → **"Download ZIP"**
 3. Unzip it somewhere you'll remember (e.g. your Desktop or Documents folder)
-4. Rename the unzipped folder to `biofilm-processing` if it isn't already
+4. Rename the unzipped folder to `uPULLI-I` if it isn't already
 
 **Option B — if you have Git:**
 ```bash
-git clone https://github.com/melsehna/biofilm-processing.git
+git clone https://github.com/BridgesLabCMU/uPULLI-I.git
 ```
 
 ### 3. Install biofilm-processing
@@ -56,14 +56,14 @@ git clone https://github.com/melsehna/biofilm-processing.git
 In your terminal, navigate **into** the folder you just downloaded and run the install commands. Copy these one block at a time:
 
 ```bash
-cd biofilm-processing
+cd uPULLI-I
 conda create -n biofilm-processing python=3.11 -y
 conda activate biofilm-processing
 pip install -e .
 ```
 
 What these do:
-- `cd biofilm-processing` — moves into the project folder. If you put it on your Desktop, you may need `cd Desktop/biofilm-processing` first.
+- `cd uPULLI-I` — moves into the project folder. If you put it on your Desktop, you may need `cd Desktop/uPULLI-I` first.
 - `conda create -n biofilm-processing python=3.11 -y` — makes a new Python environment named `biofilm-processing`.
 - `conda activate biofilm-processing` — switches into that environment. **You'll need to do this every time you open a fresh terminal**, unless you use the desktop shortcut (step 4).
 - `pip install -e .` — installs biofilm-processing and all its dependencies (numpy, scipy, scikit-image, opencv, mahotas, PySide6, etc.).
@@ -221,7 +221,7 @@ When a new version is available:
 
 ```bash
 conda activate biofilm-processing
-cd /path/to/biofilm-processing
+cd /path/to/uPULLI-I
 git pull           # or: re-download the ZIP and replace the folder
 pip install -e .   # picks up any new dependencies
 ```
@@ -405,15 +405,15 @@ Reproducibility is layered — pick the tier that matches your need:
 ```bash
 # Build a multi-arch image (x86 HPC + Apple Silicon) and push
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/melsehna/biofilm-processing:0.5.0 --push .
+  -t ghcr.io/bridgeslabcmu/upulli-i:1.0.0 --push .
 
 # Run locally
 docker run --rm -v /path/to/data:/data -v /path/to/output:/out \
-  ghcr.io/melsehna/biofilm-processing:0.5.0 \
+  ghcr.io/bridgeslabcmu/upulli-i:1.0.0 \
   biofilm-processing-run --plates /data/plateA -o /out --mag _03 --workers 8
 
 # Run on an HPC cluster via Apptainer/Singularity (no root, no Docker daemon)
-apptainer pull biofilm.sif docker://ghcr.io/melsehna/biofilm-processing:0.5.0
+apptainer pull biofilm.sif docker://ghcr.io/bridgeslabcmu/upulli-i:1.0.0
 apptainer exec --bind /path/to/data,/path/to/output biofilm.sif \
   biofilm-processing-run --plates /path/to/data/plateA -o /path/to/output --mag _03 --workers 40
 ```

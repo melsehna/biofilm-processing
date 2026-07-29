@@ -9,15 +9,15 @@
 #
 # Build (multi-arch: amd64 for HPC/x86, arm64 for Apple Silicon):
 #   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -t ghcr.io/melsehna/biofilm-processing:0.5.0 --push .
+#     -t ghcr.io/bridgeslabcmu/upulli-i:1.0.0 --push .
 #
 # Run locally (bind-mount data in, outputs out):
 #   docker run --rm -v /data:/data -v /out:/out \
-#     ghcr.io/melsehna/biofilm-processing:0.5.0 \
+#     ghcr.io/bridgeslabcmu/upulli-i:1.0.0 \
 #     biofilm-processing-run --plates /data/plateA -o /out --mag _03 --workers 8
 #
 # Run on an HPC cluster with Apptainer/Singularity (no root, no Docker daemon):
-#   apptainer pull biofilm.sif docker://ghcr.io/melsehna/biofilm-processing:0.5.0
+#   apptainer pull biofilm.sif docker://ghcr.io/bridgeslabcmu/upulli-i:1.0.0
 #   apptainer exec --bind /path/to/data,/path/to/output biofilm.sif \
 #     biofilm-processing-run --plates /path/to/data/plateA -o /path/to/output --mag _03 --workers 40
 FROM mambaorg/micromamba:1.5.10
