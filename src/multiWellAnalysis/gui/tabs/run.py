@@ -23,7 +23,7 @@ from PySide6.QtGui import QDesktopServices
 from ..buildinfo import buildRecord
 
 
-# CIFS/SMB mounts (e.g. /mnt/phenotyper) force uid/gid and a fixed file mode and
+# CIFS/SMB mounts force uid/gid and a fixed file mode and
 # reject chown/chgrp/chmod AND utime. `rsync -a` (= -rlptgoD) is worse than just
 # losing metadata: with -p it stages each file through a temp file carrying the
 # source mode, and the mount rejects even that `mkstemp` ("Operation not
@@ -558,9 +558,12 @@ class ProcessingWorker(QObject):
         nStages = 1 + int(doWhole) + int(doTracking) + int(doColonyFeats)
 
         enabled = ['biomass']
-        if doWhole: enabled.append('whole-image')
-        if doTracking: enabled.append('tracking')
-        if doColonyFeats: enabled.append('colony-feats')
+        if doWhole:
+            enabled.append('whole-image')
+        if doTracking:
+            enabled.append('tracking')
+        if doColonyFeats:
+            enabled.append('colony-feats')
         self.log.emit(f'Enabled stages: {", ".join(enabled)} ({nStages} total)')
         self.log.emit(f'  wholeImageFeats={s.get("wholeImageFeats")}, '
                       f'colonyTracking={s.get("colonyTracking")}, '
@@ -821,7 +824,8 @@ class ProcessingWorker(QObject):
                         outputRoot, plateDirLocal, s['nasMirrorDir'].strip(),
                     )
                     if self._syncPlateToNas(plateDirLocal, nasPlateDir,
-                                               lean=bool(s.get('nasMirrorLean', False))):
+                                               lean=bool(s.get('nasMirrorLean', False)),
+                                               stagingRoot=outputRoot):
                         # plateOutdirs entries are processedImages paths, but
                         # the local copy is gone now. Repoint at NAS so the
                         # final master CSV finds the data.
@@ -866,7 +870,8 @@ class ProcessingWorker(QObject):
                 # entirely after the final sync. User-provided outputDirs are
                 # left alone.
                 if self._stagingAutoCreated:
-                    if self._forceDeleteDir(outputRoot):
+                    # outputRoot is itself the staging root here
+                    if self._forceDeleteDir(outputRoot, stagingRoot=outputRoot):
                         self.log.emit(f'  [NAS mirror] cleaned up auto-staging dir: {outputRoot}')
                     else:
                         self.log.emit(f'  [NAS mirror] ERROR: failed to clean auto-staging dir '
@@ -1038,7 +1043,7 @@ class ProcessingWorker(QObject):
         rel = os.path.relpath(localPlateDir, outputRoot)
         return os.path.join(nasMirrorDir, rel)
 
-    def _syncPlateToNas(self, localPlateDir, nasPlateDir, lean=False):
+    def _syncPlateToNas(self, localPlateDir, nasPlateDir, lean=False, stagingRoot=None):
         """rsync local plate dir → NAS, then delete the local copy on success.
 
         Returns True if sync + delete succeeded, False otherwise.
@@ -1085,7 +1090,7 @@ class ProcessingWorker(QObject):
         # mirror mode is bounded local disk, so loud-failing on a stuck
         # local copy is the right behavior.
         self.log.emit(f'  [NAS sync] rsync OK — deleting local copy: {localPlateDir}')
-        deleted = self._forceDeleteDir(localPlateDir)
+        deleted = self._forceDeleteDir(localPlateDir, stagingRoot=stagingRoot)
         if deleted:
             self.log.emit(f'  [NAS sync] local copy deleted: {localPlateDir}')
         else:
@@ -1094,14 +1099,40 @@ class ProcessingWorker(QObject):
                           f'Manual cleanup: rm -rf "{localPlateDir}"')
         return True
 
-    def _forceDeleteDir(self, path):
+    @staticmethod
+    def _isContainedIn(path, root):
+        """True if `path` is `root` itself or lives beneath it. Both sides are
+        realpath'd so symlinks and '..' cannot escape `root`."""
+        if not root:
+            return False
+        try:
+            rp = os.path.realpath(path)
+            rr = os.path.realpath(root)
+        except OSError:
+            return False
+        if rr in ('', os.sep):          # never treat '/' as a valid container
+            return False
+        return rp == rr or rp.startswith(rr.rstrip(os.sep) + os.sep)
+
+    def _forceDeleteDir(self, path, stagingRoot=None):
         """Robust recursive delete. Tries shutil.rmtree first; if that fails
         or leaves anything behind, falls back to `rm -rf`. Returns True only
-        when the directory is verified gone."""
+        when the directory is verified gone.
+
+        `stagingRoot` bounds the blast radius: deletion is refused unless the
+        target is that root or inside it, so a misconfigured outputDir fails
+        loudly instead of recursively deleting the wrong tree.
+        """
         import shutil
         import subprocess
         if not os.path.exists(path):
             return True
+        if stagingRoot is not None and not self._isContainedIn(path, stagingRoot):
+            self.log.emit(
+                f'    [delete] REFUSING to delete {path}: it is not inside the '
+                f'local staging root {stagingRoot}. Nothing was removed.'
+            )
+            return False
         try:
             shutil.rmtree(path)
         except Exception as e:

@@ -130,7 +130,6 @@ def addColonySpatialFeatures(colonyDf, pxToUm):
 
 def addColonyIntensityMassFeatures(colonyDf, labels, rawImg, pxToUm):
     props = {p.label: p for p in regionprops(labels, intensity_image=rawImg)}
-    n = len(colonyDf)
 
     colonyDf['centroidOffset_um'] = np.nan
     colonyDf['centroidOffsetNorm'] = np.nan

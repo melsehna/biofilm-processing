@@ -18,8 +18,8 @@
 #
 # Run on an HPC cluster with Apptainer/Singularity (no root, no Docker daemon):
 #   apptainer pull biofilm.sif docker://ghcr.io/melsehna/biofilm-processing:0.5.0
-#   apptainer exec --bind /mnt/bridgeslab,/mnt/data biofilm.sif \
-#     biofilm-processing-run --plates /mnt/.../plateA -o /mnt/data/out --mag _03 --workers 40
+#   apptainer exec --bind /path/to/data,/path/to/output biofilm.sif \
+#     biofilm-processing-run --plates /path/to/data/plateA -o /path/to/output --mag _03 --workers 40
 FROM mambaorg/micromamba:1.5.10
 
 # System libraries the Python lockfile cannot capture: OpenGL + glib for opencv,

@@ -2,7 +2,7 @@
 """Regenerate overlay MP4s for all wells in an index CSV.
 
 Usage:
-    python scripts/regenOverlaysFromIndex.py index.csv --outdir /mnt/phenotyper/vcReimaging
+    python scripts/regenOverlaysFromIndex.py index.csv --outdir /path/to/output --src-root /path/to/processed
 
     # Custom settings
     python scripts/regenOverlaysFromIndex.py index.csv --outdir /out --block-diam 101 --fps 2 --workers 8
@@ -24,7 +24,6 @@ from multiWellAnalysis.processing.preprocessing import normalizeLocalContrastOut
 from multiWellAnalysis.processing.overlay import writeOverlayVideo
 
 
-GILLIUS_FONT = '/usr/share/fonts/truetype/adf/GilliusADF-Regular.otf'
 BLOCK_DIAM = 101
 
 
@@ -52,8 +51,7 @@ def regenOne(args):
         displayStack = normalizeLocalContrastOutput(raw, blockDiam, fpMean)
         displayStack = np.clip(displayStack, 0.0, 1.0)
 
-        writeOverlayVideo(displayStack, masks, outPath, fps=fps, label=label,
-                          fontPath=GILLIUS_FONT)
+        writeOverlayVideo(displayStack, masks, outPath, fps=fps, label=label)
 
         sizeMb = os.path.getsize(outPath) / 1e6
         nframes = displayStack.shape[2]
@@ -66,9 +64,10 @@ def main():
     parser = argparse.ArgumentParser(
         description='Regenerate overlay MP4s from an index CSV with rawPath/maskPath columns')
     parser.add_argument('index', help='Index CSV with rawPath, maskPath, wellId, plateId, geneName columns')
-    parser.add_argument('--outdir', required=True, help='Root output directory (e.g., /mnt/phenotyper/vcReimaging)')
-    parser.add_argument('--src-root', default='/mnt/data/reimaging/processed',
-                        help='Source root to strip from rawPath when building output paths (default: /mnt/data/reimaging/processed)')
+    parser.add_argument('--outdir', required=True, help='Root output directory for the regenerated overlays')
+    parser.add_argument('--src-root', default=None,
+                        help='Source root to strip from rawPath when building output paths. '
+                             'Omit to use rawPath basenames unchanged.')
     parser.add_argument('--block-diam', type=int, default=BLOCK_DIAM, help='Block diameter for normalization (default: 101)')
     parser.add_argument('--fps', type=int, default=2, help='Output video FPS (default: 2)')
     parser.add_argument('--workers', type=int, default=8, help='Parallel workers (default: 8)')
@@ -98,7 +97,11 @@ def main():
         geneName = str(row['geneName']).strip() if hasGene else ''
 
         # build output path: strip src-root, replace processedImages/ with overlays/
-        relPath = os.path.relpath(rawPath, args.src_root)
+        if args.src_root:
+            relPath = os.path.relpath(rawPath, args.src_root)
+        else:
+            # no src-root given: keep the plate dir + filename, drop the rest
+            relPath = os.path.join(*rawPath.strip(os.sep).split(os.sep)[-3:])
         parts = relPath.split(os.sep)
         parts = ['overlays' if p == 'processedImages' else p for p in parts]
         outDir = os.path.join(args.outdir, os.sep.join(parts[:-1]))

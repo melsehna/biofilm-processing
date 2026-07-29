@@ -3,16 +3,16 @@
 
 Usage:
     # Regenerate overlays for a single plate directory
-    python scripts/regenOverlays.py /mnt/data/plates/241106_Plate1
+    python scripts/regenOverlays.py /path/to/plate_directory
 
     # Regenerate overlays for specific wells
-    python scripts/regenOverlays.py /mnt/data/plates/241106_Plate1 --wells A1_03 B5_03
+    python scripts/regenOverlays.py /path/to/plate_directory --wells A1_03 B5_03
 
     # Use a timeseries CSV or index CSV for mutant labels
-    python scripts/regenOverlays.py /mnt/data/plates/241106_Plate1 --index /mnt/data/indices/index.csv
+    python scripts/regenOverlays.py /path/to/plate_directory --index index.csv
 
     # Custom block diameter and fps
-    python scripts/regenOverlays.py /mnt/data/plates/241106_Plate1 --block-diam 101 --fps 6
+    python scripts/regenOverlays.py /path/to/plate_directory --block-diam 101 --fps 6
 """
 
 import argparse

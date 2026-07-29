@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "biofilm-processing: high-throughput biofilm phenotyping from brightfield timelapse microscopy"
+title: "uPULLI-I: interpretable high-throughput bacterial phenotyping from brightfield timelapse microscopy"
 abstract: >-
   A high-throughput pipeline for automated brightfield timelapse microscopy of
   96-well plates. Processes per-well TIFF stacks through registration,
@@ -14,15 +14,22 @@ repository-code: "https://github.com/melsehna/biofilm-processing"
 authors:
   - family-names: Mellick
     given-names: "Seh Na S."
-    email: smellick@andrew.cmu.edu
+    email: sehna@cmu.edu
     affiliation: "Carnegie Mellon University"
-    # orcid: "https://orcid.org/0000-0000-0000-0000"   # TODO: add ORCID
+    orcid: "https://orcid.org/0000-0002-3840-4567"
+  - family-names: Derringer
+    given-names: "Jesse J."
+    email: jessederringer@cmu.edu
+    affiliation: "Carnegie Mellon University"
+  - family-names: Bridges
+    given-names: "Andrew A."
+    email: bridges@cmu.edu
+    affiliation: "Carnegie Mellon University"
+  
 keywords:
   - biofilm
   - microscopy
   - image-analysis
   - phenotyping
   - colony-tracking
-# TODO: when the accompanying paper is published, add a `preferred-citation:`
-#       block (type: article, with doi/journal/year) so "Cite this repository"
-#       points at the paper rather than the software.
+

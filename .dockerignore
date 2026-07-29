@@ -14,3 +14,22 @@ scripts/*.log
 phase2_anchor/
 Brightfield-biofilm-assay/
 assets/
+# per-dataset run records / deposit workflow — local-only, mirrors .gitignore
+scripts/run_*.sh
+scripts/rerun_*.sh
+scripts/regen_masks_*.sh
+scripts/regen_place_chain_*.sh
+scripts/build_deposit_*.py
+scripts/deposit_*.py
+scripts/build_annotation_filelists.py
+scripts/validate_deposit.py
+scripts/relabel_transposon.py
+scripts/make_deposit_checksums.sh
+scripts/regenOverlays_reimaging.sbatch
+scripts/test_lean_nas_mirror.sh
+scripts/runHeadless.sbatch
+scripts/*_config.json
+*.md
+!README.md
+scripts/runSinglePlate.py
+src/multiWellAnalysis/legacy/

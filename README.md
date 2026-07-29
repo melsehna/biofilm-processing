@@ -250,14 +250,6 @@ Your desktop shortcut keeps working — no need to re-make it.
 
 For automated pipelines, SLURM submissions, or scripting from Python.
 
-### Process a single plate from the CLI
-
-```bash
-python scripts/runSinglePlate.py /path/to/plate/directory \
-    -o /path/to/output \
-    -m _03            # magnification suffix (optional, default: all)
-```
-
 ### Process a single well from Python
 
 ```python
@@ -289,14 +281,18 @@ masks, biomass, odMean = timelapseProcessing(
 
 ### Batch processing (multiple plates)
 
-```python
-from multiWellAnalysis.processing.batch_runner import batchRun
+Use the headless runner — the same pipeline the GUI Run tab drives:
 
-batchRun(
-    configPath='experiment_config.json',
-    replicateCsv='ReplicatePositions.csv',
-)
+```bash
+biofilm-processing-run experiment_config.json --output-dir /path/to/output --workers 40
+
+# or entirely from flags, with no config file
+biofilm-processing-run --plates /path/to/plateA /path/to/plateB \
+    -o /path/to/output --mag _03 --workers 40 \
+    --whole-image --colony-tracking --colony-feats
 ```
+
+See `scripts/examples/` for a SLURM submission and a per-dataset run template.
 
 ### Regenerate overlay videos
 
@@ -384,10 +380,8 @@ src/multiWellAnalysis/
     colony/            Colony tracking + per-colony feature extraction
     wholeImage/        Whole-image (Haralick) texture features
     analysis/          UMAP embedding of the run-level feature table
-    legacy/            Quarantined, unsupported modules (see legacy/README.md) — not imported by the pipeline
 scripts/
     installDesktopShortcut.py    Desktop shortcut creator (Linux/macOS/Windows)
-    runSinglePlate.py            CLI: process one plate
     regenOverlays.py             CLI: regenerate overlay videos
     regenOverlaysFromIndex.py    CLI: bulk regen across many plates
 ```
@@ -414,14 +408,14 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t ghcr.io/melsehna/biofilm-processing:0.5.0 --push .
 
 # Run locally
-docker run --rm -v /data:/data -v /out:/out \
+docker run --rm -v /path/to/data:/data -v /path/to/output:/out \
   ghcr.io/melsehna/biofilm-processing:0.5.0 \
   biofilm-processing-run --plates /data/plateA -o /out --mag _03 --workers 8
 
 # Run on an HPC cluster via Apptainer/Singularity (no root, no Docker daemon)
 apptainer pull biofilm.sif docker://ghcr.io/melsehna/biofilm-processing:0.5.0
-apptainer exec --bind /mnt/bridgeslab,/mnt/data biofilm.sif \
-  biofilm-processing-run --plates /mnt/.../plateA -o /mnt/data/out --mag _03 --workers 40
+apptainer exec --bind /path/to/data,/path/to/output biofilm.sif \
+  biofilm-processing-run --plates /path/to/data/plateA -o /path/to/output --mag _03 --workers 40
 ```
 
 For an archival, fully-solved lock (all transitive deps, per-platform), generate `conda-lock.yml` from `environment.yml` with [`conda-lock`](https://github.com/conda/conda-lock) and commit it alongside — then a release image tagged to a Zenodo DOI gives a citable frozen artifact.

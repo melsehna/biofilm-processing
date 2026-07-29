@@ -16,7 +16,7 @@
 # and commit the resulting conda-lock.yml alongside this file.
 #
 # NOTE: Python is pinned to 3.9.23 because that is the interpreter the results
-# were produced on (the `phenotypr2` env). Python 3.9 is end-of-life; the general
+# were produced on. Python 3.9 is end-of-life; the general
 # install path in README.md uses 3.11. numpy/scipy upper bounds in pyproject.toml
 # track the last releases that still support 3.9. When the validated stack is next
 # refreshed, bump this file and re-run the golden tests before publishing.

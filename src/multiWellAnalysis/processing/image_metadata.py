@@ -9,6 +9,29 @@ This module extracts objective magnification and pixel→micron conversion from 
 import re
 from xml.etree import ElementTree as ET
 
+# ElementTree expands internal entities without limit, so a crafted header can
+# amplify a few bytes into gigabytes and stall a run. Cytation headers are a few
+# KB with no DTD, so rejecting both is cheaper than a DTD-aware parser dep.
+_MAX_METADATA_BYTES = 4 * 1024 * 1024
+_DOCTYPE_RE = re.compile(r'<!\s*(DOCTYPE|ENTITY)', re.IGNORECASE)
+
+
+def _parseMetadataXml(xmlStr, tifPath):
+    """Parse a Cytation ImageDescription payload, refusing DTD/entity content."""
+    size = len(xmlStr.encode('utf-8', 'ignore')) if isinstance(xmlStr, str) else len(xmlStr)
+    if size > _MAX_METADATA_BYTES:
+        raise ValueError(
+            f'ImageDescription metadata in {tifPath} is {size} bytes '
+            f'(limit {_MAX_METADATA_BYTES}); refusing to parse.'
+        )
+    probe = xmlStr if isinstance(xmlStr, str) else xmlStr.decode('utf-8', 'ignore')
+    if _DOCTYPE_RE.search(probe):
+        raise ValueError(
+            f'ImageDescription metadata in {tifPath} contains a DTD or entity '
+            f'declaration; refusing to parse (Cytation headers never do).'
+        )
+    return ET.fromstring(xmlStr)
+
 
 def readCytationMeta(tifPath):
     """Read objective magnification and px→μm from a Cytation5 TIFF.
@@ -39,7 +62,7 @@ def readCytationMeta(tifPath):
             raise ValueError(f'No ImageDescription tag in {tifPath}')
         xmlStr = page.tags[270].value
 
-    root = ET.fromstring(xmlStr)
+    root = _parseMetadataXml(xmlStr, tifPath)
     acq = root.find('ImageAcquisition')
     if acq is None:
         raise ValueError(f'No <ImageAcquisition> element in metadata of {tifPath}')

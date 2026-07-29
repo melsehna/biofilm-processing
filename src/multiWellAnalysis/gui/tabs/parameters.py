@@ -301,7 +301,7 @@ class ParametersTab(QWidget):
         nasPathRow.addWidget(QLabel('NAS mirror dir:'))
         self.nasMirrorDir = QLineEdit()
         self.nasMirrorDir.setText(self.state.get('nasMirrorDir', ''))
-        self.nasMirrorDir.setPlaceholderText('/mnt/bridgeslab/path/to/destination')
+        self.nasMirrorDir.setPlaceholderText('/path/to/network/share/destination')
         nasPathRow.addWidget(self.nasMirrorDir, stretch=1)
         nasBrowseBtn = QPushButton('Browse…')
         nasBrowseBtn.clicked.connect(self._browseNasMirrorDir)

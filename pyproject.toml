@@ -57,11 +57,22 @@ extend-exclude = ["src/multiWellAnalysis/legacy"]
 # pycodestyle E) and drop line-length noise.
 extend-ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# E402 is deliberate here: BLAS thread pins must be set before numpy imports, and
+# warnings are filtered before scipy/skimage/mahotas load. Do not reorder.
+"src/multiWellAnalysis/wholeImage/runWholeImage.py" = ["E402"]
+"src/multiWellAnalysis/wholeImage/extractWholeImageFeats.py" = ["E402"]
+# Standalone scripts use a compact `stmt; stmt` style. Pyflakes stays on.
+"scripts/*.py" = ["E701", "E702"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# Quarantined and not distributed; excluded here so a local checkout that still
+# has the directory on disk does not package it.
+exclude = ["multiWellAnalysis.legacy*"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

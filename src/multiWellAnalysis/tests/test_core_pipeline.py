@@ -55,8 +55,8 @@ def test_compute_mask_is_strict_threshold():
     masks = np.zeros_like(stack, dtype=bool)
     computeMaskInplace(stack, masks, fixedThresh=0.04)
     # strictly greater-than: 0.03 -> off, 0.05 -> on
-    assert masks[0, 0, 0] == False
-    assert masks[0, 0, 1] == True
+    assert not masks[0, 0, 0]
+    assert masks[0, 0, 1]
 
 
 def test_dust_correction_zeroes_transient_but_keeps_growth():

@@ -3,13 +3,31 @@ Self-contained interactive HTML viewer for the UMAP grid: hover tooltips,
 nn/min_dist toggle buttons, search, pan/zoom/box-zoom, and click-to-play
 overlay MP4 in a sidebar.
 
-Stripped-down port of the reimaging viewer in
-~/biofilm-analysis/src/reimaging_updated/umap/interactiveUmap.py — drops the
-gene-ontology highlight sets and per-locus pathway annotations (those are
-reimaging-specific) and uses a generic categorical label.
+Uses a generic categorical label rather than the original viewer's dataset-specific
+gene-ontology highlight sets.
+
+Labels, plate ids and MP4 paths are untrusted (user-supplied `*layout*.csv`,
+directory names): escaped on the way in by `_jsonForScript` and again in the
+template by `esc()` before every innerHTML write.
 """
+import html as htmlLib
 import json
 import os
+
+
+def _jsonForScript(obj):
+    """json.dumps hardened for embedding in a <script> block.
+
+    json.dumps does not escape '<', so a label containing '</script>' would close
+    the script element. The \\uXXXX forms stay valid JSON but are inert to the HTML
+    tokenizer. U+2028/29 are raw line terminators in JS source.
+    """
+    return (json.dumps(obj)
+            .replace('<', '\\u003c')
+            .replace('>', '\\u003e')
+            .replace('&', '\\u0026')
+            .replace('\u2028', '\\u2028')
+            .replace('\u2029', '\\u2029'))
 
 
 def _buildPointsByParam(embeddings, labels, mp4Column):
@@ -113,6 +131,15 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <script>
 const allData = __DATA__;
 const paramCombos = __PARAMS__;
+// Data is untrusted — escape before every innerHTML write.
+const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ESC_MAP[c]);
+// relative overlay paths only; reject scheme-like or protocol-relative
+const safeMp4 = s => {
+  const v = String(s ?? '');
+  if (!v || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(v) || v.startsWith('//')) return '';
+  return encodeURI(v).replace(/"/g, '%22');
+};
 const WT_LABEL = 'WT';
 const LABEL_COLOR_LIMIT = 80;
 
@@ -189,7 +216,7 @@ function draw() {
   if (colorByLabel && !searchActive) {
     let h = '';
     if (visibleLabels.has(WT_LABEL)) h += `<div class="legend-item"><span class="swatch" style="background:#000"></span>${WT_LABEL}</div>`;
-    for (let i = 0; i < labelList.length; i++) h += `<div class="legend-item"><span class="swatch" style="background:${labelColor(i,Math.max(labelList.length,1),1)}"></span>${labelList[i]}</div>`;
+    for (let i = 0; i < labelList.length; i++) h += `<div class="legend-item"><span class="swatch" style="background:${labelColor(i,Math.max(labelList.length,1),1)}"></span>${esc(labelList[i])}</div>`;
     legend.innerHTML = h; legend.style.display = 'block';
   } else legend.style.display = 'none';
 }
@@ -215,14 +242,15 @@ function applySearch() {
 }
 function tooltipHtml(p) {
   let h = '';
-  if (p.label) h += `<div class="label">${p.label}</div>`;
-  h += `<div class="meta">Plate: ${p.plate} · Well: ${p.well}</div>`;
+  if (p.label) h += `<div class="label">${esc(p.label)}</div>`;
+  h += `<div class="meta">Plate: ${esc(p.plate)} · Well: ${esc(p.well)}</div>`;
   return h;
 }
 function showVideo(p) {
   sidebar.classList.remove('hidden');
   videoHeader.innerHTML = tooltipHtml(p);
-  if (p.mp4) videoWrap.innerHTML = `<video controls autoplay loop muted><source src="${p.mp4}" type="video/mp4">Cannot load video</video>`;
+  const mp4 = safeMp4(p.mp4);
+  if (mp4) videoWrap.innerHTML = `<video controls autoplay loop muted><source src="${mp4}" type="video/mp4">Cannot load video</video>`;
   else videoWrap.innerHTML = '<div id="no-video">No overlay available</div>';
   resize();
 }
@@ -339,9 +367,9 @@ def writeInteractiveHtml(embeddings, labels, outPath, title='UMAP', mp4Column='m
     """
     pointsByParam, paramCombos = _buildPointsByParam(embeddings, labels, mp4Column)
     html = (_HTML_TEMPLATE
-            .replace('__TITLE__', title)
-            .replace('__DATA__', json.dumps(pointsByParam))
-            .replace('__PARAMS__', json.dumps(paramCombos)))
+            .replace('__TITLE__', htmlLib.escape(str(title), quote=True))
+            .replace('__DATA__', _jsonForScript(pointsByParam))
+            .replace('__PARAMS__', _jsonForScript(paramCombos)))
     os.makedirs(os.path.dirname(outPath), exist_ok=True)
     with open(outPath, 'w') as f:
         f.write(html)

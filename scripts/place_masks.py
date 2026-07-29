@@ -22,7 +22,9 @@ Default mode is DRY-RUN (writes nothing). Pass --apply to actually create files.
   python scripts/place_masks.py --src-root <local-regen> --nas-root <nas-dataset>
   python scripts/place_masks.py --src-root ... --nas-root ... --labels --apply
 """
-import argparse, os, sys
+import argparse
+import os
+import sys
 
 MASK_SUFFIX = "_masks.npz"
 def is_target(name, include_labels):

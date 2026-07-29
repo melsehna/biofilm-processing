@@ -61,7 +61,8 @@ def _scatterOnePanel(ax, embeddings, labels, nn, md, drawLegend=True):
     if xCol not in embeddings.columns or yCol not in embeddings.columns:
         ax.text(0.5, 0.5, f'no fit for nn={nn}, md={md}',
                 ha='center', va='center', transform=ax.transAxes, color='gray')
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         return
 
     x = embeddings[xCol].to_numpy()
@@ -91,7 +92,7 @@ def plotStatic(embeddings, labels, outPath, nn=_CANONICAL_NN, md=_CANONICAL_MD,
     _scatterOnePanel(ax, embeddings, labels, nn, md, drawLegend=True)
     if title:
         ax.set_title(title, fontsize=11)
-    nLabels = len({l for l in labels.values()})
+    nLabels = len(set(labels.values()))
     if 0 < nLabels <= _MAX_LEGEND_CATEGORIES:
         ax.legend(loc='best', fontsize=7, frameon=False, markerscale=1.2)
     fig.tight_layout()
@@ -114,7 +115,7 @@ def plotGrid(embeddings, labels, outPath, nnList=_NN_GRID, mdList=_MD_GRID,
             ax.set_title(f'nn={nn}, md={md}', fontsize=10)
 
     # one legend on the figure if labels are reasonable
-    nLabels = len({l for l in labels.values()})
+    nLabels = len(set(labels.values()))
     if 0 < nLabels <= _MAX_LEGEND_CATEGORIES:
         handles, plotLabels = axes[0][0].get_legend_handles_labels()
         if handles:

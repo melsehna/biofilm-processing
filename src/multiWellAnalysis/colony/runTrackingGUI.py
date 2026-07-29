@@ -3,7 +3,7 @@
 GUI version of runTrackingMpTraining.py
 
 Copy of the colony tracking pipeline adapted for the GUI:
-- outdir is a required parameter (no hardcoded /mnt/data paths)
+- outdir is a required parameter (no hardcoded absolute paths)
 - No server-side logging (io_utils logWell/logPlate/checkpoints removed)
 - No batch worker / multiprocessing main()
 - Single entry point: trackAndSave()
@@ -115,7 +115,6 @@ def trackColoniesAllFrames(rawStack, maskStack, seedFrame, peakFrame,
     """Core tracking algorithm. Returns (labelsByFrame, usedTracking, reason, frames)."""
     t0 = time.perf_counter()
 
-    useTracking = True
     reason = 'forced_tracking'
 
     nFrames = rawStack.shape[2]
@@ -264,7 +263,7 @@ def trackAndSave(
     # Build LUT once
     badMask = None
     if allBadLabels:
-        maxLabel = max(l.max() for l in labelsByFrame.values() if l.max() > 0)
+        maxLabel = max(lab.max() for lab in labelsByFrame.values() if lab.max() > 0)
         if maxLabel > 0:
             badMask = np.zeros(maxLabel + 1, dtype=bool)
             badMask[list(allBadLabels)] = True

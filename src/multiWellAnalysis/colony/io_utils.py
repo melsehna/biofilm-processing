@@ -6,7 +6,12 @@ from datetime import datetime
 
 
 def getLogRoot():
-    return os.environ.get('MWA_LOG_ROOT', '/mnt/data/logs')
+    """Directory for batch-tool logs.
+
+    Override with $MWA_LOG_ROOT. Defaults to ./logs under the current working
+    directory so the batch tools work on any machine without configuration.
+    """
+    return os.environ.get('MWA_LOG_ROOT', os.path.join(os.getcwd(), 'logs'))
 
 
 def timestamp():

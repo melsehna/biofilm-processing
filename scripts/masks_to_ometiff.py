@@ -16,7 +16,10 @@ Default DRY-RUN. --apply writes, create-only (O_CREAT|O_EXCL — never overwrite
 
   python scripts/masks_to_ometiff.py --src-root <nas-dataset> --out-root <deposit> [--labels] [--limit N] [--apply]
 """
-import argparse, csv, os, sys, glob
+import argparse
+import csv
+import os
+import sys
 import numpy as np
 import tifffile
 
