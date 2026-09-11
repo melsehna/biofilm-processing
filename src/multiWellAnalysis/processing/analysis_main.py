@@ -74,6 +74,7 @@ def timelapseProcessing(
     downsample=2,
     skipOverlay=False,
     saveProcessedVideo=False,
+    saveRegistered=True,
     label=None,
     workers=4,
     progressFn=None,
@@ -185,7 +186,15 @@ def timelapseProcessing(
     )
     saveStack(displayStack, processedDir, f"{filename}_processed")
 
-    saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
+    # `_registered_raw.tif` is registered raw intensity — needed by colony
+    # tracking, colony features and any OD/biomass rework, but NOT by biomass
+    # itself (computed above from the in-memory rawCropped) nor by the display
+    # render. It is also the single largest output (same size as _processed.tif,
+    # ~374 MiB/well at 25x1992^2 float32), so a biomass-only run can skip it and
+    # halve write volume. Skipping forfeits later re-tracking / colony features
+    # without reprocessing from raw — see the regen_masks/place_masks recovery path.
+    if saveRegistered:
+        saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
 
     npzPath = os.path.join(processedDir, f'{filename}_masks.npz')
     np.savez_compressed(npzPath, masks=masks)

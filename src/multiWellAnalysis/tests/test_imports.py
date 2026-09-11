@@ -28,6 +28,37 @@ def test_headless_test_well_parser(monkeypatch):
     assert args.tracking is True
 
 
+def test_save_registered_flag(monkeypatch):
+    # `_registered_raw.tif` is the largest per-well output and biomass does not
+    # need it, so --no-save-registered must reach the worker state and the
+    # per-well kwarg. Defaults stay True: skipping is opt-in.
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    import inspect
+    from multiWellAnalysis.cli.run_pipeline import buildParser, buildState
+    from multiWellAnalysis.processing.analysis_main import timelapseProcessing
+
+    assert buildState(None, {})['saveRegistered'] is True
+    args = buildParser().parse_args(['--output-dir', '/out', '--plates', '/d',
+                                     '--no-save-registered'])
+    assert args.saveRegistered is False
+    assert buildState(None, {'saveRegistered': args.saveRegistered})[
+        'saveRegistered'] is False
+
+    sig = inspect.signature(timelapseProcessing)
+    assert sig.parameters['saveRegistered'].default is True
+
+
+def test_save_registered_refuses_colony_stages(monkeypatch, capsys):
+    # Tracking and colony features read the raw stack. Skipping the write while
+    # asking for them must fail immediately, not ten hours in.
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    from multiWellAnalysis.cli.run_pipeline import main
+    rc = main(['--output-dir', '/out', '--plates', '/d',
+               '--no-save-registered', '--colony-tracking'])
+    assert rc == 2
+    assert 'registered_raw' in capsys.readouterr().err
+
+
 def test_nas_rsync_flags_are_cifs_safe(monkeypatch):
     # Regression: `rsync -a` cannot write to CIFS/SMB (forced uid/gid/mode reject
     # chown/chgrp/chmod and even the perms-preserving temp-file mkstemp), so the

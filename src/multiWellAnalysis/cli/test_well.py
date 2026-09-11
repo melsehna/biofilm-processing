@@ -162,6 +162,11 @@ def buildParser():
     p.add_argument('--overlays', dest='saveOverlays',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Write the overlay MP4 (default on).')
+    p.add_argument('--save-registered', dest='saveRegistered',
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help='Write <well>_registered_raw.tif (default on). Mirrors '
+                        'the same flag on biofilm-processing-run so a tuning '
+                        'check writes exactly what the full run will.')
     return p
 
 
@@ -180,6 +185,7 @@ def main(argv=None):
         'minColonyAreaPx': args.minColonyAreaPx,
         'propRadiusPx':    args.propRadiusPx,
         'saveOverlays':    args.saveOverlays,
+        'saveRegistered':  args.saveRegistered,
     }
     state = buildState(args.config, overrides)
 
@@ -191,6 +197,13 @@ def main(argv=None):
         resolved, wellKey, wellFiles = _resolveWell(args.plate, args.well, args.mag)
     except ValueError as e:
         print(f'ERROR: {e}', file=sys.stderr)
+        return 2
+
+    # Tracking reads the registered raw stack, so the two flags are incompatible.
+    # Fail here rather than letting _trackOneWell skip with a vaguer message.
+    if args.tracking and not state.get('saveRegistered', True):
+        print('ERROR: --tracking needs --save-registered (colony tracking reads '
+              '<well>_registered_raw.tif).', file=sys.stderr)
         return 2
 
     outputRoot = (args.outputDir or os.path.join(os.getcwd(), 'testWell_out'))

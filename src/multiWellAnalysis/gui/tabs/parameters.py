@@ -322,10 +322,14 @@ class ParametersTab(QWidget):
         outputGroup = _CollapsibleGroupBox('Saved Outputs (Advanced)', expanded=False)
         outputForm = QFormLayout()
 
-        # NOTE: saveRegistered / saveProcessed / saveMasks are stored
-        # in state and respected by the dependency-enforcement logic, but
-        # post-run file cleanup is not yet implemented — the pipeline always
-        # writes all outputs.  These checkboxes are placeholders for that feature.
+        # NOTE: saveRegistered IS honored — unchecking it makes the pipeline skip
+        # the `_registered_raw.tif` write entirely (it is not written and then
+        # deleted), which halves write volume on a biomass-only run. The
+        # dependency logic below keeps it checked whenever tracking / colony
+        # features are on, since those need the raw stack.
+        # saveProcessed / saveMasks are still stored-only placeholders: both
+        # artifacts are always written. Every downstream stage needs one or the
+        # other, so there is no configuration in which skipping them is useful.
 
         self.saveRegistered = QCheckBox('Keep registered raw stacks (.tif)')
         self.saveRegistered.setChecked(self.state.get('saveRegistered', True))

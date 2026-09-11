@@ -62,14 +62,26 @@ _runParamsFile = 'run_params.json'
 # resume — the warning at the resume site surfaces the drift instead).
 _versionStampKey = '_pipelineVersion'
 
+# Which optional per-well stacks the run was configured to write. Also
+# underscore-prefixed and NOT in `_paramKeys`, for the same reason: it is
+# provenance, not a preprocessing knob. `_processed.tif` and `_masks.npz` are
+# always written, so only `registered_raw` varies. Recording it distinguishes
+# "this run never wrote registered_raw" from "someone deleted it afterwards",
+# which is otherwise unrecoverable from the tree.
+_savedOutputsKey = '_savedOutputs'
+
 
 def _extractRunParams(state):
     return {k: state.get(k) for k in _paramKeys}
 
 
-def _saveRunParams(outdir, params):
+def _saveRunParams(outdir, params, saveRegistered=True):
     path = os.path.join(outdir, _runParamsFile)
-    payload = {**params, _versionStampKey: buildRecord()}
+    payload = {
+        **params,
+        _versionStampKey: buildRecord(),
+        _savedOutputsKey: {'registered_raw': bool(saveRegistered)},
+    }
     with open(path, 'w') as f:
         json.dump(payload, f, indent=2)
 
@@ -140,6 +152,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             stack = np.transpose(stack, (1, 2, 0))
 
         plateOutdir = os.path.dirname(outdir)
+        saveRegistered = params.get('saveRegistered', True)
         masks, biomass, odMean = timelapseProcessing(
             images=stack,
             blockDiameter=params['blockDiam'],
@@ -154,6 +167,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             downsample=params.get('downsample', 4),
             skipOverlay=not params.get('saveOverlays', True),
             saveProcessedVideo=params.get('saveProcessedVideo', False),
+            saveRegistered=saveRegistered,
             workers=1,
         )
         del stack
@@ -168,7 +182,13 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             'well': wellId,
             'status': 'done',
             'elapsed': elapsed,
-            'registered_raw': os.path.join(outdir, f'{wellId}_registered_raw.tif'),
+            # Empty (not absent) when the stack was not saved, so the index keeps a
+            # stable column set and downstream stages see a falsy path rather than
+            # one pointing at a file that was never written.
+            'registered_raw': (
+                os.path.join(outdir, f'{wellId}_registered_raw.tif')
+                if saveRegistered else ''
+            ),
             'processed': os.path.join(outdir, f'{wellId}_processed.tif'),
             'masks': os.path.join(outdir, f'{wellId}_masks.npz'),
             'biomass': biomassPath,
@@ -288,8 +308,11 @@ def _colonyFeatsOneWell(plateName, row):
         from multiWellAnalysis.colony.runColonyFeatsGUI import extractAndSave
 
         labelsPath = row['tracked_labels']
-        rawPath = row['registered_raw']
-        outdir = os.path.dirname(rawPath)
+        # outdir comes from the labels path, not registered_raw: every per-well
+        # artifact shares one processedImages/ dir, and registered_raw is empty
+        # under saveRegistered=False. Colony features never read the raw stack —
+        # intensity comes from _processed.tif, geometry from the labels NPZ.
+        outdir = os.path.dirname(labelsPath)
         # Intensity from the fixed-fpMean processed render (now _processed.tif).
         intensityPath = os.path.join(outdir, f'{wellId}_processed.tif')
 
@@ -638,7 +661,8 @@ class ProcessingWorker(QObject):
                             f'pipeline version (existing: {savedVer.get("build", "unstamped")} '
                             f'| current: {curVer.get("build")}). Features may mix '
                             f'across versions; consider a clean reprocess.')
-                _saveRunParams(outdir, runParams)
+                _saveRunParams(outdir, runParams,
+                               saveRegistered=s.get('saveRegistered', True))
 
                 wellItems = list(wells.items())
 
@@ -1306,6 +1330,7 @@ class ProcessingWorker(QObject):
             'downsample': state.get('downsample', 4),
             'saveOverlays': state.get('saveOverlays', True),
             'saveProcessedVideo': state.get('saveProcessedVideo', False),
+            'saveRegistered': state.get('saveRegistered', True),
         }
         magParams = state.get('magParams', {})
         if mag and mag in magParams:
@@ -1320,7 +1345,9 @@ class ProcessingWorker(QObject):
         return pool.submit(_wholeImageOneWell, plateName, {**row, 'well': wellId})
 
     def _submitTracking(self, pool, wellId, row, outdir, plateName, state):
-        if 'registered_raw' not in row:
+        # Falsy covers both a missing column and the empty value written when the
+        # run was launched with saveRegistered off — tracking needs the raw stack.
+        if not row.get('registered_raw'):
             self.log.emit(f'  {wellId} tracking skipped: no registered_raw in index')
             return None
         m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
