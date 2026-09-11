@@ -7,9 +7,9 @@ abstract: >-
   segmentation, colony tracking, and colony/whole-image feature extraction, with
   a PySide6 GUI and headless CLI tools.
 type: software
-version: 1.0.0
-date-released: 2026-07-27
-license: MIT
+version: 1.1.0
+date-released: 2026-08-28
+license: Apache-2.0
 repository-code: "https://github.com/BridgesLabCMU/uPULLI-I"
 authors:
   - family-names: Mellick

@@ -146,7 +146,11 @@ The app has six tabs. You'll usually move through them left to right.
 
 **Performance** — number of parallel workers. Capped automatically at 75% of CPU cores so the rest of your computer stays responsive.
 
-**Saved outputs (advanced)** — toggle whether to keep intermediate files (registered raw stacks, processed images, binary masks). Turn off to save disk space if you only care about the final CSVs.
+**Saved outputs (advanced)** — **Keep registered raw stacks** controls whether `<well>_registered_raw.tif` is written at all. It is the largest single output (the same size as the processed stack, e.g. ~374 MiB for a 25-frame 1992x1992 well), and biomass does not need it, so turning it off roughly halves the disk a run uses. It is required for colony tracking and colony-level features, so those analyses re-enable it automatically.
+
+The **processed images** and **binary masks** toggles are placeholders and currently have no effect — both files are always written, because every downstream stage needs one or the other.
+
+To skip the overlay videos, uncheck **Mask overlay videos** under Analyses.
 
 ### Preview tab
 
@@ -288,9 +292,25 @@ biofilm-processing-run experiment_config.json --output-dir /path/to/output --wor
 
 # or entirely from flags, with no config file
 biofilm-processing-run --plates /path/to/plateA /path/to/plateB \
-    -o /path/to/output --mag _03 --workers 40 \
+    --output-dir /path/to/output --mag _03 --workers 40 \
     --whole-image --colony-tracking --colony-feats
 ```
+
+To compute only biomass and keep the output small, turn off the analyses you do
+not need and skip the largest artifact:
+
+```bash
+biofilm-processing-run --plates /path/to/plate* --output-dir /path/to/output \
+    --mag _03 --workers 40 \
+    --no-save-registered --no-overlays \
+    --no-whole-image --no-colony-tracking --no-colony-feats
+```
+
+`--no-save-registered` means `<well>_registered_raw.tif` is never written, which
+roughly halves the disk a run uses. It cannot be combined with
+`--colony-tracking` or `--colony-feats` (both read that stack); the runner
+refuses the combination up front rather than failing later. Every boolean flag
+has a `--no-` form, so `--overlays`/`--no-overlays` work the same way.
 
 See `scripts/examples/` for a SLURM submission and a per-dataset run template.
 
@@ -427,4 +447,4 @@ For an archival, fully-solved lock (all transitive deps, per-platform), generate
 **Authors:** Seh Na Mellick, Jojo Prentice, Andrew Bridges
 CMU Ray and Stephanie Lane Computational Biology Department · CMU Department of Biological Sciences
 
-**License:** [MIT](LICENSE)
+**License:** Apache License 2.0. Copyright (c) 2026 Carnegie Mellon University — full text in [`LICENSE`](LICENSE), with [`NOTICE`](NOTICE).
