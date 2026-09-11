@@ -53,34 +53,49 @@ def _envNameFromBin(guiBin):
 
 
 def findGuiBin():
-    """Find the biofilm-processing-gui executable, preferring named conda envs over base."""
-    # Search named conda envs first (not base) — these are more likely correct
+    """Find the biofilm-processing-gui executable.
+
+    Order matters: the ACTIVE environment wins. A machine can legitimately hold
+    several installs of this package at different versions -- notably
+    biofilm-embeddings (uPULLI-DL) vendors this package as a pinned submodule and
+    installs it into its own env, so `envs/biofilm-embeddings` contains an older
+    pinned engine. Scanning `envs/` alphabetically (as this used to do first)
+    therefore picked `biofilm-embeddings` over `biofilm-processing` and wired the
+    shortcut to the pinned engine, which showed up as the GUI reporting a stale
+    version. Whichever env the user ran this installer from is by far the best
+    signal, so check that first and treat the directory scan as a last resort.
+    """
+    # 1. The env this installer is running in.
+    for envVar in ('CONDA_PREFIX', 'VIRTUAL_ENV'):
+        prefix = os.environ.get(envVar)
+        if prefix:
+            if platform.system() == 'Windows':
+                candidate = os.path.join(prefix, 'Scripts', 'biofilm-processing-gui.exe')
+            else:
+                candidate = os.path.join(prefix, 'bin', 'biofilm-processing-gui')
+            if os.path.isfile(candidate):
+                return candidate
+
+    # 2. PATH -- also reflects the active env.
+    gui = shutil.which('biofilm-processing-gui')
+    if gui:
+        return gui
+
+    # 3. Last resort: scan named envs. Ambiguous by nature (see above), so prefer
+    # an env whose name matches this project before falling back to any match.
     condaBase = _findCondaBase()
     if condaBase:
         envsDir = os.path.join(condaBase, 'envs')
         if os.path.isdir(envsDir):
-            for envName in sorted(os.listdir(envsDir)):
+            names = sorted(os.listdir(envsDir))
+            names.sort(key=lambda n: n != 'biofilm-processing')
+            for envName in names:
                 if platform.system() == 'Windows':
                     candidate = os.path.join(envsDir, envName, 'Scripts', 'biofilm-processing-gui.exe')
                 else:
                     candidate = os.path.join(envsDir, envName, 'bin', 'biofilm-processing-gui')
                 if os.path.isfile(candidate):
                     return candidate
-
-    # Check current env / PATH
-    for envVar, subdir in [('CONDA_PREFIX', 'bin'), ('VIRTUAL_ENV', 'bin')]:
-        prefix = os.environ.get(envVar)
-        if prefix:
-            if platform.system() == 'Windows':
-                candidate = os.path.join(prefix, 'Scripts', 'biofilm-processing-gui.exe')
-            else:
-                candidate = os.path.join(prefix, subdir, 'biofilm-processing-gui')
-            if os.path.isfile(candidate):
-                return candidate
-
-    gui = shutil.which('biofilm-processing-gui')
-    if gui:
-        return gui
 
     return None
 
