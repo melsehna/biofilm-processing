@@ -1,3 +1,5 @@
+import os
+
 def test_imports():
     pass
 
@@ -57,6 +59,29 @@ def test_save_registered_refuses_colony_stages(monkeypatch, capsys):
                '--no-save-registered', '--colony-tracking'])
     assert rc == 2
     assert 'registered_raw' in capsys.readouterr().err
+
+
+def test_saveStack_trims_speculative_prealloc(tmp_path):
+    # XFS answers tifffile's incremental page writes with post-EOF speculative
+    # preallocation that is never trimmed on close (measured 2.37x on a 25-page
+    # float32 stack, persisting for hours), which would inflate a 96-well plate
+    # from 35 GiB to 83 GiB. saveStack must release it, without touching content.
+    import numpy as np
+    import tifffile
+    from multiWellAnalysis.processing.io_utils import saveStack
+
+    stack = np.random.default_rng(0).random((16, 17, 3)).astype(np.float32)
+    saveStack(stack, str(tmp_path), 'w1')
+    path = tmp_path / 'w1.tif'
+
+    st = os.stat(path)
+    allocated = getattr(st, 'st_blocks', 0) * 512
+    # Never over-allocated after the trim (filesystems without post-EOF
+    # preallocation already satisfy this; the point is that we never exceed it).
+    assert allocated <= max(st.st_size, 4096) * 2
+    # Content survives the truncate: (H, W, T) in -> (T, H, W) on disk.
+    assert np.array_equal(tifffile.imread(str(path)),
+                          np.transpose(stack, (2, 0, 1)))
 
 
 def test_nas_rsync_flags_are_cifs_safe(monkeypatch):
