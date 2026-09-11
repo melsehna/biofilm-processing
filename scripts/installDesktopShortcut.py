@@ -259,14 +259,19 @@ def installWindows(guiBin):
     desktopDir = getDesktopDir()
 
     envName = _envNameFromBin(guiBin) or os.environ.get('CONDA_DEFAULT_ENV')
-    condaPrefix = os.environ.get('CONDA_PREFIX')
+    condaBase = _findCondaBase()
     venv = os.environ.get('VIRTUAL_ENV')
 
-    if condaPrefix and envName:
-        activate = (
-            f'call "{condaPrefix}\\Scripts\\activate.bat"\n'
-            f'call conda activate {envName}\n'
-        )
+    if condaBase and envName:
+        # `activate.bat <env>` activates base AND the env in one call.
+        # CONDA_PREFIX must NOT be used as the base: it is the ACTIVE env's
+        # prefix, and activate.bat lives only in <base>\Scripts, never inside
+        # an env. Running this installer from an activated env therefore
+        # produced `call "...\envs\<name>\Scripts\activate.bat"`, which fails,
+        # leaving conda off PATH so biofilm-processing-gui was never found. With
+        # the shortcut set to minimized, that looked like "clicking does
+        # nothing". The Linux branch already resolved the base properly.
+        activate = f'call "{condaBase}\\Scripts\\activate.bat" {envName}\n'
     elif venv:
         activate = f'call "{venv}\\Scripts\\activate.bat"\n'
     else:
@@ -280,6 +285,9 @@ def installWindows(guiBin):
         f.write('@echo off\n')
         f.write(activate)
         f.write('biofilm-processing-gui\n')
+        # Keep the window up on failure: the .lnk is created minimized, so
+        # without this any startup error vanishes with the closing console.
+        f.write('if errorlevel 1 pause\n')
     print(f'Created launcher: {batPath}')
 
     lnkPath = os.path.join(desktopDir, 'biofilm-processing.lnk')
