@@ -130,7 +130,22 @@ def main(argv=None):
     p.add_argument('--yield-to-gpu', action='store_true',
                    help='pause while a torch DataLoader job is running, so an '
                         'extraction keeps the disk to itself')
+    p.add_argument('--workers', type=int, default=1,
+                   help='parallel well readers (default 1). Raise this ONLY when the '
+                        'disk is not already saturated -- check `iostat -x`. Reading '
+                        'one page per well is latency-bound, not bandwidth-bound: '
+                        'measured 12%% utilisation and queue depth 0.26 single- '
+                        'threaded, so the disk idles between requests and more '
+                        'readers fill it. That is the opposite of streaming whole '
+                        'files, where extra readers only cause seek thrash.')
     p.add_argument('--limit', type=int, default=0, help='stop after N wells (smoke test)')
+    p.add_argument('--sample', type=int, default=0,
+                   help='render N wells spread evenly across the peak-biomass range '
+                        'instead of the first N. Use this to eyeball output before '
+                        'committing to a full pass: --limit takes whatever sorts '
+                        'first, which on a screen like this is a run of near-empty '
+                        'A-row wells and tells you nothing. Selection reads only the '
+                        'per-well _biomass.csv files (a few hundred bytes each).')
     p.add_argument('--dry-run', action='store_true', help='list work, read nothing')
     args = p.parse_args(argv)
 
@@ -156,14 +171,45 @@ def main(argv=None):
             wellId = os.path.basename(stack)[:-len('_processed.tif')]
             mag = wellId.split('_')[1] if '_' in wellId else ''
             work.append((drawerID, plateID, wellId, f'_{mag}' if mag else '', stack))
-    if args.limit:
+    if args.sample:
+        import pandas as pd
+        # Peak biomass per well comes from the run-level master CSV when it
+        # exists: ONE ~5 MB read instead of one tiny read per well. On a busy
+        # spinning disk the difference is minutes vs seconds -- 3,936 small reads
+        # are dominated by seek latency, not bytes. Falls back to the per-well
+        # CSVs only if the master is absent (e.g. a cancelled run).
+        peaks = {}
+        masterPath = os.path.join(args.root, 'master_frame_features.csv')
+        if os.path.isfile(masterPath):
+            m = pd.read_csv(masterPath, usecols=['drawerID', 'wellID', 'biomass'])
+            for (d, w), v in m.groupby(['drawerID', 'wellID'])['biomass'].max().items():
+                peaks[(d, w)] = float(v)
+        scored = []
+        for row in work:
+            v = peaks.get((row[0], row[2]))
+            if v is None:
+                bpath = os.path.join(os.path.dirname(row[4]), f'{row[2]}_biomass.csv')
+                try:
+                    v = float(pd.read_csv(bpath)['biomass'].max())
+                except Exception:
+                    continue
+            scored.append((v, row))
+        scored.sort(key=lambda t: t[0])
+        if scored:
+            n = min(args.sample, len(scored))
+            idx = [round(i * (len(scored) - 1) / max(n - 1, 1)) for i in range(n)]
+            work = [scored[i][1] for i in sorted(set(idx))]
+            print(f'Sample:  {len(work)} wells spanning peak biomass '
+                  f'{scored[0][0]:.5f} .. {scored[-1][0]:.5f}')
+    elif args.limit:
         work = work[:args.limit]
 
-    print(f'Root:    {args.root}')
-    print(f'Out:     {args.out}')
-    print(f'Wells:   {len(work)} across {len(procDirs)} plate(s)')
+    os.makedirs(args.out, exist_ok=True)
+    print(f'Root:    {args.root}', flush=True)
+    print(f'Out:     {args.out}', flush=True)
+    print(f'Wells:   {len(work)} across {len(procDirs)} plate(s)', flush=True)
     print(f'Frame:   {args.frame} | window [{lo}, {hi}] | {args.size}px | '
-          f'invert={args.invert}')
+          f'invert={args.invert}', flush=True)
     if args.throttle_mbps:
         print(f'Throttle: {args.throttle_mbps} MB/s')
     if args.yield_to_gpu:
@@ -184,64 +230,94 @@ def main(argv=None):
     rows, done, failed, readBytes = [], 0, 0, 0
     t0 = time.time()
 
-    for i, (drawerID, plateID, wellId, mag, stack) in enumerate(work, 1):
+    lock = __import__('threading').Lock()
+    counter = {'n': 0}
+
+    def _one(item):
+        drawerID, plateID, wellId, mag, stack = item
         outDir = os.path.join(args.out, drawerID)
         os.makedirs(outDir, exist_ok=True)
         jpg = os.path.join(outDir, f'{wellId}.jpg')
         rel = os.path.relpath(jpg, args.out)
-
         if os.path.exists(jpg):
-            rows.append((drawerID, plateID, wellId, mag, '', '', rel))
-            continue
+            return (drawerID, plateID, wellId, mag, '', '', rel), 0, None
 
         if args.yield_to_gpu:
-            waited = 0
             while _isGpuJobRunning():
                 time.sleep(10)
-                waited += 10
-                if waited % 300 == 0:
-                    print(f'  [yield] waiting on GPU job ({waited}s)', flush=True)
 
-        try:
-            biomassPath = os.path.join(os.path.dirname(stack), f'{wellId}_biomass.csv')
-            with tifffile.TiffFile(stack) as tf:
-                series = tf.series[0]
-                nFrames = series.shape[0]
-                if args.frame == 'peak':
-                    idx, peakVal = _peakFrame(biomassPath, nFrames)
-                else:
-                    idx, peakVal = int(args.frame), float('nan')
-                idx = max(0, min(idx, nFrames - 1))
-                page = series.asarray(key=idx)
-            readBytes += page.nbytes
+        biomassPath = os.path.join(os.path.dirname(stack), f'{wellId}_biomass.csv')
+        with tifffile.TiffFile(stack) as tf:
+            series = tf.series[0]
+            nFrames = series.shape[0]
+            if args.frame == 'peak':
+                idx, peakVal = _peakFrame(biomassPath, nFrames)
+            else:
+                idx, peakVal = int(args.frame), float('nan')
+            idx = max(0, min(idx, nFrames - 1))
+            page = series.asarray(key=idx)
 
-            thumb = renderThumb(page, args.size, (lo, hi), args.invert)
-            ok = cv2.imwrite(jpg, thumb,
-                             [int(cv2.IMWRITE_JPEG_QUALITY), args.quality])
-            if not ok:
-                raise IOError('cv2.imwrite returned False')
-            rows.append((drawerID, plateID, wellId, mag, idx,
-                         '' if peakVal != peakVal else f'{peakVal:.6g}', rel))
-            done += 1
-        except Exception as e:
-            failed += 1
-            print(f'  ERROR {drawerID}/{wellId}: {e}', file=sys.stderr)
-            continue
+        thumb = renderThumb(page, args.size, (lo, hi), args.invert)
+        if not cv2.imwrite(jpg, thumb, [int(cv2.IMWRITE_JPEG_QUALITY), args.quality]):
+            raise IOError('cv2.imwrite returned False')
+        return ((drawerID, plateID, wellId, mag, idx,
+                 '' if peakVal != peakVal else f'{peakVal:.6g}', rel),
+                page.nbytes, None)
 
-        if args.throttle_mbps:
-            # Hold average read throughput under the cap by sleeping off the
-            # excess. Keeps this pass out of the way of a concurrent job rather
-            # than relying on ionice, which mq-deadline ignores.
-            target = readBytes / (args.throttle_mbps * 1e6)
-            drift = target - (time.time() - t0)
-            if drift > 0:
-                time.sleep(drift)
+    def _record(res, item):
+        row, nbytes, _ = res
+        with lock:
+            rows.append(row)
+            counter['n'] += 1
+            i = counter['n']
+        return nbytes, i
 
-        if i % 100 == 0 or i == len(work):
-            el = time.time() - t0
-            print(f'  {i}/{len(work)} wells · {readBytes/2**30:.1f} GiB read · '
-                  f'{readBytes/max(el,1e-9)/1e6:.0f} MB/s · {el/60:.1f} min',
-                  flush=True)
+    if args.workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Threads, not processes: the heavy steps (TIFF read, cv2 resize, JPEG
+        # encode) all release the GIL, and threads avoid re-importing tifffile/cv2
+        # per worker.
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futs = {pool.submit(_one, it): it for it in work}
+            for fut in as_completed(futs):
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    failed += 1
+                    it = futs[fut]
+                    print(f'  ERROR {it[0]}/{it[2]}: {e}', file=sys.stderr)
+                    continue
+                nbytes, i = _record(res, futs[fut])
+                readBytes += nbytes
+                if nbytes:
+                    done += 1
+                if i % 200 == 0 or i == len(work):
+                    el = time.time() - t0
+                    print(f'  {i}/{len(work)} wells · {readBytes/2**30:.1f} GiB · '
+                          f'{readBytes/max(el,1e-9)/1e6:.0f} MB/s · {el/60:.1f} min',
+                          flush=True)
+    else:
+        for i, item in enumerate(work, 1):
+            try:
+                res = _one(item)
+            except Exception as e:
+                failed += 1
+                print(f'  ERROR {item[0]}/{item[2]}: {e}', file=sys.stderr)
+                continue
+            rows.append(res[0])
+            readBytes += res[1]
+            if res[1]:
+                done += 1
+            if args.throttle_mbps:
+                target = readBytes / (args.throttle_mbps * 1e6)
+                drift = target - (time.time() - t0)
+                if drift > 0:
+                    time.sleep(drift)
+            if i % 100 == 0 or i == len(work):
+                el = time.time() - t0
+                print(f'  {i}/{len(work)} wells · {readBytes/2**30:.1f} GiB · '
+                      f'{readBytes/max(el,1e-9)/1e6:.0f} MB/s · {el/60:.1f} min',
+                      flush=True)
 
     with open(manifestPath, 'w', newline='') as f:
         w = csv.writer(f)
