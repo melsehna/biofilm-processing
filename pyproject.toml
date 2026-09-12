@@ -33,7 +33,7 @@ dependencies = [
     "imageio>=2.34,<3",
     "imageio-ffmpeg>=0.5,<1",
     "tqdm>=4.66,<5",
-    "PySide6>=6.6,<7",
+    "PySide6>=6.6,<6.10",   # 6.11 fails to load Qt on some Windows builds; 6.8-6.9 verified
 ]
 
 [project.optional-dependencies]
