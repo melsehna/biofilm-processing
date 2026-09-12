@@ -17,7 +17,24 @@ from pathlib import Path
 
 
 def _findCondaBase():
-    """Try multiple methods to find the conda base directory."""
+    """Locate the conda BASE install (the one holding Scripts/activate.bat).
+
+    Deliberately tries several routes, because no single one is reliable:
+
+    * `conda info --base` fails in PowerShell, where `conda` is a shell FUNCTION
+      rather than an executable subprocess can spawn.
+    * CONDA_EXE is set by every conda shell hook and points at the base's own
+      conda executable, so it survives that -- the most dependable signal.
+    * Deriving from CONDA_PREFIX only works when envs live inside the base. With
+      an ALL-USERS install the base is under C:\ProgramData while envs land in
+      %USERPROFILE%\.conda\envs (ProgramData is not user-writable), so
+      stripping two components yields "<user>\.conda", which is an env store,
+      not an install.
+    * The directory scan must therefore include the system-wide locations, not
+      just $HOME.
+
+    Returns None if nothing is found; callers must not assume success.
+    """
     try:
         return subprocess.check_output(
             ['conda', 'info', '--base'], text=True, stderr=subprocess.DEVNULL
@@ -25,21 +42,47 @@ def _findCondaBase():
     except Exception:
         pass
 
+    # CONDA_EXE -> <base>/Scripts/conda.exe (Windows) or <base>/bin/conda
+    condaExe = os.environ.get('CONDA_EXE', '')
+    if condaExe:
+        candidate = os.path.dirname(os.path.dirname(condaExe))
+        if _looksLikeCondaBase(candidate):
+            return candidate
+
     prefix = os.environ.get('CONDA_PREFIX', '')
     if prefix:
+        if _looksLikeCondaBase(prefix):       # base env itself is active
+            return prefix
         candidate = os.path.dirname(os.path.dirname(prefix))
-        condaSh = os.path.join(candidate, 'etc', 'profile.d', 'conda.sh')
-        if os.path.isfile(condaSh):
+        if _looksLikeCondaBase(candidate):
             return candidate
 
     home = str(Path.home())
-    for name in ['miniforge3', 'mambaforge', 'miniconda3', 'anaconda3',
-                 'opt/miniconda3', 'opt/anaconda3']:
-        candidate = os.path.join(home, name)
-        if os.path.isfile(os.path.join(candidate, 'etc', 'profile.d', 'conda.sh')):
-            return candidate
+    roots = [home, os.environ.get('LOCALAPPDATA', ''), os.environ.get('PROGRAMDATA', ''),
+             'C:\\ProgramData', 'C:\\']
+    names = ['miniforge3', 'mambaforge', 'miniconda3', 'anaconda3', 'Miniconda3',
+             'Anaconda3', 'opt/miniconda3', 'opt/anaconda3']
+    for root in [r for r in roots if r]:
+        for name in names:
+            candidate = os.path.join(root, name)
+            if _looksLikeCondaBase(candidate):
+                return candidate
 
     return None
+
+
+def _looksLikeCondaBase(path):
+    """True if `path` is a conda INSTALL rather than merely an env directory.
+
+    Checks for the activation entry point we actually need on this platform;
+    an env store such as %USERPROFILE%\.conda has neither.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+    if platform.system() == 'Windows':
+        return os.path.isfile(os.path.join(path, 'Scripts', 'activate.bat')) or \
+               os.path.isfile(os.path.join(path, 'condabin', 'conda.bat'))
+    return os.path.isfile(os.path.join(path, 'etc', 'profile.d', 'conda.sh'))
 
 
 def _envNameFromBin(guiBin):
@@ -277,32 +320,47 @@ def installWindows(guiBin):
     condaBase = _findCondaBase()
     venv = os.environ.get('VIRTUAL_ENV')
 
+    # Launch the executable by ABSOLUTE PATH and put its env directories on PATH
+    # ourselves, rather than relying on `conda activate` to do it.
+    #
+    # We already resolved guiBin, so activation was never load-bearing -- and it
+    # is the fragile part. `_findCondaBase()` returns None whenever conda is not
+    # discoverable: `conda info --base` is spawned with subprocess, but in
+    # PowerShell `conda` is a shell FUNCTION, not an exe, so that call fails;
+    # the CONDA_PREFIX fallback then derives the base by stripping two path
+    # components, which gives "<user>\.conda" for the common
+    # "<user>\.conda\envs\<name>" layout -- a directory that holds envs but is
+    # not a conda install; and the home-directory scan only knows miniforge3 /
+    # miniconda3 / anaconda3 under $HOME. With all three missing, the launcher
+    # was written with NO activation line at all and failed with
+    # "'biofilm-processing-gui' is not recognized".
+    #
+    # Scripts + Library\bin + the env root are what activation would have
+    # prepended; including them keeps conda-provided DLLs (Qt, MKL) reachable.
+    envDir = os.path.dirname(os.path.dirname(guiBin))   # ...\envs\<name>
+    lines = [
+        '@echo off\n',
+        f'set "ENVDIR={envDir}"\n',
+        'set "PATH=%ENVDIR%;%ENVDIR%\\Scripts;%ENVDIR%\\Library\\bin;%PATH%"\n',
+    ]
+    # Best-effort conda activation on top, when we could actually locate a base.
+    # It adds the conda-managed environment variables some packages expect; the
+    # absolute-path launch below does not depend on it succeeding.
     if condaBase and envName:
-        # `activate.bat <env>` activates base AND the env in one call.
-        # CONDA_PREFIX must NOT be used as the base: it is the ACTIVE env's
-        # prefix, and activate.bat lives only in <base>\Scripts, never inside
-        # an env. Running this installer from an activated env therefore
-        # produced `call "...\envs\<name>\Scripts\activate.bat"`, which fails,
-        # leaving conda off PATH so biofilm-processing-gui was never found. With
-        # the shortcut set to minimized, that looked like "clicking does
-        # nothing". The Linux branch already resolved the base properly.
-        activate = f'call "{condaBase}\\Scripts\\activate.bat" {envName}\n'
+        lines.append(f'call "{condaBase}\\Scripts\\activate.bat" {envName} 2>nul\n')
     elif venv:
-        activate = f'call "{venv}\\Scripts\\activate.bat"\n'
-    else:
-        activate = ''
+        lines.append(f'call "{venv}\\Scripts\\activate.bat" 2>nul\n')
+    lines.append(f'"{guiBin}"\n')
+    # Keep the window up on failure: the .lnk is created minimized, so without
+    # this any startup error vanishes with the closing console.
+    lines.append('if errorlevel 1 pause\n')
 
     # hide the .bat launcher in AppData so only the .lnk shows on Desktop
     appDataDir = os.path.join(os.environ.get('APPDATA', ''), 'biofilm-processing')
     os.makedirs(appDataDir, exist_ok=True)
     batPath = os.path.join(appDataDir, 'biofilm-processing.bat')
     with open(batPath, 'w') as f:
-        f.write('@echo off\n')
-        f.write(activate)
-        f.write('biofilm-processing-gui\n')
-        # Keep the window up on failure: the .lnk is created minimized, so
-        # without this any startup error vanishes with the closing console.
-        f.write('if errorlevel 1 pause\n')
+        f.writelines(lines)
     print(f'Created launcher: {batPath}')
 
     lnkPath = os.path.join(desktopDir, 'biofilm-processing.lnk')
