@@ -95,3 +95,38 @@ def test_nas_rsync_flags_are_cifs_safe(monkeypatch):
     assert '-a' not in _NAS_RSYNC
     for flag in ('--no-perms', '--no-owner', '--no-group', '--no-times'):
         assert flag in _NAS_RSYNC, f'{flag} missing from _NAS_RSYNC'
+
+
+def test_run_params_records_stages_and_tracking(monkeypatch, tmp_path):
+    # run_params.json must record stage flags + tracking knobs, and a resumed
+    # backfill (tracking off) must keep the earlier run's record, not erase it.
+    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
+    import json
+    from multiWellAnalysis.gui.tabs import run as R
+    full = {'colonyTracking': True, 'colonyFeats': True,
+            'wholeImageFeats': False, 'propRadiusPx': 50, 'minColonyAreaPx': 200}
+    R._saveRunParams(str(tmp_path), {}, stages=R._extractStages(full),
+                     tracking=R._extractTrackingParams(full))
+    first = json.load(open(tmp_path / 'run_params.json'))
+    assert first['_stages']['colonyTracking'] is True
+    assert first['_stages']['wholeImageFeats'] is False
+    assert first['_tracking'] == {'minColonyAreaPx': 200, 'propRadiusPx': 50,
+                                  'biomassThreshold': 0.005}
+    # Params-only keys are unchanged, so resume matching is unaffected.
+    assert R._paramsMatch(first, {})
+
+    backfill = {**full, 'colonyTracking': False, 'colonyFeats': False,
+                'wholeImageFeats': True, 'propRadiusPx': 25}
+    R._saveRunParams(str(tmp_path), {}, stages=R._extractStages(backfill),
+                     tracking=R._extractTrackingParams(backfill), previous=first)
+    merged = json.load(open(tmp_path / 'run_params.json'))
+    assert merged['_stages']['colonyTracking'] is True
+    assert merged['_stages']['wholeImageFeats'] is True
+    assert merged['_tracking']['propRadiusPx'] == 50
+
+    # A fresh run with tracking off records no tracking params.
+    fresh = tmp_path / 'fresh'
+    fresh.mkdir()
+    R._saveRunParams(str(fresh), {}, stages=R._extractStages(backfill),
+                     tracking=R._extractTrackingParams(backfill))
+    assert json.load(open(fresh / 'run_params.json'))['_tracking'] is None

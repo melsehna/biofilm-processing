@@ -70,17 +70,55 @@ _versionStampKey = '_pipelineVersion'
 # which is otherwise unrecoverable from the tree.
 _savedOutputsKey = '_savedOutputs'
 
+# Which optional stages have run against this plate dir, and the tracking knobs
+# they used. Provenance only (underscore-prefixed, NOT in `_paramKeys`), so
+# resume is unaffected. On resume both are merged with the saved record rather
+# than overwritten: a backfill that enables only whole-image must not erase the
+# fact that an earlier invocation ran tracking with propRadius=50.
+_stagesKey = '_stages'
+_trackingKey = '_tracking'
+_stageKeys = [
+    'wholeImageFeats', 'colonyTracking', 'colonyFeats',
+    'saveOverlays', 'saveProcessedVideo', 'umapStatic', 'umapInteractive',
+]
+
 
 def _extractRunParams(state):
     return {k: state.get(k) for k in _paramKeys}
 
 
-def _saveRunParams(outdir, params, saveRegistered=True):
+def _extractStages(state):
+    return {k: bool(state.get(k)) for k in _stageKeys}
+
+
+def _extractTrackingParams(state):
+    # Global values; per-mag overrides are already recorded under `magParams`.
+    from multiWellAnalysis.colony.runTrackingGUI import BIOMASS_THRESHOLD
+    return {
+        'minColonyAreaPx': state.get('minColonyAreaPx', 200),
+        'propRadiusPx': state.get('propRadiusPx', 25),
+        'biomassThreshold': BIOMASS_THRESHOLD,
+    }
+
+
+def _saveRunParams(outdir, params, saveRegistered=True, stages=None,
+                   tracking=None, previous=None):
+    """Write run_params.json. `previous` is the saved record when resuming;
+    stage flags are OR-ed with it and its tracking params kept unless this
+    invocation re-runs tracking."""
     path = os.path.join(outdir, _runParamsFile)
+    prev = previous if isinstance(previous, dict) else {}
+    stages = dict(stages or {})
+    if not stages.get('colonyTracking'):
+        tracking = prev.get(_trackingKey)
+    for k, v in (prev.get(_stagesKey) or {}).items():
+        stages[k] = bool(v) or bool(stages.get(k))
     payload = {
         **params,
         _versionStampKey: buildRecord(),
         _savedOutputsKey: {'registered_raw': bool(saveRegistered)},
+        _stagesKey: stages,
+        _trackingKey: tracking,
     }
     with open(path, 'w') as f:
         json.dump(payload, f, indent=2)
@@ -662,7 +700,10 @@ class ProcessingWorker(QObject):
                             f'| current: {curVer.get("build")}). Features may mix '
                             f'across versions; consider a clean reprocess.')
                 _saveRunParams(outdir, runParams,
-                               saveRegistered=s.get('saveRegistered', True))
+                               saveRegistered=s.get('saveRegistered', True),
+                               stages=_extractStages(s),
+                               tracking=_extractTrackingParams(s),
+                               previous=saved if resume else None)
 
                 wellItems = list(wells.items())
 
