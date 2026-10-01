@@ -8,7 +8,7 @@ import cv2
 from .io_utils import saveStack
 from .preprocessing import normalizeLocalContrast, normalizeLocalContrastOutput
 from .segmentation import computeMaskInplace, dustCorrectInplace
-from .registration import registerStackNormblur
+from .registration import registerStackNormblur, registrationPath, saveRegistration
 from .overlay import writeOverlayVideo, writeProcessedVideo
 
 
@@ -78,6 +78,7 @@ def timelapseProcessing(
     label=None,
     workers=4,
     progressFn=None,
+    sourceFiles=None,
 ):
     processedDir = os.path.join(outdir, 'processedImages')
     os.makedirs(processedDir, exist_ok=True)
@@ -134,6 +135,16 @@ def timelapseProcessing(
 
     rowMin, rowMax, colMin, colMax = cropIndices
     rawCropped = registeredRaw[rowMin:rowMax, colMin:colMax, :]
+
+    # Always written (~500 bytes): shifts + crop box are the whole registration,
+    # so `registration.rebuildRegisteredRaw` can recreate rawCropped from the raw
+    # TIFFs (`sourceFiles`) when `_registered_raw.tif` was not saved.
+    saveRegistration(
+        registrationPath(processedDir, filename),
+        shiftsArray, cropIndices, images.shape[:2],
+        shiftThresh=shiftThresh, fftStride=fftStride, downsample=downsample,
+        sourceFiles=sourceFiles,
+    )
     if Imin is not None:
         Imin = Imin[rowMin:rowMax, colMin:colMax]
     if Imax is not None:

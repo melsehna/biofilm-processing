@@ -175,21 +175,8 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
         # Casting to float32 here would force _toBitDepthScaled into its
         # observed-max heuristic, which misclassifies dim uint16 wells
         # (max < 256) as uint8 and over-scales by 256×.
-        if isinstance(wellFiles, str):
-            raw = tifffile.imread(wellFiles)
-            stack = raw[np.newaxis] if raw.ndim == 2 else raw
-            del raw
-        else:
-            first = tifffile.imread(wellFiles[0])
-            h, w = first.shape[:2]
-            stack = np.empty((len(wellFiles), h, w), dtype=first.dtype)
-            stack[0] = first
-            del first
-            for fi in range(1, len(wellFiles)):
-                stack[fi] = tifffile.imread(wellFiles[fi])
-
-        if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
-            stack = np.transpose(stack, (1, 2, 0))
+        from multiWellAnalysis.processing.io_utils import readWellStack
+        stack = readWellStack(wellFiles)
 
         plateOutdir = os.path.dirname(outdir)
         saveRegistered = params.get('saveRegistered', True)
@@ -209,6 +196,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             saveProcessedVideo=params.get('saveProcessedVideo', False),
             saveRegistered=saveRegistered,
             workers=1,
+            sourceFiles=wellFiles,
         )
         del stack
 
@@ -232,6 +220,8 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             'processed': os.path.join(outdir, f'{wellId}_processed.tif'),
             'masks': os.path.join(outdir, f'{wellId}_masks.npz'),
             'biomass': biomassPath,
+            # shifts + crop box; rebuilds registered_raw from the raw TIFFs
+            'registration': os.path.join(outdir, f'{wellId}_registration.npz'),
         }
     except Exception as e:
         return {'well': wellId, 'status': 'error', 'error': f'{e}\n{traceback.format_exc()}'}
@@ -771,6 +761,7 @@ class ProcessingWorker(QObject):
                             'registered_raw': os.path.join(outdir, f'{wellId}_registered_raw.tif'),
                             'masks':          os.path.join(outdir, f'{wellId}_masks.npz'),
                             'biomass':        os.path.join(outdir, f'{wellId}_biomass.csv'),
+                            'registration':   os.path.join(outdir, f'{wellId}_registration.npz'),
                         }
                         if os.path.exists(candidates['processed']):
                             for k, p in candidates.items():

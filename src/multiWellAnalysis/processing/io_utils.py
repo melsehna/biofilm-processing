@@ -9,6 +9,33 @@ def _readOne(args):
     arr[..., t] = iio.imread(path).astype(np.float64)
 
 
+def readWellStack(wellFiles):
+    """Read one well's raw frames into an (H, W, T) stack in the source dtype.
+
+    `wellFiles` is either one multi-page TIFF path or a list of per-frame TIFF
+    paths in frame order. Shared by the pipeline (run.py:_processOneWell) and
+    the registration rebuild (registration.rebuildRegisteredRaw) so both see
+    byte-identical input.
+    """
+    import tifffile
+    if isinstance(wellFiles, str):
+        raw = tifffile.imread(wellFiles)
+        stack = raw[np.newaxis] if raw.ndim == 2 else raw
+        del raw
+    else:
+        first = tifffile.imread(wellFiles[0])
+        h, w = first.shape[:2]
+        stack = np.empty((len(wellFiles), h, w), dtype=first.dtype)
+        stack[0] = first
+        del first
+        for fi in range(1, len(wellFiles)):
+            stack[fi] = tifffile.imread(wellFiles[fi])
+
+    if stack.ndim == 3 and stack.shape[0] < stack.shape[2]:
+        stack = np.transpose(stack, (1, 2, 0))
+    return stack
+
+
 def readImagesInplace(ntimepoints, arr, files):
     with ThreadPoolExecutor() as pool:
         pool.map(_readOne, [(arr, t, files[t]) for t in range(ntimepoints)])

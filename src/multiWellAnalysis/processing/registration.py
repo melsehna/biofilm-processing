@@ -1,4 +1,5 @@
 # multiWellAnalysis/registration.py — two-pass in-place registration
+import os
 import numpy as np
 import cv2
 from concurrent.futures import ThreadPoolExecutor
@@ -99,3 +100,104 @@ def registerStackNormblur(
     _apply_shifts_inplace(normBlurStack, shifts, workers=workers)
     _apply_shifts_inplace(rawStack, shifts, workers=workers)
     return normBlurStack, rawStack, shifts
+
+
+# ---------------------------------------------------------------------------
+# Registration sidecar: the registration of a well is just per-frame (dy, dx)
+# translations plus the NaN-border crop box, ~500 bytes. Saving it lets the
+# registered raw stack be rebuilt bit-exactly from the original Cytation TIFFs
+# on demand, instead of storing a full `_registered_raw.tif` (~490 MB/well).
+# ---------------------------------------------------------------------------
+
+REGISTRATION_VERSION = 1
+
+
+def registrationPath(procDir, wellId):
+    return os.path.join(procDir, f'{wellId}_registration.npz')
+
+
+def saveRegistration(path, shifts, cropIndices, frameShape, shiftThresh,
+                     fftStride, downsample, sourceFiles=None):
+    """Write the per-well registration sidecar (`<well>_registration.npz`)."""
+    if sourceFiles is None:
+        files = []
+    elif isinstance(sourceFiles, str):
+        files = [os.path.abspath(sourceFiles)]
+    else:
+        files = [os.path.abspath(f) for f in sourceFiles]
+    np.savez(
+        path,
+        version=np.int64(REGISTRATION_VERSION),
+        shifts=np.asarray(shifts, dtype=np.float64).reshape(-1, 2),
+        cropIndices=np.asarray(cropIndices, dtype=np.int64),
+        frameShape=np.asarray(frameShape[:2], dtype=np.int64),
+        shiftThresh=np.float64(shiftThresh),
+        fftStride=np.int64(fftStride),
+        downsample=np.int64(downsample),
+        sourceFiles=np.asarray(files, dtype=str),
+    )
+
+
+def loadRegistration(path):
+    """Load a registration sidecar as a plain dict (no pickle)."""
+    with np.load(path, allow_pickle=False) as d:
+        return {
+            'version': int(d['version']),
+            'shifts': d['shifts'],
+            'cropIndices': tuple(int(v) for v in d['cropIndices']),
+            'frameShape': tuple(int(v) for v in d['frameShape']),
+            'shiftThresh': float(d['shiftThresh']),
+            'fftStride': int(d['fftStride']),
+            'downsample': int(d['downsample']),
+            'sourceFiles': [str(f) for f in d['sourceFiles']],
+        }
+
+
+def rebuildRegisteredRaw(path, sourceFiles=None):
+    """Rebuild a well's registered raw stack (H, W, T float32) from its sidecar.
+
+    Re-reads the raw frames (from `sourceFiles`, or the paths recorded in the
+    sidecar), then applies the exact pipeline steps: bit-depth scaling, the
+    stored shifts via `_apply_shifts_inplace`, and the stored crop. The result
+    equals what `_registered_raw.tif` would have held, given the same library
+    versions (pin via environment.yml). Pass `sourceFiles` if the raw data has
+    moved since processing.
+    """
+    from .analysis_main import _toBitDepthScaled
+    from .io_utils import readWellStack
+
+    reg = loadRegistration(path)
+    files = sourceFiles if sourceFiles is not None else reg['sourceFiles']
+    if not files:
+        raise ValueError(f'{path}: no source files recorded; pass sourceFiles')
+    if not isinstance(files, str):
+        missing = [f for f in files if not os.path.exists(f)]
+        if missing:
+            raise FileNotFoundError(
+                f'{len(missing)} raw frame(s) missing, e.g. {missing[0]} '
+                '(pass sourceFiles if the raw data moved)')
+
+    images = _toBitDepthScaled(readWellStack(files))
+    if tuple(images.shape[:2]) != reg['frameShape'] or images.shape[2] != len(reg['shifts']):
+        raise ValueError(
+            f'{path}: raw stack {images.shape} does not match registration '
+            f'(frames {reg["frameShape"]} x {len(reg["shifts"])})')
+    _apply_shifts_inplace(images, reg['shifts'], workers=1)
+    r0, r1, c0, c1 = reg['cropIndices']
+    return images[r0:r1, c0:c1, :]
+
+
+def loadRegisteredRaw(procDir, wellId):
+    """Registered raw stack (H, W, T) for a well: from `_registered_raw.tif` if
+    it was saved, else rebuilt from `_registration.npz`. None if neither exists."""
+    import tifffile
+    tifPath = os.path.join(procDir, f'{wellId}_registered_raw.tif')
+    if os.path.exists(tifPath):
+        raw = tifffile.imread(tifPath)
+        if raw.ndim == 3 and raw.shape[0] < raw.shape[1]:
+            raw = np.transpose(raw, (1, 2, 0))
+        return raw
+    regPath = registrationPath(procDir, wellId)
+    if os.path.exists(regPath):
+        return rebuildRegisteredRaw(regPath)
+    return None

@@ -19,20 +19,20 @@ import argparse
 import os
 import sys
 import numpy as np
-import imageio.v3 as iio
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 from multiWellAnalysis.processing.preprocessing import normalizeLocalContrastOutput
 from multiWellAnalysis.processing.overlay import writeOverlayVideo
+from multiWellAnalysis.processing.registration import loadRegisteredRaw, registrationPath
 
 
 def findWells(procDir):
-    """Discover wells from *_registered_raw.tif files in procDir."""
+    """Discover wells from *_registered_raw.tif / *_registration.npz files in procDir."""
     wells = []
     for f in sorted(os.listdir(procDir)):
-        if f.endswith('_registered_raw.tif'):
-            well = f.replace('_registered_raw.tif', '')
+        if f.endswith(('_registered_raw.tif', '_registration.npz')):
+            well = f.replace('_registered_raw.tif', '').replace('_registration.npz', '')
             wells.append(well)
     return wells
 
@@ -66,11 +66,14 @@ def regenOverlay(procDir, well, blockDiam, fps, label=None):
     maskPath = os.path.join(procDir, f'{well}_masks.npz')
     outPath = os.path.join(procDir, f'{well}_overlay.mp4')
 
-    if not os.path.exists(rawPath) or not os.path.exists(maskPath):
+    hasRaw = os.path.exists(rawPath) or os.path.exists(registrationPath(procDir, well))
+    if not hasRaw or not os.path.exists(maskPath):
         print(f'{well}: missing files, skipping')
         return
 
-    raw = iio.imread(rawPath).astype(np.float32)
+    # (H, W, T): the saved stack if present, else rebuilt from the raw TIFFs
+    # via the registration sidecar.
+    raw = loadRegisteredRaw(procDir, well).astype(np.float32)
     imax = raw.max()
     if imax > 0:
         raw /= imax

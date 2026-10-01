@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 from multiWellAnalysis.processing.preprocessing import normalizeLocalContrastOutput
 from multiWellAnalysis.processing.overlay import writeOverlayVideo
 from multiWellAnalysis.processing.helpers import limitThreads
+from multiWellAnalysis.processing.registration import rebuildRegisteredRaw
 
 
 BLOCK_DIAM = 101
@@ -32,15 +33,20 @@ def regenOne(args):
     """Regenerate a single overlay. Called by the worker pool."""
     rawPath, maskPath, outPath, label, fps, blockDiam = args
     try:
-        if not os.path.exists(rawPath):
+        # No saved stack -> rebuild it from the raw TIFFs via the sidecar.
+        regPath = rawPath.replace('_registered_raw.tif', '_registration.npz')
+        if not os.path.exists(rawPath) and not os.path.exists(regPath):
             return f'SKIP missing raw: {rawPath}'
         if not os.path.exists(maskPath):
             return f'SKIP missing mask: {maskPath}'
 
-        raw = tifffile.imread(rawPath).astype(np.float32)
-        # registeredRawTif is (T, H, W) — transpose to (H, W, T)
-        if raw.ndim == 3 and raw.shape[0] < raw.shape[1]:
-            raw = np.transpose(raw, (1, 2, 0))
+        if os.path.exists(rawPath):
+            raw = tifffile.imread(rawPath).astype(np.float32)
+            # registeredRawTif is (T, H, W) — transpose to (H, W, T)
+            if raw.ndim == 3 and raw.shape[0] < raw.shape[1]:
+                raw = np.transpose(raw, (1, 2, 0))
+        else:
+            raw = rebuildRegisteredRaw(regPath).astype(np.float32)  # (H, W, T)
         # scale to [0, 1]
         imax = raw.max()
         if imax > 0:

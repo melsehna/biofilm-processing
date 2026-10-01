@@ -212,6 +212,58 @@ def test_master_csv_writes_provenance_sidecar(tmp_path):
     assert 'generatedAtUtc' in rec
 
 
+# ---------------------------------------------------------------------------
+# Registration sidecar: shifts + crop box rebuild `_registered_raw.tif` exactly
+# from the raw frames, so the full stack need not be stored.
+# ---------------------------------------------------------------------------
+
+def test_registration_sidecar_rebuilds_registered_raw(tmp_path):
+    import tifffile
+    from multiWellAnalysis.processing.analysis_main import timelapseProcessing
+    from multiWellAnalysis.processing.io_utils import readWellStack
+    from multiWellAnalysis.processing.registration import (
+        loadRegisteredRaw, loadRegistration, rebuildRegisteredRaw, registrationPath)
+
+    from scipy.ndimage import gaussian_filter
+    rng = np.random.default_rng(0)
+    T, H, W = 6, 160, 160
+    # one fixed textured scene; the field of view drifts (2, 3) px per frame,
+    # i.e. a real stage translation for phase correlation to recover
+    scene = 40000 + 8000 * gaussian_filter(rng.normal(0, 1, (H + 40, W + 40)), 3)
+    files = []
+    for t in range(T):
+        img = scene[2 * t:2 * t + H, 3 * t:3 * t + W]
+        f = tmp_path / 'raw' / f'A1_03_1_1_Bright Field_{t + 1:03d}.tif'
+        f.parent.mkdir(exist_ok=True)
+        tifffile.imwrite(f, np.clip(img, 0, 65535).astype(np.uint16))
+        files.append(str(f))
+
+    out = tmp_path / 'out'
+    timelapseProcessing(
+        images=readWellStack(files), blockDiameter=31, ntimepoints=T,
+        shiftThresh=50, fixedThresh=0.02, dustCorrection=True,
+        outdir=str(out), filename='A1_03', imageRecords=None,
+        fftStride=1, downsample=1, skipOverlay=True, saveRegistered=True,
+        workers=1, sourceFiles=files,
+    )
+    procDir = out / 'processedImages'
+    reg = loadRegistration(registrationPath(str(procDir), 'A1_03'))
+    assert reg['shifts'].shape == (T, 2)
+    # non-trivial shifts, so the rebuild exercises the warp (this is a round-trip
+    # test of the sidecar, not of registration accuracy on a 160 px toy image)
+    assert np.abs(reg['shifts'][1:]).max() > 1
+    assert reg['sourceFiles'] == [os.path.abspath(f) for f in files]
+
+    saved = np.transpose(tifffile.imread(procDir / 'A1_03_registered_raw.tif'), (1, 2, 0))
+    rebuilt = rebuildRegisteredRaw(registrationPath(str(procDir), 'A1_03'))
+    assert rebuilt.dtype == saved.dtype and rebuilt.shape == saved.shape
+    assert np.array_equal(rebuilt, saved, equal_nan=True)
+
+    # with the stack deleted, loadRegisteredRaw falls back to the rebuild
+    os.remove(procDir / 'A1_03_registered_raw.tif')
+    assert np.array_equal(loadRegisteredRaw(str(procDir), 'A1_03'), saved, equal_nan=True)
+
+
 def test_limitThreads_caps_opencv():
     import cv2
     from multiWellAnalysis.processing.helpers import limitThreads
