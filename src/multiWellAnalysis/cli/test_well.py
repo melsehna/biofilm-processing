@@ -31,6 +31,7 @@ os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+os.environ.setdefault('OPENCV_FOR_THREADS_NUM', '1')   # match a pool worker (processing/helpers.py:limitThreads)
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import sys

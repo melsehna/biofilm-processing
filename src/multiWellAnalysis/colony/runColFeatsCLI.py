@@ -34,6 +34,7 @@ from multiWellAnalysis.colony.colonyFeatsMicrons import (
 )
 
 from multiWellAnalysis.colony.wellAggMicrons import aggregateWellFeatures
+from multiWellAnalysis.processing.helpers import limitThreads
 
 
 backgroundDilateRadius = 5
@@ -225,7 +226,7 @@ def main():
             for r in rows
         ]
 
-        with ProcessPoolExecutor(max_workers=args.nProc) as ex:
+        with ProcessPoolExecutor(max_workers=args.nProc, initializer=limitThreads) as ex:
             list(ex.map(processOneWell, taskArgs, chunksize=4))
 
         logPlate(plateId, '==== FINISHED colony feature extraction ====', suffix=logSuffix)

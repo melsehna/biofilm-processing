@@ -142,8 +142,11 @@ def _writeWithImageio(frames, path, fps):
     """Write frames using imageio-ffmpeg (RGB input)."""
     import imageio.v3 as iio
     rgbFrames = frames[..., ::-1].copy()  # BGR→RGB, contiguous for ffmpeg
+    # -threads 1: libx264 otherwise spawns ~1.5 threads per core (107 measured on
+    # 56 cores) per video, i.e. per pool worker.
     iio.imwrite(path, rgbFrames, fps=fps, codec='libx264',
-                plugin='FFMPEG', macro_block_size=1)
+                plugin='FFMPEG', macro_block_size=1,
+                ffmpeg_params=['-threads', '1'])
 
 
 def _writeWithCv2(frames, path, fps, w, h):

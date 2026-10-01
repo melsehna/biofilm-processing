@@ -22,6 +22,7 @@ from multiprocessing import Pool
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 from multiWellAnalysis.processing.preprocessing import normalizeLocalContrastOutput
 from multiWellAnalysis.processing.overlay import writeOverlayVideo
+from multiWellAnalysis.processing.helpers import limitThreads
 
 
 BLOCK_DIAM = 101
@@ -136,7 +137,7 @@ def main():
     errors = 0
     skipped = 0
 
-    with Pool(args.workers) as pool:
+    with Pool(args.workers, initializer=limitThreads) as pool:
         for result in pool.imap_unordered(regenOne, tasks):
             done += 1
             if result.startswith('SKIP'):

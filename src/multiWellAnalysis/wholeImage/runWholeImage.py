@@ -18,6 +18,7 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from .extractWholeImageFeats import extractFrameFeats
+from ..processing.helpers import limitThreads
 
 
 def now():
@@ -179,7 +180,7 @@ def runPlateWholeImage(indexDf, plateId, outDir, maxWorkers):
     plateRows = indexDf[indexDf['plateId'] == plateId]
     results = []
 
-    with ProcessPoolExecutor(max_workers=maxWorkers) as pool:
+    with ProcessPoolExecutor(max_workers=maxWorkers, initializer=limitThreads) as pool:
 
         futures = {
             pool.submit(

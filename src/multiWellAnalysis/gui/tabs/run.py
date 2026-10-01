@@ -13,6 +13,8 @@ import tifffile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from multiWellAnalysis.processing.helpers import limitThreads
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QProgressBar, QTextEdit, QMessageBox,
@@ -1315,7 +1317,8 @@ class ProcessingWorker(QObject):
                           items, index, outdir, nWorkers, submitFn, *submitArgs):
         total = len(items)
 
-        with ProcessPoolExecutor(max_workers=nWorkers) as pool:
+        with ProcessPoolExecutor(max_workers=nWorkers,
+                                 initializer=limitThreads) as pool:
             futures = {}
             for wellId, data in items:
                 if self._stop.is_set():

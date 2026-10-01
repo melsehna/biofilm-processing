@@ -210,3 +210,14 @@ def test_master_csv_writes_provenance_sidecar(tmp_path):
     assert rec['pipeline'] == prov
     assert rec['masterCsvs']['frame']['rows'] == 3
     assert 'generatedAtUtc' in rec
+
+
+def test_limitThreads_caps_opencv():
+    import cv2
+    from multiWellAnalysis.processing.helpers import limitThreads
+    before = cv2.getNumThreads()
+    try:
+        limitThreads()
+        assert cv2.getNumThreads() == 1
+    finally:
+        cv2.setNumThreads(before)
