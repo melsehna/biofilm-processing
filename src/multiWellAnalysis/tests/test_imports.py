@@ -50,15 +50,21 @@ def test_save_registered_flag(monkeypatch):
     assert sig.parameters['saveRegistered'].default is True
 
 
-def test_save_registered_refuses_colony_stages(monkeypatch, capsys):
-    # Tracking and colony features read the raw stack. Skipping the write while
-    # asking for them must fail immediately, not ten hours in.
-    monkeypatch.setenv('QT_QPA_PLATFORM', 'offscreen')
-    from multiWellAnalysis.cli.run_pipeline import main
-    rc = main(['--output-dir', '/out', '--plates', '/d',
-               '--no-save-registered', '--colony-tracking'])
-    assert rc == 2
-    assert 'registered_raw' in capsys.readouterr().err
+def test_tracking_does_not_need_registered_raw(tmp_path):
+    # Tracking reads only the masks, so a row with no registered_raw (what
+    # --no-save-registered writes) must still track rather than skip.
+    import numpy as np
+    from multiWellAnalysis.gui.tabs.run import _trackOneWell
+
+    masks = np.zeros((64, 64, 6), dtype=bool)
+    masks[10:30, 10:30, 2:] = True
+    maskPath = tmp_path / 'A1_03_masks.npz'
+    np.savez_compressed(maskPath, masks=masks)
+    row = {'well': 'A1_03', 'masks': str(maskPath), 'registered_raw': ''}
+    res = _trackOneWell('plate', row, {'minColonyAreaPx': 10, 'propRadiusPx': 5})
+    assert res['status'] == 'done', res
+    labels = np.load(res['tracked_labels'])['labels']
+    assert labels.shape == masks.shape and labels[20, 20, 5] > 0
 
 
 def test_saveStack_trims_speculative_prealloc(tmp_path):

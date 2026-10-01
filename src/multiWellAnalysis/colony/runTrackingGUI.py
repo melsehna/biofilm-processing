@@ -184,6 +184,8 @@ def trackAndSave(
     Parameters
     ----------
     rawStack : ndarray (H, W, T)
+        Only its shape is used (plus region-prop intensity that is discarded);
+        labels depend on maskStack alone, so the pipeline passes maskStack here.
     maskStack : ndarray (H, W, T)
     outdir : str
         Directory to write the tracked-labels NPZ into.

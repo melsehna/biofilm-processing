@@ -244,21 +244,16 @@ def _trackOneWell(plateName, row, trackingParams=None):
     os.environ.setdefault('MKL_NUM_THREADS', '1')
 
     wellId = row['well']
-    rawPath = row['registered_raw']
-    maskPath = row['masks']
+    maskPath = row.get('masks', '')
     biomassPath = row.get('biomass', '')
     if trackingParams is None:
         trackingParams = {}
 
     try:
-        if not os.path.exists(rawPath) or not os.path.exists(maskPath):
-            return {'well': wellId, 'status': 'skipped', 'reason': 'missing files'}
+        if not maskPath or not os.path.exists(maskPath):
+            return {'well': wellId, 'status': 'skipped', 'reason': 'missing masks'}
 
         t0 = time.perf_counter()
-
-        rawStack = tifffile.imread(rawPath)
-        if rawStack.ndim == 3 and rawStack.shape[0] < rawStack.shape[1]:
-            rawStack = np.transpose(rawStack, (1, 2, 0))
 
         maskData = np.load(maskPath)
         maskKey = 'masks' if 'masks' in maskData else list(maskData.keys())[0]
@@ -270,11 +265,16 @@ def _trackOneWell(plateName, row, trackingParams=None):
             if 'biomass' in bdf.columns:
                 biomass = bdf['biomass'].values
 
-        outdir = os.path.dirname(rawPath)
+        outdir = os.path.dirname(maskPath)
 
+        # Labels depend on the binary mask alone (fill holes, min area, label,
+        # propagate); the image argument only supplies the shape and the
+        # intensity for region props that tracking discards. So the mask stands
+        # in for it and _registered_raw.tif is never read — tracking works when
+        # it was not saved, and labels are bit-identical to the raw-fed version.
         from multiWellAnalysis.colony.runTrackingGUI import trackAndSave
         npzPath = trackAndSave(
-            rawStack, maskStack, outdir,
+            maskStack, maskStack, outdir,
             plateName, wellId,
             biomass=biomass,
             min_colony_area=trackingParams.get('minColonyAreaPx'),
@@ -1389,10 +1389,9 @@ class ProcessingWorker(QObject):
         return pool.submit(_wholeImageOneWell, plateName, {**row, 'well': wellId})
 
     def _submitTracking(self, pool, wellId, row, outdir, plateName, state):
-        # Falsy covers both a missing column and the empty value written when the
-        # run was launched with saveRegistered off — tracking needs the raw stack.
-        if not row.get('registered_raw'):
-            self.log.emit(f'  {wellId} tracking skipped: no registered_raw in index')
+        # Tracking reads only the binary masks (not registered_raw).
+        if not row.get('masks'):
+            self.log.emit(f'  {wellId} tracking skipped: no masks in index')
             return None
         m = re.match(r'^[A-P]\d+(_\d+)$', wellId)
         mag = m.group(1) if m else ''

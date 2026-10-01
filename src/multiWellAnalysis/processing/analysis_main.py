@@ -186,13 +186,13 @@ def timelapseProcessing(
     )
     saveStack(displayStack, processedDir, f"{filename}_processed")
 
-    # `_registered_raw.tif` is registered raw intensity — needed by colony
-    # tracking, colony features and any OD/biomass rework, but NOT by biomass
-    # itself (computed above from the in-memory rawCropped) nor by the display
-    # render. It is also the single largest output (same size as _processed.tif,
-    # ~374 MiB/well at 25x1992^2 float32), so a biomass-only run can skip it and
-    # halve write volume. Skipping forfeits later re-tracking / colony features
-    # without reprocessing from raw — see the regen_masks/place_masks recovery path.
+    # `_registered_raw.tif` is registered raw intensity. No pipeline stage reads
+    # it: biomass and the display render use the in-memory rawCropped, tracking
+    # uses the masks, whole-image / colony features use _processed.tif. It is
+    # kept (by default) for overlay regeneration (scripts/regenOverlays*.py) and
+    # any later raw-intensity / OD rework. It is also the single largest output
+    # (same size as _processed.tif, ~374 MiB/well at 25x1992^2 float32), so
+    # skipping it roughly halves write volume.
     if saveRegistered:
         saveStack(rawCropped, processedDir, f"{filename}_registered_raw")
 

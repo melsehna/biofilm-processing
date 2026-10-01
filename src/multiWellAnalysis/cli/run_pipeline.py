@@ -165,9 +165,10 @@ def buildParser():
     p.add_argument('--save-registered', dest='saveRegistered',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Write <well>_registered_raw.tif (default on). '
-                        '--no-save-registered halves write volume on a '
-                        'biomass-only run but forfeits later colony tracking / '
-                        'colony features without reprocessing from raw.')
+                        '--no-save-registered roughly halves write volume; '
+                        'no pipeline stage reads it (tracking uses the masks, '
+                        'features use _processed.tif), but overlay regeneration '
+                        '(regenOverlays.py) and any raw-intensity rework do.')
     p.add_argument('--umap-static', dest='umapStatic',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Generate static UMAP PNGs (needs the .[umap] extra).')
@@ -252,17 +253,6 @@ def main(argv=None):
     if not (state.get('outputDir') or '').strip():
         print('ERROR: no output dir. Pass --output-dir or set it in the config.',
               file=sys.stderr)
-        return 2
-    # Colony tracking and colony features both read <well>_registered_raw.tif.
-    # The GUI silently re-checks the box; refuse instead, so a run that would
-    # have produced no tracking fails in the first second rather than the tenth
-    # hour. (Whole-image features read _processed.tif only, so they are fine.)
-    if not state.get('saveRegistered', True) and (
-            state.get('colonyTracking') or state.get('colonyFeats')):
-        print('ERROR: --no-save-registered is incompatible with colony tracking '
-              '/ colony features — both read <well>_registered_raw.tif. Drop '
-              '--no-save-registered, or pass --no-colony-tracking '
-              '--no-colony-feats.', file=sys.stderr)
         return 2
 
     print(f'Plates ({len(plates)}):')

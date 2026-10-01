@@ -200,13 +200,6 @@ def main(argv=None):
         print(f'ERROR: {e}', file=sys.stderr)
         return 2
 
-    # Tracking reads the registered raw stack, so the two flags are incompatible.
-    # Fail here rather than letting _trackOneWell skip with a vaguer message.
-    if args.tracking and not state.get('saveRegistered', True):
-        print('ERROR: --tracking needs --save-registered (colony tracking reads '
-              '<well>_registered_raw.tif).', file=sys.stderr)
-        return 2
-
     outputRoot = (args.outputDir or os.path.join(os.getcwd(), 'testWell_out'))
     procDir = _computeOutdir(args.plate, resolved, outputRoot)
     os.makedirs(procDir, exist_ok=True)

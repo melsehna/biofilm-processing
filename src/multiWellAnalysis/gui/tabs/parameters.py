@@ -324,9 +324,9 @@ class ParametersTab(QWidget):
 
         # NOTE: saveRegistered IS honored — unchecking it makes the pipeline skip
         # the `_registered_raw.tif` write entirely (it is not written and then
-        # deleted), which halves write volume on a biomass-only run. The
-        # dependency logic below keeps it checked whenever tracking / colony
-        # features are on, since those need the raw stack.
+        # deleted), which roughly halves write volume. No stage depends on it
+        # (tracking reads the masks, features read _processed.tif), so it is
+        # independent of the analysis checkboxes.
         # saveProcessed / saveMasks are still stored-only placeholders: both
         # artifacts are always written. Every downstream stage needs one or the
         # other, so there is no configuration in which skipping them is useful.
@@ -421,8 +421,6 @@ class ParametersTab(QWidget):
             self.colonyTracking.setChecked(True)
             return
         if checked:
-            if not self.saveRegistered.isChecked():
-                self.saveRegistered.setChecked(True)
             if not self.saveMasks.isChecked():
                 self.saveMasks.setChecked(True)
         self.colonyParamsGroup.setVisible(
@@ -434,8 +432,6 @@ class ParametersTab(QWidget):
         if checked:
             if not self.colonyTracking.isChecked():
                 self.colonyTracking.setChecked(True)
-            if not self.saveRegistered.isChecked():
-                self.saveRegistered.setChecked(True)
             if not self.saveMasks.isChecked():
                 self.saveMasks.setChecked(True)
         self.colonyParamsGroup.setVisible(
@@ -447,8 +443,6 @@ class ParametersTab(QWidget):
         if self.wholeImage.isChecked() and not self.saveProcessed.isChecked():
             self.saveProcessed.setChecked(True)
         if self.colonyFeats.isChecked() or self.colonyTracking.isChecked():
-            if not self.saveRegistered.isChecked():
-                self.saveRegistered.setChecked(True)
             if not self.saveMasks.isChecked():
                 self.saveMasks.setChecked(True)
         if self.colonyFeats.isChecked() and not self.colonyTracking.isChecked():
