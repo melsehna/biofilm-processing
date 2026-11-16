@@ -1,0 +1,5 @@
+wellId,strain,geneLocus,screenPhenotype
+F10,wild type,,reference
+D11,flaA::Tn,VC_2188,High Biofilm
+E3,pdhE2::Tn,VC_2413,High Biofilm
+C6,manB::Tn,VC_0242,Dispersal Defect

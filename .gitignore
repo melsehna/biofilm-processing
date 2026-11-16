@@ -46,3 +46,7 @@ scripts/runHeadless.sbatch
 
 # Legacy biomass-only CLI — sole consumer of the quarantined legacy/ package.
 scripts/runSinglePlate.py
+
+# Demo dataset ships with the repo (overrides the blanket *.csv / *.md rules above).
+!demo/
+!demo/**

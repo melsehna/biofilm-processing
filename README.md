@@ -12,17 +12,59 @@ biofilm-processing takes the per-well image stacks produced by a Cytation5 micro
 
 ## Table of contents
 
+- [System requirements](#system-requirements)
 - [Quick start](#quick-start)
   - [1. Install Miniconda (one-time)](#1-install-miniconda-one-time)
   - [2. Download biofilm-processing](#2-download-biofilm-processing)
   - [3. Install biofilm-processing](#3-install-biofilm-processing)
   - [4. Make a desktop shortcut](#4-make-a-desktop-shortcut-optional-but-recommended)
+- [Demo](#demo)
 - [Using the GUI](#using-the-gui)
 - [What gets produced](#what-gets-produced)
 - [Updating biofilm-processing](#updating-biofilm-processing)
 - [Troubleshooting](#troubleshooting)
 - [Advanced: command line + Python API](#advanced-command-line--python-api)
 - [Authors & license](#authors--license)
+
+---
+
+## System requirements
+
+**Operating system.** Linux, Windows or macOS. Tested on:
+
+| OS | Python | How it was tested |
+|---|---|---|
+| Ubuntu 24.04.3 LTS | 3.9.23 (pinned `environment.yml`) | Published analyses; demo below |
+| Ubuntu (GitHub Actions `ubuntu-latest`) | 3.9, 3.11, 3.12 | Automated test suite on every change |
+
+The code is pure Python with cross-platform dependencies and is expected to run on Windows
+and macOS (the installer and desktop shortcut support both), but only Ubuntu is covered by
+the tests above.
+
+**Python.** 3.9 or newer. The published results were produced with Python 3.9.23 and the
+exact package versions in [`environment.yml`](environment.yml); see
+[Reproducibility & containers](#reproducibility--containers).
+
+**Software dependencies.** Installed automatically by `pip install -e .` (version ranges in
+[`pyproject.toml`](pyproject.toml)). The validated versions are:
+
+| Package | Version | Package | Version |
+|---|---|---|---|
+| numpy | 2.0.2 | opencv-python | 4.12.0.88 |
+| scipy | 1.13.1 | mahotas | 1.4.18 |
+| scikit-image | 0.24.0 | tifffile | 2024.6.18 |
+| scikit-learn | 1.6.1 | imageio / imageio-ffmpeg | 2.37.0 / 0.6.0 |
+| pandas | 2.3.1 | PySide6 (GUI) | 6.9.0 |
+| matplotlib | 3.9.4 | umap-learn (optional) | 0.5.9 |
+
+**Hardware.** No special hardware. No GPU is needed. Memory scales with image size and
+frame count: for full-size 1992 × 1992 Cytation images, each parallel worker needs about
+`0.08 GB × frames + 0.4 GB` of RAM (about 3 GB per worker for a 31-frame well). A
+computer with 8–16 GB of RAM can run 2–4 workers. The demo below needs under 0.5 GB.
+
+**Input data.** Brightfield TIFFs exported by an Agilent BioTek Cytation (Gen5), one file
+per well per timepoint (`<well>_<magnification>_1_1_Bright Field_<frame>.tif`). Objective
+and pixel size are read from the XML header Gen5 writes into each TIFF.
 
 ---
 
@@ -101,6 +143,73 @@ This detects your conda environment and creates a clickable icon on your desktop
 | Windows | `.bat` launcher + `.lnk` shortcut on Desktop |
 
 Double-click the icon to launch — no terminal needed.
+
+---
+
+## Demo
+
+The repository includes a small real dataset in [`demo/`](demo/): four wells (wild type
+and three transposon mutants with different biofilm phenotypes) from one *V. cholerae*
+plate, cropped to 512 × 512 pixels and cut to 16 frames covering 0–30 h. See
+[`demo/README.md`](demo/README.md) for where it comes from.
+
+### Run it
+
+From inside the `uPULLI-I` folder, with the environment activated:
+
+```bash
+biofilm-processing-run --plates demo/raw/demo_plate --output-dir demo_output \
+    --mag _02 --workers 4 \
+    --block-diam 101 --fixed-thresh 0.025 --shift-thresh 250 --downsample 1 \
+    --min-colony-area 200 --prop-radius 50 \
+    --whole-image --colony-tracking --colony-feats --overlays --processed-video
+```
+
+These are the parameters used for the *V. cholerae* datasets in the paper. To use the GUI
+instead, choose `demo/raw/demo_plate` in the Setup tab, enter the same values in the
+Parameters tab, and press Run.
+
+### Expected run time
+
+About **20 seconds** on a desktop computer with an 8-core CPU (measured: 17 s with 4
+workers restricted to 4 cores of an Intel Xeon E5-2695 v3). Each worker uses one CPU core.
+Peak memory is about 0.3 GB.
+
+### Expected output
+
+```
+demo_output/
+├── master_frame_features.csv      64 rows (4 wells × 16 frames), 196 columns
+├── master_colony_features.csv     one row per colony per frame
+├── provenance.json                software version and git commit
+└── demo_plate/
+    ├── processedImages/           per well: _processed.tif, _masks.npz, _biomass.csv,
+    │                              _overlay.mp4, _processed.mp4, tracked colony labels,
+    │                              whole-image and colony feature CSVs; plus index.csv
+    │                              and run_params.json
+    └── numericalData/             10X_BF.csv (biomass), 10X_wholeImage.csv,
+                                   10X_colonyFeatures.csv, 10X_colonyAgg.csv
+```
+
+Check the result against [`demo/expected/biomass.csv`](demo/expected/biomass.csv), which
+holds the reference biomass curves (`demo_output/demo_plate/numericalData/10X_BF.csv`
+should match it). The overlay videos (`*_overlay.mp4`) show the segmentation on each
+frame. What you should see:
+
+- **Wild type (F10)** forms a small biofilm that peaks at 12 h and has fully dispersed by 14 h.
+- ***flaA* (D11)** and ***pdhE2* (E3)** form biofilms about 6–9× larger, peaking at 22–24 h.
+- ***manB* (C6)** keeps a small biofilm to 30 h instead of dispersing.
+
+Wild type writes no per-colony feature file in this demo. That is expected; see
+[`demo/README.md`](demo/README.md#what-the-results-should-show) for why.
+
+### Running on your own data
+
+Point `--plates` at one or more plate folders exported from Gen5, set `--mag` to the
+magnification suffix in your filenames (e.g. `_02`, `_03`), and check `--fixed-thresh` on a
+single well first with the GUI's Test Well tab or `biofilm-processing-test-well`. See
+[Using the GUI](#using-the-gui) and
+[Advanced: command line + Python API](#advanced-command-line--python-api).
 
 ---
 
