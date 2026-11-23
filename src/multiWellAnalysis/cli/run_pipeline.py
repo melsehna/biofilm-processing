@@ -47,7 +47,7 @@ import threading
 
 from ..gui.state import DEFAULTS
 from ..gui.tabs.run import ProcessingWorker
-from ..processing.helpers import roundOdd
+from ..processing.helpers import roundOdd, limitThreads
 
 # Keys carried from a saved config even though they are not in DEFAULTS.
 # AppState.from_dict() drops these on load, so the GUI re-picks them each
@@ -215,6 +215,7 @@ def buildParser():
 
 def main(argv=None):
     args = buildParser().parse_args(argv)
+    limitThreads()   # the driver process too: one compute thread, like the pool workers
 
     overrides = {
         'plates':          args.plates,
