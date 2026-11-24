@@ -195,6 +195,7 @@ def _processOneWell(platePath, outdir, wellId, wellFiles, params):
             skipOverlay=not params.get('saveOverlays', True),
             saveProcessedVideo=params.get('saveProcessedVideo', False),
             saveRegistered=saveRegistered,
+            processedDtype=params.get('processedDtype', 'float32'),
             workers=1,
             sourceFiles=wellFiles,
         )
@@ -347,7 +348,8 @@ def _colonyFeatsOneWell(plateName, row):
         intensityPath = os.path.join(outdir, f'{wellId}_processed.tif')
 
         data = np.load(labelsPath)
-        rawStack = tifffile.imread(intensityPath)
+        from multiWellAnalysis.processing.io_utils import loadProcessedStack
+        rawStack = np.asarray(loadProcessedStack(intensityPath))   # float32 [0, 1], either storage
         if rawStack.ndim == 3 and rawStack.shape[0] < rawStack.shape[1]:
             rawStack = np.transpose(rawStack, (1, 2, 0))
 
@@ -1366,6 +1368,7 @@ class ProcessingWorker(QObject):
             'saveOverlays': state.get('saveOverlays', True),
             'saveProcessedVideo': state.get('saveProcessedVideo', False),
             'saveRegistered': state.get('saveRegistered', True),
+            'processedDtype': state.get('processedDtype', 'float32'),
         }
         magParams = state.get('magParams', {})
         if mag and mag in magParams:

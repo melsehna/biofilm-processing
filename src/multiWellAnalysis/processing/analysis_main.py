@@ -75,6 +75,7 @@ def timelapseProcessing(
     skipOverlay=False,
     saveProcessedVideo=False,
     saveRegistered=True,
+    processedDtype='float32',
     label=None,
     workers=4,
     progressFn=None,
@@ -195,7 +196,7 @@ def timelapseProcessing(
         normalizeLocalContrastOutput(rawCropped, blockDiameter, 0.5),
         0.0, 1.0,
     )
-    saveStack(displayStack, processedDir, f"{filename}_processed")
+    saveStack(displayStack, processedDir, f"{filename}_processed", dtype=processedDtype)
 
     # `_registered_raw.tif` is registered raw intensity. No pipeline stage reads
     # it: biomass and the display render use the in-memory rawCropped, tracking

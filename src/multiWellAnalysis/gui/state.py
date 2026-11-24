@@ -29,6 +29,7 @@ DEFAULTS = {
     'downsample':       4,
     'dustCorrection':   True,
     'saveRegistered':   True,
+    'processedDtype':   'float32',   # or 'uint16' (deflate, ~2.45x smaller; io_utils.saveStack)
     'saveProcessed':    True,
     'saveMasks':        True,
     'saveOverlays':     True,

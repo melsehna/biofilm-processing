@@ -273,3 +273,44 @@ def test_limitThreads_caps_opencv():
         assert cv2.getNumThreads() == 1
     finally:
         cv2.setNumThreads(before)
+
+
+def _syntheticProcessed(seed=0, shape=(96, 80, 5)):
+    rng = np.random.default_rng(seed)
+    base = 0.5 + 0.02 * rng.standard_normal(shape)
+    base[20:40, 20:40, :] -= 0.3          # a dark colony
+    return np.clip(base, 0.0, 1.0).astype(np.float32)
+
+
+def test_saveStack_uint16_roundtrip_and_loader(tmp_path):
+    import tifffile
+    from multiWellAnalysis.processing.io_utils import saveStack, loadProcessedStack
+    stack = _syntheticProcessed()
+    saveStack(stack, str(tmp_path), 'f', dtype='float32')
+    saveStack(stack, str(tmp_path), 'u', dtype='uint16')
+    with tifffile.TiffFile(tmp_path / 'u.tif') as t:
+        assert t.pages[0].dtype == np.uint16 and t.pages[0].compression == 8   # deflate
+    f = loadProcessedStack(str(tmp_path / 'f.tif'))
+    u = loadProcessedStack(str(tmp_path / 'u.tif'))
+    assert f.dtype == np.float32 and u.dtype == np.float32
+    ref = np.transpose(stack, (2, 0, 1))
+    assert np.array_equal(np.asarray(f), ref)
+    assert np.abs(u - ref).max() <= 0.5 / 65535 + 1e-7
+    with pytest.raises(ValueError):
+        saveStack(stack, str(tmp_path), 'x', dtype='float16')
+    # unmarked uint16 (e.g. a raw camera frame) is refused, not silently scaled
+    tifffile.imwrite(tmp_path / 'raw.tif', (ref * 65535).astype(np.uint16))
+    with pytest.raises(ValueError):
+        loadProcessedStack(str(tmp_path / 'raw.tif'))
+
+
+def test_wholeImage_features_identical_for_uint16(tmp_path):
+    from multiWellAnalysis.processing.io_utils import saveStack, loadProcessedStack
+    from multiWellAnalysis.wholeImage.extractWholeImageFeats import extractFrameFeats
+    stack = _syntheticProcessed(seed=1)
+    saveStack(stack, str(tmp_path), 'f', dtype='float32')
+    saveStack(stack, str(tmp_path), 'u', dtype='uint16')
+    f = loadProcessedStack(str(tmp_path / 'f.tif'))
+    u = loadProcessedStack(str(tmp_path / 'u.tif'))
+    for t in range(f.shape[0]):
+        assert extractFrameFeats(np.asarray(f[t])) == extractFrameFeats(np.asarray(u[t]))
