@@ -68,10 +68,8 @@ def extractWholeImageFeatures(
     try:
         tic('loadStack')
 
-        try:
-            procStack = tifffile.memmap(processedPath)
-        except Exception:
-            procStack = tifffile.imread(processedPath)
+        from multiWellAnalysis.processing.io_utils import loadProcessedStack
+        procStack = loadProcessedStack(processedPath)   # float32 [0, 1] for float32 or uint16 files
 
         toc('loadStack')
 

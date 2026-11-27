@@ -99,7 +99,8 @@ def _writeMontage(processedTif, masksNpz, outPng, nFrames=6):
     import matplotlib.pyplot as plt
     import tifffile
 
-    proc = tifffile.imread(processedTif)
+    from multiWellAnalysis.processing.io_utils import loadProcessedStack
+    proc = np.asarray(loadProcessedStack(processedTif))
     if proc.ndim == 3 and proc.shape[0] < proc.shape[1]:
         proc = np.transpose(proc, (1, 2, 0))  # -> (H, W, T)
 
@@ -163,6 +164,9 @@ def buildParser():
     p.add_argument('--overlays', dest='saveOverlays',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Write the overlay MP4 (default on).')
+    p.add_argument('--processed-dtype', dest='processedDtype',
+                   choices=['float32', 'uint16'], default='float32',
+                   help='Storage of <well>_processed.tif (see biofilm-processing-run --help).')
     p.add_argument('--save-registered', dest='saveRegistered',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Write <well>_registered_raw.tif (default on). Mirrors '
@@ -187,6 +191,7 @@ def main(argv=None):
         'propRadiusPx':    args.propRadiusPx,
         'saveOverlays':    args.saveOverlays,
         'saveRegistered':  args.saveRegistered,
+        'processedDtype':  args.processedDtype,
     }
     state = buildState(args.config, overrides)
 

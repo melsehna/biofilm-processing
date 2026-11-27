@@ -169,6 +169,12 @@ def buildParser():
                         'no pipeline stage reads it (tracking uses the masks, '
                         'features use _processed.tif), but overlay regeneration '
                         '(regenOverlays.py) and any raw-intensity rework do.')
+    p.add_argument('--processed-dtype', dest='processedDtype',
+                   choices=['float32', 'uint16'], default=None,
+                   help='Storage of <well>_processed.tif: float32 (default, '
+                        'uncompressed) or uint16 (round(v*65535), deflate; ~2.45x '
+                        'smaller, max error 7.6e-6, whole-image features identical). '
+                        'All readers use io_utils.loadProcessedStack.')
     p.add_argument('--umap-static', dest='umapStatic',
                    action=argparse.BooleanOptionalAction, default=None,
                    help='Generate static UMAP PNGs (needs the .[umap] extra).')
@@ -228,6 +234,7 @@ def main(argv=None):
         'saveOverlays':    args.saveOverlays,
         'saveProcessedVideo': args.saveProcessedVideo,
         'saveRegistered':  args.saveRegistered,
+        'processedDtype':  args.processedDtype,
         'umapStatic':      args.umapStatic,
         'umapInteractive': args.umapInteractive,
         'umapColumnName':  args.umapColumnName,

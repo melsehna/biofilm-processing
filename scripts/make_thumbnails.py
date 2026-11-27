@@ -256,6 +256,12 @@ def main(argv=None):
                 idx, peakVal = int(args.frame), float('nan')
             idx = max(0, min(idx, nFrames - 1))
             page = series.asarray(key=idx)
+            if page.dtype.kind == 'u':   # uint16 _processed.tif (processedDtype='uint16'): back to [0, 1]
+                md = tf.shaped_metadata[0] if tf.shaped_metadata else {}
+                scale = md.get('processedScale') if isinstance(md, dict) else None
+                if not scale:
+                    raise ValueError(f'{stack}: integer stack without a processedScale marker')
+                page = page.astype('float32') / float(scale)
 
         thumb = renderThumb(page, args.size, (lo, hi), args.invert)
         if not cv2.imwrite(jpg, thumb, [int(cv2.IMWRITE_JPEG_QUALITY), args.quality]):
